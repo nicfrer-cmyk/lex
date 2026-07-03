@@ -101,6 +101,12 @@ function nav(id, el) {
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   document.getElementById('panel-'+id).classList.add('active');
   if(el) el.classList.add('active');
+  // Keep the mobile bottom-nav's active state in sync regardless of whether nav()
+  // was triggered from the sidebar/drawer or from the bottom nav itself.
+  document.querySelectorAll('.bottom-nav-item').forEach(n=>n.classList.remove('active'));
+  const bn = document.getElementById('bottomnav-'+id);
+  if (bn) bn.classList.add('active');
+  if (typeof closeMobileDrawer === 'function') closeMobileDrawer();
   currentPanel = id;
   if(id==='dashboard') renderDashboard();
   if(id==='cases') renderCases();
@@ -110,6 +116,18 @@ function nav(id, el) {
   if(id==='finance') renderFinance();
   if(id==='docs') renderDocs();
   if(id==='templates' && typeof tmRender==='function') tmRender();
+}
+
+// ===== MOBILE DRAWER (sidebar-as-drawer on small screens) =====
+function openMobileDrawer() {
+  document.getElementById('sidebar').classList.add('drawer-open');
+  document.getElementById('drawer-backdrop').classList.add('open');
+}
+function closeMobileDrawer() {
+  const sb = document.getElementById('sidebar');
+  const bd = document.getElementById('drawer-backdrop');
+  if (sb) sb.classList.remove('drawer-open');
+  if (bd) bd.classList.remove('open');
 }
 
 // ===== MODAL =====

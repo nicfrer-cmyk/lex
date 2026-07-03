@@ -7,60 +7,70 @@
 @import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700&display=swap');
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#0f1117;--bg2:#161b27;--bg3:#1e2535;--bg4:#252d40;
-  --accent:#6c63ff;--accent2:#8b85ff;--accent-dim:rgba(108,99,255,0.15);
-  --text:#e8eaf0;--text2:#9ba3b8;--text3:#5c6480;
-  --border:rgba(255,255,255,0.07);--border2:rgba(255,255,255,0.12);
-  --danger:#ff5e5e;--warning:#f5a623;--success:#4cdb8c;
+  /* LexTrack design tokens — professional navy/blue, light theme */
+  --bg:#f4f6fa;--bg2:#ffffff;--bg3:#eef1f7;--bg4:#e3e8f0;
+  --navy:#0f2a4a;--navy-light:#1e4976;
+  --accent:#2563eb;--accent2:#3b82f6;--accent-dim:rgba(37,99,235,0.1);
+  --text:#0f1729;--text2:#4b5768;--text3:#64748b;
+  --border:#e2e6ed;--border2:#cdd5e0;
+  --danger:#dc2626;--warning:#d97706;--success:#16a34a;
   --radius:10px;--radius-lg:16px;
+  --shadow-sm:0 1px 2px rgba(15,23,41,0.06),0 1px 1px rgba(15,23,41,0.04);
+  --shadow-md:0 4px 16px rgba(15,23,41,0.08),0 2px 4px rgba(15,23,41,0.04);
 }
 body{font-family:'Heebo',sans-serif;background:var(--bg);color:var(--text);height:100vh;overflow:hidden}
 .app{display:flex;height:100vh}
-.sidebar{width:228px;background:var(--bg2);border-left:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
+.sidebar{width:228px;background:var(--navy);display:flex;flex-direction:column;flex-shrink:0;box-shadow:2px 0 12px rgba(15,23,41,0.08)}
 .main{flex:1;display:flex;flex-direction:column;overflow:hidden}
-.logo{padding:20px 18px 14px;border-bottom:1px solid var(--border)}
-.logo-title{font-size:17px;font-weight:700;color:#fff}
-.logo-sub{font-size:10px;color:var(--text3);margin-top:2px}
-.nav-section{padding:14px 18px 4px;font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.1em}
-.nav-item{display:flex;align-items:center;gap:10px;padding:9px 18px;cursor:pointer;font-size:13px;color:var(--text2);transition:all 0.15s;position:relative}
-.nav-item:hover{color:var(--text);background:rgba(255,255,255,0.04)}
-.nav-item.active{color:#fff;background:var(--accent-dim)}
-.nav-item.active::before{content:'';position:absolute;right:0;top:4px;bottom:4px;width:3px;background:var(--accent);border-radius:2px 0 0 2px}
-.nav-icon{width:16px;height:16px;opacity:0.7;flex-shrink:0}
+.logo{padding:22px 18px 16px;border-bottom:1px solid rgba(255,255,255,0.1)}
+.logo-title{font-size:18px;font-weight:700;color:#fff;letter-spacing:0.01em}
+.logo-sub{font-size:10px;color:rgba(255,255,255,0.55);margin-top:3px}
+.nav-section{padding:16px 18px 6px;font-size:10px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.1em}
+.nav-item{display:flex;align-items:center;gap:10px;padding:10px 18px;cursor:pointer;font-size:13px;color:rgba(255,255,255,0.75);transition:all 0.15s;position:relative}
+.nav-item:hover{color:#fff;background:rgba(255,255,255,0.06)}
+.nav-item.active{color:#fff;background:rgba(255,255,255,0.1);font-weight:600}
+.nav-item.active::before{content:'';position:absolute;right:0;top:4px;bottom:4px;width:3px;background:var(--accent2);border-radius:2px 0 0 2px}
+.nav-icon{width:16px;height:16px;opacity:0.75;flex-shrink:0}
 .nav-item.active .nav-icon{opacity:1}
 .nav-badge{margin-right:auto;background:var(--danger);color:#fff;font-size:10px;padding:1px 6px;border-radius:10px;font-weight:600;display:none}
+.sidebar .btn{background:rgba(255,255,255,0.08);border-color:rgba(255,255,255,0.16);color:rgba(255,255,255,0.85)}
+.sidebar .btn:hover{background:rgba(255,255,255,0.16);border-color:rgba(255,255,255,0.3);color:#fff}
 .topbar{padding:12px 24px;background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
-.topbar-title{font-size:16px;font-weight:600;color:#fff}
+.topbar-title{font-size:17px;font-weight:700;color:var(--navy)}
 .topbar-actions{display:flex;gap:8px;align-items:center}
-.btn{padding:7px 16px;border-radius:var(--radius);border:1px solid var(--border2);background:transparent;color:var(--text);cursor:pointer;font-size:13px;font-family:'Heebo',sans-serif;transition:all 0.15s}
-.btn:hover{background:rgba(255,255,255,0.06)}
+.btn{padding:7px 16px;border-radius:var(--radius);border:1px solid var(--border2);background:var(--bg2);color:var(--text);cursor:pointer;font-size:13px;font-family:'Heebo',sans-serif;transition:all 0.15s}
+.btn:hover{background:rgba(15,23,41,0.04);border-color:var(--text3)}
 .btn-primary{background:var(--accent);border-color:var(--accent);color:#fff}
 .btn-primary:hover{background:var(--accent2)}
 .btn-sm{padding:5px 12px;font-size:12px}
-.btn-danger{background:rgba(255,94,94,0.1);border-color:rgba(255,94,94,0.3);color:var(--danger)}
-.btn-success{background:rgba(76,219,140,0.1);border-color:rgba(76,219,140,0.3);color:var(--success)}
-.btn-warning{background:rgba(245,166,35,0.1);border-color:rgba(245,166,35,0.3);color:var(--warning)}
+.btn-danger{background:rgba(220,38,38,0.1);border-color:rgba(220,38,38,0.3);color:var(--danger)}
+.btn-success{background:rgba(22,163,74,0.1);border-color:rgba(22,163,74,0.3);color:var(--success)}
+.btn-warning{background:rgba(217,119,6,0.1);border-color:rgba(217,119,6,0.3);color:var(--warning)}
 .content{flex:1;overflow-y:auto;padding:20px 24px}
+.content-table{padding:12px 24px}
 .content::-webkit-scrollbar{width:6px}
 .content::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
 .panel{display:none}.panel.active{display:flex;flex-direction:column;flex:1;overflow:hidden}
-.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:18px;margin-bottom:16px}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:18px;margin-bottom:16px;box-shadow:var(--shadow-sm)}
 .card-title{font-size:11px;font-weight:600;color:var(--text3);margin-bottom:14px;text-transform:uppercase;letter-spacing:0.08em}
 .stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
-.stat{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px}
+.stats-grid-5{grid-template-columns:repeat(5,1fr)}
+.filter-select{width:110px;padding:6px 10px;font-size:12px}
+.filter-select-wide{width:130px}
+.stat{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px;box-shadow:var(--shadow-sm)}
 .stat-label{font-size:11px;color:var(--text3);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em}
-.stat-value{font-size:26px;font-weight:700;color:#fff;line-height:1}
+.stat-value{font-size:26px;font-weight:700;color:var(--navy);line-height:1}
 .stat-sub{font-size:11px;color:var(--text3);margin-top:4px}
 .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600}
-.badge-active{background:rgba(108,99,255,0.2);color:var(--accent2)}
-.badge-urgent{background:rgba(255,94,94,0.15);color:var(--danger)}
-.badge-pending{background:rgba(245,166,35,0.15);color:var(--warning)}
-.badge-closed{background:rgba(255,255,255,0.05);color:var(--text3)}
+.badge-active{background:rgba(37,99,235,0.2);color:var(--accent2)}
+.badge-urgent{background:rgba(220,38,38,0.15);color:var(--danger)}
+.badge-pending{background:rgba(217,119,6,0.15);color:var(--warning)}
+.badge-closed{background:var(--bg3);color:var(--text3)}
 .data-table{width:100%;border-collapse:collapse}
 .data-table th{text-align:right;padding:10px 14px;font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em;border-bottom:1px solid var(--border);font-weight:500}
 .data-table td{padding:11px 14px;font-size:13px;border-bottom:1px solid var(--border);vertical-align:middle}
 .data-table tbody tr{cursor:pointer;transition:background 0.1s}
-.data-table tbody tr:hover{background:rgba(255,255,255,0.03)}
+.data-table tbody tr:hover{background:var(--bg3)}
 .form-group{margin-bottom:14px}
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .form-label{font-size:12px;color:var(--text2);margin-bottom:6px;display:block;font-weight:500}
@@ -70,10 +80,10 @@ select.form-input option{background:var(--bg3)}
 textarea.form-input{resize:vertical;min-height:80px}
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.75);display:none;align-items:center;justify-content:center;z-index:100}
 .modal-overlay.open{display:flex}
-.modal{background:var(--bg2);border:1px solid var(--border2);border-radius:var(--radius-lg);padding:24px;width:560px;max-width:92vw;max-height:88vh;overflow-y:auto}
+.modal{background:var(--bg2);border:1px solid var(--border2);border-radius:var(--radius-lg);padding:24px;width:560px;max-width:92vw;max-height:88vh;overflow-y:auto;box-shadow:0 20px 60px rgba(15,23,41,0.25)}
 .modal-wide{width:720px}
 .modal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
-.modal-title{font-size:16px;font-weight:600;color:#fff}
+.modal-title{font-size:17px;font-weight:700;color:var(--navy)}
 .modal-close{background:none;border:none;color:var(--text3);cursor:pointer;font-size:22px;line-height:1}
 .modal-close:hover{color:var(--text)}
 .modal-footer{display:flex;gap:8px;margin-top:20px;padding-top:16px;border-top:1px solid var(--border)}
@@ -84,13 +94,13 @@ textarea.form-input{resize:vertical;min-height:80px}
 .task-text{flex:1;font-size:13px}.task-text.done{text-decoration:line-through;color:var(--text3)}
 .task-meta{font-size:11px;color:var(--text3)}.task-meta.urgent{color:var(--danger)}
 .doc-item{display:flex;align-items:center;gap:12px;padding:10px;border-radius:var(--radius);cursor:pointer;transition:background 0.1s}
-.doc-item:hover{background:rgba(255,255,255,0.04)}
+.doc-item:hover{background:var(--bg3)}
 .doc-icon{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0}
-.doc-icon.pdf{background:rgba(255,94,94,0.15);color:var(--danger)}
-.doc-icon.doc,.doc-icon.docx{background:rgba(108,99,255,0.2);color:var(--accent2)}
-.doc-icon.xls,.doc-icon.xlsx{background:rgba(76,219,140,0.15);color:var(--success)}
-.doc-icon.img{background:rgba(245,166,35,0.15);color:var(--warning)}
-.doc-icon.legal{background:rgba(108,99,255,0.3);color:#fff}
+.doc-icon.pdf{background:rgba(220,38,38,0.15);color:var(--danger)}
+.doc-icon.doc,.doc-icon.docx{background:rgba(37,99,235,0.2);color:var(--accent2)}
+.doc-icon.xls,.doc-icon.xlsx{background:rgba(22,163,74,0.15);color:var(--success)}
+.doc-icon.img{background:rgba(217,119,6,0.15);color:var(--warning)}
+.doc-icon.legal{background:var(--navy);color:#fff}
 .two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 .three-col{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
 .tabs{display:flex;border-bottom:1px solid var(--border);margin-bottom:16px;flex-wrap:wrap}
@@ -112,16 +122,16 @@ textarea.form-input{resize:vertical;min-height:80px}
 .cal-cell:hover{background:var(--bg3)}.cal-cell.today{background:var(--accent-dim);color:var(--accent2);font-weight:600}
 .cal-cell.has-event::after{content:'';position:absolute;bottom:2px;left:50%;transform:translateX(-50%);width:4px;height:4px;border-radius:50%;background:var(--accent)}
 .client-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
-.client-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px;cursor:pointer;transition:all 0.15s}
-.client-card:hover{border-color:var(--border2);background:var(--bg3)}
+.client-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px;cursor:pointer;transition:all 0.15s;box-shadow:var(--shadow-sm)}
+.client-card:hover{border-color:var(--accent2);box-shadow:var(--shadow-md);transform:translateY(-1px)}
 .client-avatar{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;margin-bottom:10px}
 /* Legal docs */
 .legal-section{background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius);padding:16px;margin-bottom:14px}
 .legal-section-title{font-size:12px;font-weight:600;color:var(--accent2);margin-bottom:12px;text-transform:uppercase;letter-spacing:0.06em;border-bottom:1px solid var(--border);padding-bottom:8px}
 .doc-status-badge{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:20px;font-size:11px;font-weight:600}
-.doc-status-none{background:rgba(92,100,128,0.2);color:var(--text3)}
-.doc-status-draft{background:rgba(245,166,35,0.15);color:var(--warning)}
-.doc-status-signed{background:rgba(76,219,140,0.15);color:var(--success)}
+.doc-status-none{background:rgba(138,148,166,0.2);color:var(--text3)}
+.doc-status-draft{background:rgba(217,119,6,0.15);color:var(--warning)}
+.doc-status-signed{background:rgba(22,163,74,0.15);color:var(--success)}
 /* Finance section */
 .fin-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px}
 .fin-row:last-child{border-bottom:none}
@@ -146,11 +156,11 @@ textarea.form-input{resize:vertical;min-height:80px}
 .panel-scroll{flex:1;overflow-y:auto}
 /* Alert box */
 .alert{padding:10px 14px;border-radius:var(--radius);font-size:13px;margin-bottom:12px}
-.alert-warning{background:rgba(245,166,35,0.1);border:1px solid rgba(245,166,35,0.3);color:var(--warning)}
-.alert-info{background:rgba(108,99,255,0.1);border:1px solid rgba(108,99,255,0.3);color:var(--accent2)}
+.alert-warning{background:rgba(217,119,6,0.1);border:1px solid rgba(217,119,6,0.3);color:var(--warning)}
+.alert-info{background:rgba(37,99,235,0.1);border:1px solid rgba(37,99,235,0.3);color:var(--accent2)}
 /* Tooltip */
 .has-tooltip{position:relative}
-.has-tooltip:hover::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 6px);right:0;background:#1e2535;border:1px solid var(--border2);border-radius:6px;padding:6px 10px;font-size:11px;color:var(--text2);white-space:nowrap;z-index:10;pointer-events:none}
+.has-tooltip:hover::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 6px);right:0;background:var(--navy);border:1px solid var(--navy);border-radius:6px;padding:6px 10px;font-size:11px;color:#fff;white-space:nowrap;z-index:10;pointer-events:none;box-shadow:var(--shadow-md)}
 /* Kanban board */
 .kanban-wrap{display:flex;gap:12px;padding:16px 20px;overflow-x:auto;height:100%;align-items:flex-start;box-sizing:border-box}
 .kanban-wrap::-webkit-scrollbar{height:6px}
@@ -162,28 +172,28 @@ textarea.form-input{resize:vertical;min-height:80px}
 .kanban-body{overflow-y:auto;flex:1;padding:8px}
 .kanban-body::-webkit-scrollbar{width:4px}
 .kanban-body::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
-.kanban-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:11px 12px;margin-bottom:7px;cursor:pointer;transition:border-color 0.15s,box-shadow 0.15s}
-.kanban-card:hover{border-color:var(--accent);box-shadow:0 2px 8px rgba(108,99,255,0.15)}
+.kanban-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:11px 12px;margin-bottom:7px;cursor:pointer;transition:border-color 0.15s,box-shadow 0.15s;box-shadow:var(--shadow-sm)}
+.kanban-card:hover{border-color:var(--accent);box-shadow:0 4px 12px rgba(37,99,235,0.18)}
 .kanban-card:last-child{margin-bottom:0}
-.kanban-card-name{font-size:13px;font-weight:700;color:#fff;margin-bottom:3px;line-height:1.3;word-break:break-word}
+.kanban-card-name{font-size:13px;font-weight:700;color:var(--navy);margin-bottom:3px;line-height:1.3;word-break:break-word}
 .kanban-card-sub{font-size:11px;color:var(--text3);margin-bottom:5px}
 .kanban-card-amount{font-size:12px;color:var(--accent2);font-weight:600;margin-bottom:6px}
 .kanban-card-foot{display:flex;align-items:center;justify-content:space-between}
 .kanban-days{font-size:10px;color:var(--text3)}
 /* Timer */
 .timer-fab{position:fixed;bottom:20px;left:20px;background:var(--bg3);border:1px solid var(--border2);border-radius:24px;padding:8px 16px;font-size:13px;color:var(--text);cursor:pointer;z-index:150;font-family:'Heebo',sans-serif;transition:all 0.15s;user-select:none;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.timer-fab:hover{background:var(--bg4)}.timer-fab.running{border-color:var(--danger);color:var(--danger);background:rgba(255,94,94,0.08)}
+.timer-fab:hover{background:var(--bg4)}.timer-fab.running{border-color:var(--danger);color:var(--danger);background:rgba(220,38,38,0.08)}
 /* ===== AI AGENT ===== */
-.agent-fab{position:fixed;bottom:20px;right:20px;background:var(--accent);border:none;border-radius:24px;padding:9px 18px;font-size:13px;color:#fff;cursor:pointer;z-index:150;font-family:'Heebo',sans-serif;font-weight:600;box-shadow:0 4px 16px rgba(108,99,255,0.35);transition:all 0.15s;user-select:none}
-.agent-fab:hover{background:var(--accent2);transform:translateY(-1px);box-shadow:0 6px 20px rgba(108,99,255,0.5)}
-.agent-panel{position:fixed;bottom:66px;right:20px;width:390px;height:550px;background:var(--bg2);border:1px solid var(--border2);border-radius:var(--radius-lg);display:none;flex-direction:column;z-index:149;box-shadow:0 8px 40px rgba(0,0,0,0.6);overflow:hidden}
+.agent-fab{position:fixed;bottom:20px;right:20px;background:var(--accent);border:none;border-radius:24px;padding:9px 18px;font-size:13px;color:#fff;cursor:pointer;z-index:150;font-family:'Heebo',sans-serif;font-weight:600;box-shadow:0 4px 16px rgba(37,99,235,0.35);transition:all 0.15s;user-select:none}
+.agent-fab:hover{background:var(--accent2);transform:translateY(-1px);box-shadow:0 6px 20px rgba(37,99,235,0.5)}
+.agent-panel{position:fixed;bottom:66px;right:20px;width:390px;height:550px;background:var(--bg2);border:1px solid var(--border2);border-radius:var(--radius-lg);display:none;flex-direction:column;z-index:149;box-shadow:0 12px 40px rgba(15,23,41,0.18);overflow:hidden}
 .agent-panel.open{display:flex;animation:agentSlide 0.18s ease}
 @keyframes agentSlide{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
 .agent-hd{padding:11px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;background:var(--bg3)}
-.agent-hd-title{font-size:13px;font-weight:600;color:#fff}
+.agent-hd-title{font-size:13px;font-weight:700;color:var(--navy)}
 .agent-hd-btns{display:flex;gap:2px}
 .agent-hd-btn{background:none;border:none;color:var(--text3);cursor:pointer;font-size:15px;padding:3px 6px;border-radius:4px;font-family:'Heebo',sans-serif;line-height:1;transition:all 0.1s}
-.agent-hd-btn:hover{color:var(--text);background:rgba(255,255,255,0.07)}
+.agent-hd-btn:hover{color:var(--text);background:rgba(15,23,41,0.06)}
 .agent-msgs{flex:1;overflow-y:auto;padding:12px 10px;display:flex;flex-direction:column;gap:7px}
 .agent-msgs::-webkit-scrollbar{width:4px}
 .agent-msgs::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
@@ -201,6 +211,82 @@ textarea.form-input{resize:vertical;min-height:80px}
 .agent-btn-upload{padding:7px 10px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius);color:var(--text2);cursor:pointer;font-size:14px;flex-shrink:0;transition:all 0.15s}
 .agent-btn-upload:hover{background:var(--bg4);border-color:var(--accent)}
 
+/* ===== Focus visibility (accessibility) ===== */
+.form-input:focus,.search-input:focus,.agent-textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
+.btn:focus-visible,.nav-item:focus-visible,.bottom-nav-item:focus-visible,.client-card:focus-visible,.kanban-card:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* ===== Mobile drawer (sidebar becomes an off-canvas panel below 768px) ===== */
+.drawer-backdrop{display:none}
+
+/* ===== Bottom navigation — mobile only ===== */
+.bottom-nav{display:none}
+
+/* ===== Mobile-first responsive layer ===== */
+@media (max-width: 768px){
+  .sidebar{
+    position:fixed;top:0;bottom:0;right:0;z-index:400;width:260px;max-width:82vw;
+    transform:translateX(100%);transition:transform 0.22s ease;box-shadow:none;
+  }
+  .sidebar.drawer-open{transform:translateX(0);box-shadow:-8px 0 24px rgba(15,23,41,0.25)}
+  .drawer-backdrop.open{display:block;position:fixed;inset:0;background:rgba(15,23,41,0.45);z-index:399}
+
+  .bottom-nav{
+    display:flex;position:fixed;bottom:0;right:0;left:0;height:60px;background:var(--bg2);
+    border-top:1px solid var(--border);z-index:150;box-shadow:0 -2px 12px rgba(15,23,41,0.06);
+    padding-bottom:env(safe-area-inset-bottom,0);
+  }
+  .bottom-nav-item{
+    flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+    background:none;border:none;color:var(--text3);font-family:'Heebo',sans-serif;font-size:10px;
+    cursor:pointer;padding:6px 2px;min-height:48px;
+  }
+  .bottom-nav-item .nav-icon{width:20px;height:20px;opacity:0.8}
+  .bottom-nav-item.active{color:var(--accent)}
+  .bottom-nav-item.active .nav-icon{opacity:1}
+
+  /* Room for the bottom nav bar + don't hide content behind it */
+  .content{padding:16px;padding-bottom:76px}
+  .search-wrap{padding:10px 16px}
+  .topbar{padding:12px 16px;flex-wrap:wrap;gap:8px}
+  .topbar-actions{flex-wrap:wrap;gap:6px;width:100%}
+  .filter-select,.filter-select-wide{width:auto;flex:1;min-width:110px}
+
+  /* Stack every multi-column grid to one column */
+  .stats-grid,.two-col,.three-col,.client-grid,.form-row{grid-template-columns:1fr}
+  .stats-grid{grid-template-columns:repeat(2,1fr)}
+
+  /* Modals: near-full-screen instead of a centered box that feels cramped */
+  .modal{width:100%;max-width:100vw;padding:18px;border-radius:var(--radius-lg) var(--radius-lg) 0 0;max-height:92vh}
+  .modal-overlay{align-items:flex-end}
+  .modal-wide{width:100%}
+
+  /* Prevent iOS Safari's auto-zoom on focused inputs below 16px */
+  .form-input,.search-input,.agent-textarea{font-size:16px}
+
+  /* Comfortable tap targets */
+  .btn{min-height:40px}
+  .btn-sm{min-height:34px}
+  .nav-item{min-height:44px}
+  .task-cb{width:22px;height:22px}
+
+  /* AI agent panel: fit the viewport instead of a fixed 390px box, and clear the bottom nav */
+  .agent-panel{width:calc(100vw - 24px);right:12px;left:12px;height:min(70vh,560px);bottom:76px}
+  .agent-fab{bottom:76px;right:12px}
+  .timer-fab{bottom:76px;left:12px;max-width:180px}
+  .notif{bottom:130px;left:12px;right:12px;max-width:none}
+
+  /* Kanban stays horizontally scrollable but with slightly narrower columns */
+  .kanban-col{width:220px;min-width:220px;max-height:calc(100vh - 190px)}
+  .kanban-wrap{padding-bottom:76px}
+
+  /* Dashboard stat numbers are the app's "headline" data — keep them readable at 2-per-row */
+  .stat-value{font-size:22px}
+}
+
+@media (max-width: 420px){
+  .stats-grid{grid-template-columns:1fr}
+  .bottom-nav-item span{font-size:9px}
+}
 </style>
 </head>
 <body>
@@ -220,7 +306,8 @@ textarea.form-input{resize:vertical;min-height:80px}
 </div>
 
 <div class="app" id="app-root" style="display:none">
-  <div class="sidebar">
+  <div class="drawer-backdrop" id="drawer-backdrop" onclick="closeMobileDrawer()"></div>
+  <div class="sidebar" id="sidebar">
     <div class="logo">
       <div class="logo-title">⚖ LexTrack</div>
       <div class="logo-sub">ירין אשואל, עו"ד | גבייה</div>
@@ -253,10 +340,10 @@ textarea.form-input{resize:vertical;min-height:80px}
     <div class="nav-item" id="nav-templates-item" onclick="nav('templates',this)" style="display:none">
       <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="1" width="12" height="14" rx="1"/><path d="M5 5h6M5 8h6M5 11h3"/></svg>תבניות
     </div>
-    <div style="margin-top:auto;padding:14px 18px;border-top:1px solid var(--border)">
-      <div style="font-size:11px;color:var(--text3)">LexTrack v2.0</div>
-      <div style="font-size:11px;color:var(--text3);margin-top:2px" id="data-count"></div>
-      <div style="font-size:11px;color:var(--success);margin-top:4px" id="save-status"></div>
+    <div style="margin-top:auto;padding:14px 18px;border-top:1px solid rgba(255,255,255,0.1)">
+      <div style="font-size:11px;color:rgba(255,255,255,0.4)">LexTrack v2.0</div>
+      <div style="font-size:11px;color:rgba(255,255,255,0.55);margin-top:2px" id="data-count"></div>
+      <div style="font-size:11px;color:#4ade80;margin-top:4px" id="save-status"></div>
       <button class="btn btn-sm" style="margin-top:8px;width:100%;font-size:11px;padding:5px 8px" onclick="openSettingsModal()">⚙ הגדרות / API Key</button>
       <button class="btn btn-sm" style="margin-top:6px;width:100%;font-size:11px;padding:5px 8px" onclick="authSignOut()">🚪 התנתקות</button>
     </div>
@@ -274,7 +361,7 @@ textarea.form-input{resize:vertical;min-height:80px}
         </div>
       </div>
       <div class="content">
-        <div class="stats-grid" style="grid-template-columns:repeat(5,1fr)">
+        <div class="stats-grid stats-grid-5">
           <div class="stat"><div class="stat-label">תיקים פעילים</div><div class="stat-value" id="s-active">0</div><div class="stat-sub" id="s-urgent-txt"></div></div>
           <div class="stat"><div class="stat-label">חוב בטיפול</div><div class="stat-value" id="s-debt" style="color:var(--accent2);font-size:20px">₪0</div></div>
           <div class="stat"><div class="stat-label">גבוי החודש</div><div class="stat-value" id="s-collected" style="color:var(--success);font-size:20px">₪0</div></div>
@@ -297,14 +384,14 @@ textarea.form-input{resize:vertical;min-height:80px}
       <div class="topbar">
         <div class="topbar-title">תיקים</div>
         <div class="topbar-actions">
-          <select class="form-input btn" id="cases-filter-status" onchange="renderCases(document.getElementById('cases-search').value)" style="width:110px;padding:6px 10px;font-size:12px">
+          <select class="form-input btn filter-select" id="cases-filter-status" onchange="renderCases(document.getElementById('cases-search').value)">
             <option value="">כל הסטטוסים</option>
             <option value="active">פעיל</option>
             <option value="urgent">דחוף</option>
             <option value="pending">ממתין</option>
             <option value="closed">סגור</option>
           </select>
-          <select class="form-input btn" id="cases-filter-stage" onchange="renderCases(document.getElementById('cases-search').value)" style="width:130px;padding:6px 10px;font-size:12px">
+          <select class="form-input btn filter-select filter-select-wide" id="cases-filter-stage" onchange="renderCases(document.getElementById('cases-search').value)">
             <option value="">כל השלבים</option>
             <option>איסוף מסמכים</option><option>התראה ראשונה</option><option>גישור</option>
             <option>כתב תביעה</option><option>דיון</option><option>הוצאה לפועל</option><option>סגור</option>
@@ -316,7 +403,7 @@ textarea.form-input{resize:vertical;min-height:80px}
       <div class="search-wrap">
         <input class="search-input" id="cases-search" placeholder="חיפוש לפי שם, מספר, לקוח..." oninput="renderCases(this.value)">
       </div>
-      <div id="cases-table-wrap" class="content" style="padding:12px 24px">
+      <div id="cases-table-wrap" class="content content-table">
         <table class="data-table">
           <thead><tr><th>שם תיק / מס׳</th><th>לקוח / חייב</th><th>סכום חוב</th><th>שלב</th><th>נפתח</th><th>שכ"ט</th><th>סטטוס</th><th></th></tr></thead>
           <tbody id="cases-tbody"></tbody>
@@ -378,7 +465,7 @@ textarea.form-input{resize:vertical;min-height:80px}
       <div class="topbar">
         <div class="topbar-title">משימות</div>
         <div class="topbar-actions">
-          <select class="form-input btn" id="tasks-filter" onchange="renderTasks()" style="width:130px;padding:6px 10px;font-size:12px">
+          <select class="form-input btn filter-select filter-select-wide" id="tasks-filter" onchange="renderTasks()">
             <option value="">כל התיקים</option>
           </select>
           <button class="btn btn-primary" onclick="openModal('modal-task')">+ משימה חדשה</button>
@@ -494,6 +581,31 @@ textarea.form-input{resize:vertical;min-height:80px}
 
   </div>
 </div>
+
+<!-- Mobile-only bottom navigation — hidden on desktop via CSS. Reuses the same nav() function
+     as the sidebar; see the .bottom-nav-item sync logic added in nav(). -->
+<nav class="bottom-nav" id="bottom-nav">
+  <button class="bottom-nav-item active" id="bottomnav-dashboard" onclick="nav('dashboard', document.querySelectorAll('.nav-item')[0])">
+    <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
+    <span>דשבורד</span>
+  </button>
+  <button class="bottom-nav-item" id="bottomnav-cases" onclick="nav('cases', document.querySelectorAll('.nav-item')[1])">
+    <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3h12v10H2z"/><path d="M5 3V1.5h6V3M5 7h6M5 10h4"/></svg>
+    <span>תיקים</span>
+  </button>
+  <button class="bottom-nav-item" id="bottomnav-clients" onclick="nav('clients', document.querySelectorAll('.nav-item')[2])">
+    <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="5" r="3"/><path d="M2 14c0-3.3 2.7-6 6-6s6 2.7 6 6"/></svg>
+    <span>לקוחות</span>
+  </button>
+  <button class="bottom-nav-item" id="bottomnav-tasks" onclick="nav('tasks', document.querySelectorAll('.nav-item')[3])">
+    <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="1"/><path d="M5 8l2 2 4-4"/></svg>
+    <span>משימות</span>
+  </button>
+  <button class="bottom-nav-item" onclick="openMobileDrawer()">
+    <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12M2 8h12M2 12h12"/></svg>
+    <span>עוד</span>
+  </button>
+</nav>
 
 <div class="notif" id="notif"></div>
 <div class="timer-fab" id="timer-fab" onclick="toggleTimer()">▶ 00:00:00</div>
