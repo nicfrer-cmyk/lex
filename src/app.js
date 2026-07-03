@@ -736,8 +736,6 @@ async function buildWithTemplate(type, data, caseObj) {
   }
 }
 
-async 
-async 
 // ===== CLIENTS =====
 function saveClient() {
   const name=document.getElementById('client-name').value.trim();

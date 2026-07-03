@@ -45,7 +45,9 @@ async function authSignUp() {
   try {
     await Platform.signUp(email, password);
     authShowStatus('');
-    alert('נרשמת בהצלחה! בדוק את תיבת המייל שלך לאישור החשבון, ואז התחבר.');
+    // No alert here on purpose: signup logs the user straight in (email confirmation is
+    // disabled — see project settings), so onAuthStateChange fires SIGNED_IN and showApp()
+    // takes over immediately. A blocking alert() would just be an extra click for no reason.
   } catch (e) {
     authShowStatus('');
     authShowError(authFriendlyError(e));
