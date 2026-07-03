@@ -1,0 +1,828 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>LexTrack – ירין אשואל, עו"ד</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0f1117;--bg2:#161b27;--bg3:#1e2535;--bg4:#252d40;
+  --accent:#6c63ff;--accent2:#8b85ff;--accent-dim:rgba(108,99,255,0.15);
+  --text:#e8eaf0;--text2:#9ba3b8;--text3:#5c6480;
+  --border:rgba(255,255,255,0.07);--border2:rgba(255,255,255,0.12);
+  --danger:#ff5e5e;--warning:#f5a623;--success:#4cdb8c;
+  --radius:10px;--radius-lg:16px;
+}
+body{font-family:'Heebo',sans-serif;background:var(--bg);color:var(--text);height:100vh;overflow:hidden}
+.app{display:flex;height:100vh}
+.sidebar{width:228px;background:var(--bg2);border-left:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.logo{padding:20px 18px 14px;border-bottom:1px solid var(--border)}
+.logo-title{font-size:17px;font-weight:700;color:#fff}
+.logo-sub{font-size:10px;color:var(--text3);margin-top:2px}
+.nav-section{padding:14px 18px 4px;font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.1em}
+.nav-item{display:flex;align-items:center;gap:10px;padding:9px 18px;cursor:pointer;font-size:13px;color:var(--text2);transition:all 0.15s;position:relative}
+.nav-item:hover{color:var(--text);background:rgba(255,255,255,0.04)}
+.nav-item.active{color:#fff;background:var(--accent-dim)}
+.nav-item.active::before{content:'';position:absolute;right:0;top:4px;bottom:4px;width:3px;background:var(--accent);border-radius:2px 0 0 2px}
+.nav-icon{width:16px;height:16px;opacity:0.7;flex-shrink:0}
+.nav-item.active .nav-icon{opacity:1}
+.nav-badge{margin-right:auto;background:var(--danger);color:#fff;font-size:10px;padding:1px 6px;border-radius:10px;font-weight:600;display:none}
+.topbar{padding:12px 24px;background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.topbar-title{font-size:16px;font-weight:600;color:#fff}
+.topbar-actions{display:flex;gap:8px;align-items:center}
+.btn{padding:7px 16px;border-radius:var(--radius);border:1px solid var(--border2);background:transparent;color:var(--text);cursor:pointer;font-size:13px;font-family:'Heebo',sans-serif;transition:all 0.15s}
+.btn:hover{background:rgba(255,255,255,0.06)}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn-primary:hover{background:var(--accent2)}
+.btn-sm{padding:5px 12px;font-size:12px}
+.btn-danger{background:rgba(255,94,94,0.1);border-color:rgba(255,94,94,0.3);color:var(--danger)}
+.btn-success{background:rgba(76,219,140,0.1);border-color:rgba(76,219,140,0.3);color:var(--success)}
+.btn-warning{background:rgba(245,166,35,0.1);border-color:rgba(245,166,35,0.3);color:var(--warning)}
+.content{flex:1;overflow-y:auto;padding:20px 24px}
+.content::-webkit-scrollbar{width:6px}
+.content::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
+.panel{display:none}.panel.active{display:flex;flex-direction:column;flex:1;overflow:hidden}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:18px;margin-bottom:16px}
+.card-title{font-size:11px;font-weight:600;color:var(--text3);margin-bottom:14px;text-transform:uppercase;letter-spacing:0.08em}
+.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+.stat{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px}
+.stat-label{font-size:11px;color:var(--text3);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.05em}
+.stat-value{font-size:26px;font-weight:700;color:#fff;line-height:1}
+.stat-sub{font-size:11px;color:var(--text3);margin-top:4px}
+.badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600}
+.badge-active{background:rgba(108,99,255,0.2);color:var(--accent2)}
+.badge-urgent{background:rgba(255,94,94,0.15);color:var(--danger)}
+.badge-pending{background:rgba(245,166,35,0.15);color:var(--warning)}
+.badge-closed{background:rgba(255,255,255,0.05);color:var(--text3)}
+.data-table{width:100%;border-collapse:collapse}
+.data-table th{text-align:right;padding:10px 14px;font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em;border-bottom:1px solid var(--border);font-weight:500}
+.data-table td{padding:11px 14px;font-size:13px;border-bottom:1px solid var(--border);vertical-align:middle}
+.data-table tbody tr{cursor:pointer;transition:background 0.1s}
+.data-table tbody tr:hover{background:rgba(255,255,255,0.03)}
+.form-group{margin-bottom:14px}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.form-label{font-size:12px;color:var(--text2);margin-bottom:6px;display:block;font-weight:500}
+.form-input{width:100%;padding:9px 12px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius);color:var(--text);font-size:13px;font-family:'Heebo',sans-serif;transition:border 0.15s}
+.form-input:focus{outline:none;border-color:var(--accent)}
+select.form-input option{background:var(--bg3)}
+textarea.form-input{resize:vertical;min-height:80px}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.75);display:none;align-items:center;justify-content:center;z-index:100}
+.modal-overlay.open{display:flex}
+.modal{background:var(--bg2);border:1px solid var(--border2);border-radius:var(--radius-lg);padding:24px;width:560px;max-width:92vw;max-height:88vh;overflow-y:auto}
+.modal-wide{width:720px}
+.modal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+.modal-title{font-size:16px;font-weight:600;color:#fff}
+.modal-close{background:none;border:none;color:var(--text3);cursor:pointer;font-size:22px;line-height:1}
+.modal-close:hover{color:var(--text)}
+.modal-footer{display:flex;gap:8px;margin-top:20px;padding-top:16px;border-top:1px solid var(--border)}
+.task-item{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)}
+.task-item:last-child{border-bottom:none}
+.task-cb{width:18px;height:18px;border-radius:5px;border:1.5px solid var(--border2);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all 0.15s;font-size:10px;color:#fff}
+.task-cb.done{background:var(--accent);border-color:var(--accent)}
+.task-text{flex:1;font-size:13px}.task-text.done{text-decoration:line-through;color:var(--text3)}
+.task-meta{font-size:11px;color:var(--text3)}.task-meta.urgent{color:var(--danger)}
+.doc-item{display:flex;align-items:center;gap:12px;padding:10px;border-radius:var(--radius);cursor:pointer;transition:background 0.1s}
+.doc-item:hover{background:rgba(255,255,255,0.04)}
+.doc-icon{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0}
+.doc-icon.pdf{background:rgba(255,94,94,0.15);color:var(--danger)}
+.doc-icon.doc,.doc-icon.docx{background:rgba(108,99,255,0.2);color:var(--accent2)}
+.doc-icon.xls,.doc-icon.xlsx{background:rgba(76,219,140,0.15);color:var(--success)}
+.doc-icon.img{background:rgba(245,166,35,0.15);color:var(--warning)}
+.doc-icon.legal{background:rgba(108,99,255,0.3);color:#fff}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.three-col{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+.tabs{display:flex;border-bottom:1px solid var(--border);margin-bottom:16px;flex-wrap:wrap}
+.tab{padding:9px 14px;font-size:13px;cursor:pointer;color:var(--text3);border-bottom:2px solid transparent;margin-bottom:-1px;transition:all 0.15s}
+.tab:hover{color:var(--text2)}.tab.active{color:var(--accent2);border-bottom-color:var(--accent);font-weight:500}
+.search-wrap{padding:12px 24px;border-bottom:1px solid var(--border);background:var(--bg2);flex-shrink:0}
+.search-input{width:100%;padding:8px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:13px;font-family:'Heebo',sans-serif}
+.search-input:focus{outline:none;border-color:var(--accent)}
+.empty{text-align:center;padding:40px;color:var(--text3);font-size:13px}
+.notif{position:fixed;bottom:74px;left:20px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius);padding:12px 18px;font-size:13px;display:none;z-index:200;animation:slideUp 0.2s ease;max-width:280px}
+@keyframes slideUp{from{transform:translateY(8px);opacity:0}to{transform:translateY(0);opacity:1}}
+.file-drop{border:2px dashed var(--border2);border-radius:var(--radius);padding:24px;text-align:center;cursor:pointer;color:var(--text3);font-size:13px;transition:all 0.15s}
+.file-drop:hover{border-color:var(--accent);background:var(--accent-dim);color:var(--accent2)}
+.progress-wrap{height:4px;background:var(--bg4);border-radius:2px;margin-top:8px}
+.progress-fill{height:4px;background:var(--accent);border-radius:2px}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;text-align:center}
+.cal-day-name{font-size:11px;color:var(--text3);padding:6px}
+.cal-cell{padding:7px;font-size:13px;border-radius:7px;cursor:pointer;transition:background 0.1s;position:relative}
+.cal-cell:hover{background:var(--bg3)}.cal-cell.today{background:var(--accent-dim);color:var(--accent2);font-weight:600}
+.cal-cell.has-event::after{content:'';position:absolute;bottom:2px;left:50%;transform:translateX(-50%);width:4px;height:4px;border-radius:50%;background:var(--accent)}
+.client-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.client-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px;cursor:pointer;transition:all 0.15s}
+.client-card:hover{border-color:var(--border2);background:var(--bg3)}
+.client-avatar{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;margin-bottom:10px}
+/* Legal docs */
+.legal-section{background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius);padding:16px;margin-bottom:14px}
+.legal-section-title{font-size:12px;font-weight:600;color:var(--accent2);margin-bottom:12px;text-transform:uppercase;letter-spacing:0.06em;border-bottom:1px solid var(--border);padding-bottom:8px}
+.doc-status-badge{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:20px;font-size:11px;font-weight:600}
+.doc-status-none{background:rgba(92,100,128,0.2);color:var(--text3)}
+.doc-status-draft{background:rgba(245,166,35,0.15);color:var(--warning)}
+.doc-status-signed{background:rgba(76,219,140,0.15);color:var(--success)}
+/* Finance section */
+.fin-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px}
+.fin-row:last-child{border-bottom:none}
+.fin-total{font-weight:700;color:var(--accent2);font-size:16px}
+/* Stage progress */
+.stage-bar{display:flex;gap:4px;margin-top:8px}
+.stage-step{flex:1;height:6px;border-radius:3px;background:var(--bg4)}
+.stage-step.done{background:var(--accent)}
+.stage-step.current{background:var(--accent2)}
+/* Priority dot */
+.prio-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.prio-urgent{background:var(--danger)}
+.prio-normal{background:var(--text3)}
+.prio-low{background:var(--success)}
+/* Separator */
+.section-sep{height:1px;background:var(--border);margin:14px 0}
+/* Debtor info */
+.debtor-card{background:var(--bg3);border-radius:var(--radius);padding:14px;margin-bottom:12px;border-right:3px solid var(--accent)}
+/* Amount highlight */
+.amount-big{font-size:28px;font-weight:700;color:var(--accent2);line-height:1}
+/* Scrollable content in panel */
+.panel-scroll{flex:1;overflow-y:auto}
+/* Alert box */
+.alert{padding:10px 14px;border-radius:var(--radius);font-size:13px;margin-bottom:12px}
+.alert-warning{background:rgba(245,166,35,0.1);border:1px solid rgba(245,166,35,0.3);color:var(--warning)}
+.alert-info{background:rgba(108,99,255,0.1);border:1px solid rgba(108,99,255,0.3);color:var(--accent2)}
+/* Tooltip */
+.has-tooltip{position:relative}
+.has-tooltip:hover::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 6px);right:0;background:#1e2535;border:1px solid var(--border2);border-radius:6px;padding:6px 10px;font-size:11px;color:var(--text2);white-space:nowrap;z-index:10;pointer-events:none}
+/* Kanban board */
+.kanban-wrap{display:flex;gap:12px;padding:16px 20px;overflow-x:auto;height:100%;align-items:flex-start;box-sizing:border-box}
+.kanban-wrap::-webkit-scrollbar{height:6px}
+.kanban-wrap::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
+.kanban-col{background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-lg);width:248px;min-width:248px;display:flex;flex-direction:column;max-height:calc(100vh - 130px);overflow:hidden;flex-shrink:0}
+.kanban-col-hd{padding:11px 14px 10px;border-bottom:1px solid var(--border);flex-shrink:0;display:flex;align-items:center;justify-content:space-between}
+.kanban-col-title{font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:0.07em}
+.kanban-count{background:var(--bg4);border:1px solid var(--border);border-radius:10px;font-size:10px;color:var(--text3);padding:1px 7px;font-weight:600;flex-shrink:0}
+.kanban-body{overflow-y:auto;flex:1;padding:8px}
+.kanban-body::-webkit-scrollbar{width:4px}
+.kanban-body::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+.kanban-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:11px 12px;margin-bottom:7px;cursor:pointer;transition:border-color 0.15s,box-shadow 0.15s}
+.kanban-card:hover{border-color:var(--accent);box-shadow:0 2px 8px rgba(108,99,255,0.15)}
+.kanban-card:last-child{margin-bottom:0}
+.kanban-card-name{font-size:13px;font-weight:700;color:#fff;margin-bottom:3px;line-height:1.3;word-break:break-word}
+.kanban-card-sub{font-size:11px;color:var(--text3);margin-bottom:5px}
+.kanban-card-amount{font-size:12px;color:var(--accent2);font-weight:600;margin-bottom:6px}
+.kanban-card-foot{display:flex;align-items:center;justify-content:space-between}
+.kanban-days{font-size:10px;color:var(--text3)}
+/* Timer */
+.timer-fab{position:fixed;bottom:20px;left:20px;background:var(--bg3);border:1px solid var(--border2);border-radius:24px;padding:8px 16px;font-size:13px;color:var(--text);cursor:pointer;z-index:150;font-family:'Heebo',sans-serif;transition:all 0.15s;user-select:none;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.timer-fab:hover{background:var(--bg4)}.timer-fab.running{border-color:var(--danger);color:var(--danger);background:rgba(255,94,94,0.08)}
+/* ===== AI AGENT ===== */
+.agent-fab{position:fixed;bottom:20px;right:20px;background:var(--accent);border:none;border-radius:24px;padding:9px 18px;font-size:13px;color:#fff;cursor:pointer;z-index:150;font-family:'Heebo',sans-serif;font-weight:600;box-shadow:0 4px 16px rgba(108,99,255,0.35);transition:all 0.15s;user-select:none}
+.agent-fab:hover{background:var(--accent2);transform:translateY(-1px);box-shadow:0 6px 20px rgba(108,99,255,0.5)}
+.agent-panel{position:fixed;bottom:66px;right:20px;width:390px;height:550px;background:var(--bg2);border:1px solid var(--border2);border-radius:var(--radius-lg);display:none;flex-direction:column;z-index:149;box-shadow:0 8px 40px rgba(0,0,0,0.6);overflow:hidden}
+.agent-panel.open{display:flex;animation:agentSlide 0.18s ease}
+@keyframes agentSlide{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+.agent-hd{padding:11px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;background:var(--bg3)}
+.agent-hd-title{font-size:13px;font-weight:600;color:#fff}
+.agent-hd-btns{display:flex;gap:2px}
+.agent-hd-btn{background:none;border:none;color:var(--text3);cursor:pointer;font-size:15px;padding:3px 6px;border-radius:4px;font-family:'Heebo',sans-serif;line-height:1;transition:all 0.1s}
+.agent-hd-btn:hover{color:var(--text);background:rgba(255,255,255,0.07)}
+.agent-msgs{flex:1;overflow-y:auto;padding:12px 10px;display:flex;flex-direction:column;gap:7px}
+.agent-msgs::-webkit-scrollbar{width:4px}
+.agent-msgs::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+.agent-welcome{font-size:12px;color:var(--text3);text-align:center;padding:20px 12px;line-height:1.8;border:1px dashed var(--border);border-radius:var(--radius);margin:4px 0}
+.agent-msg{max-width:90%;padding:8px 12px;border-radius:12px;font-size:13px;line-height:1.6;word-break:break-word;white-space:pre-wrap}
+.agent-msg.user{background:var(--accent);color:#fff;align-self:flex-end;border-bottom-left-radius:3px}
+.agent-msg.assistant{background:var(--bg3);color:var(--text);align-self:flex-start;border-bottom-right-radius:3px;border:1px solid var(--border)}
+.agent-msg.status{background:transparent;color:var(--text3);font-size:11px;align-self:flex-start;padding:1px 4px;font-style:italic}
+.agent-cost-label{font-size:10px;color:var(--text3);align-self:flex-start;padding:0 4px 3px;margin-top:-5px;opacity:0.75}
+.agent-input-row{padding:9px 10px;border-top:1px solid var(--border);display:flex;gap:5px;flex-shrink:0;align-items:flex-end;background:var(--bg2)}
+.agent-textarea{flex:1;padding:8px 10px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius);color:var(--text);font-size:13px;font-family:'Heebo',sans-serif;resize:none;min-height:36px;max-height:90px;line-height:1.5;overflow-y:auto;direction:rtl}
+.agent-textarea:focus{outline:none;border-color:var(--accent)}
+.agent-btn-send{padding:8px 13px;background:var(--accent);border:none;border-radius:var(--radius);color:#fff;cursor:pointer;font-size:13px;font-family:'Heebo',sans-serif;flex-shrink:0;transition:background 0.15s;font-weight:600}
+.agent-btn-send:hover{background:var(--accent2)}
+.agent-btn-upload{padding:7px 10px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius);color:var(--text2);cursor:pointer;font-size:14px;flex-shrink:0;transition:all 0.15s}
+.agent-btn-upload:hover{background:var(--bg4);border-color:var(--accent)}
+
+</style>
+</head>
+<body>
+<!-- AUTH GATE: shown until a Supabase session is confirmed (see auth.js) -->
+<div id="auth-gate" style="position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:500">
+  <div class="modal" style="width:380px">
+    <div class="modal-header"><div class="modal-title">⚖ LexTrack</div></div>
+    <div id="auth-error" class="alert alert-warning" style="display:none"></div>
+    <div class="form-group"><label class="form-label">אימייל</label><input class="form-input" id="auth-email" type="email" autocomplete="username"></div>
+    <div class="form-group"><label class="form-label">סיסמה</label><input class="form-input" id="auth-password" type="password" autocomplete="current-password"></div>
+    <div class="modal-footer" style="flex-direction:column;gap:8px">
+      <button class="btn btn-primary" style="width:100%" onclick="authSignIn()">התחבר</button>
+      <button class="btn" style="width:100%" onclick="authSignUp()">משתמש חדש? הרשמה</button>
+    </div>
+    <div id="auth-status" style="font-size:12px;color:var(--text3);margin-top:8px;text-align:center"></div>
+  </div>
+</div>
+
+<div class="app" id="app-root" style="display:none">
+  <div class="sidebar">
+    <div class="logo">
+      <div class="logo-title">⚖ LexTrack</div>
+      <div class="logo-sub">ירין אשואל, עו"ד | גבייה</div>
+    </div>
+    <div class="nav-section">ראשי</div>
+    <div class="nav-item active" onclick="nav('dashboard',this)">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>דשבורד
+    </div>
+    <div class="nav-item" onclick="nav('cases',this)">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3h12v10H2z"/><path d="M5 3V1.5h6V3M5 7h6M5 10h4"/></svg>תיקים
+      <span class="nav-badge" id="urgent-badge">!</span>
+    </div>
+    <div class="nav-item" onclick="nav('clients',this)">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="5" r="3"/><path d="M2 14c0-3.3 2.7-6 6-6s6 2.7 6 6"/></svg>לקוחות
+    </div>
+    <div class="nav-section">עבודה</div>
+    <div class="nav-item" onclick="nav('tasks',this)">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="1"/><path d="M5 8l2 2 4-4"/></svg>משימות
+      <span class="nav-badge" id="tasks-badge" style="background:var(--warning)">0</span>
+    </div>
+    <div class="nav-item" onclick="nav('calendar',this)">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="3" width="14" height="12" rx="1"/><path d="M1 7h14M5 1v4M11 1v4"/></svg>יומן
+    </div>
+    <div class="nav-item" onclick="nav('finance',this)">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v1m0 4v1M6.5 7a1.5 1.5 0 013 0c0 1-1.5 1.5-1.5 2.5"/></svg>כספים
+    </div>
+    <div class="nav-item" onclick="nav('docs',this)">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 1h7l3 3v11H3z"/><path d="M10 1v3h3M6 8h5M6 11h3"/></svg>מסמכים
+    </div>
+    <div class="nav-item" id="nav-templates-item" onclick="nav('templates',this)" style="display:none">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="1" width="12" height="14" rx="1"/><path d="M5 5h6M5 8h6M5 11h3"/></svg>תבניות
+    </div>
+    <div style="margin-top:auto;padding:14px 18px;border-top:1px solid var(--border)">
+      <div style="font-size:11px;color:var(--text3)">LexTrack v2.0</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:2px" id="data-count"></div>
+      <div style="font-size:11px;color:var(--success);margin-top:4px" id="save-status"></div>
+      <button class="btn btn-sm" style="margin-top:8px;width:100%;font-size:11px;padding:5px 8px" onclick="openSettingsModal()">⚙ הגדרות / API Key</button>
+      <button class="btn btn-sm" style="margin-top:6px;width:100%;font-size:11px;padding:5px 8px" onclick="authSignOut()">🚪 התנתקות</button>
+    </div>
+  </div>
+
+  <div class="main">
+
+    <!-- DASHBOARD -->
+    <div id="panel-dashboard" class="panel">
+      <div class="topbar">
+        <div class="topbar-title">דשבורד</div>
+        <div class="topbar-actions">
+          <button class="btn" onclick="nav('finance',document.querySelectorAll('.nav-item')[5])">💰 כספים</button>
+          <button class="btn btn-primary" onclick="openModal('modal-case')">+ תיק חדש</button>
+        </div>
+      </div>
+      <div class="content">
+        <div class="stats-grid" style="grid-template-columns:repeat(5,1fr)">
+          <div class="stat"><div class="stat-label">תיקים פעילים</div><div class="stat-value" id="s-active">0</div><div class="stat-sub" id="s-urgent-txt"></div></div>
+          <div class="stat"><div class="stat-label">חוב בטיפול</div><div class="stat-value" id="s-debt" style="color:var(--accent2);font-size:20px">₪0</div></div>
+          <div class="stat"><div class="stat-label">גבוי החודש</div><div class="stat-value" id="s-collected" style="color:var(--success);font-size:20px">₪0</div></div>
+          <div class="stat"><div class="stat-label">משימות פתוחות</div><div class="stat-value" id="s-tasks" style="color:var(--warning)">0</div><div class="stat-sub" id="s-overdue-txt"></div></div>
+          <div class="stat"><div class="stat-label">שעות החודש</div><div class="stat-value" id="s-hours" style="color:var(--accent2);font-size:20px">0:00</div><div class="stat-sub" id="s-hours-txt"></div></div>
+        </div>
+        <div class="two-col">
+          <div class="card"><div class="card-title">תיקים – לפי שלב</div><div id="d-stages"></div></div>
+          <div class="card"><div class="card-title">משימות דחופות</div><div id="d-tasks"></div></div>
+        </div>
+        <div class="two-col">
+          <div class="card"><div class="card-title">דיונים קרובים</div><div id="d-events"></div></div>
+          <div class="card"><div class="card-title">תיקים אחרונים</div><div id="d-cases"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CASES -->
+    <div id="panel-cases" class="panel">
+      <div class="topbar">
+        <div class="topbar-title">תיקים</div>
+        <div class="topbar-actions">
+          <select class="form-input btn" id="cases-filter-status" onchange="renderCases(document.getElementById('cases-search').value)" style="width:110px;padding:6px 10px;font-size:12px">
+            <option value="">כל הסטטוסים</option>
+            <option value="active">פעיל</option>
+            <option value="urgent">דחוף</option>
+            <option value="pending">ממתין</option>
+            <option value="closed">סגור</option>
+          </select>
+          <select class="form-input btn" id="cases-filter-stage" onchange="renderCases(document.getElementById('cases-search').value)" style="width:130px;padding:6px 10px;font-size:12px">
+            <option value="">כל השלבים</option>
+            <option>איסוף מסמכים</option><option>התראה ראשונה</option><option>גישור</option>
+            <option>כתב תביעה</option><option>דיון</option><option>הוצאה לפועל</option><option>סגור</option>
+          </select>
+          <button id="cases-view-toggle" class="btn btn-sm" onclick="toggleCasesView()" title="החלף תצוגה">⊞ לוח</button>
+          <button class="btn btn-primary" onclick="openModal('modal-case')">+ תיק חדש</button>
+        </div>
+      </div>
+      <div class="search-wrap">
+        <input class="search-input" id="cases-search" placeholder="חיפוש לפי שם, מספר, לקוח..." oninput="renderCases(this.value)">
+      </div>
+      <div id="cases-table-wrap" class="content" style="padding:12px 24px">
+        <table class="data-table">
+          <thead><tr><th>שם תיק / מס׳</th><th>לקוח / חייב</th><th>סכום חוב</th><th>שלב</th><th>נפתח</th><th>שכ"ט</th><th>סטטוס</th><th></th></tr></thead>
+          <tbody id="cases-tbody"></tbody>
+        </table>
+        <div id="cases-empty" class="empty" style="display:none">אין תיקים. לחץ "תיק חדש"</div>
+      </div>
+      <div id="cases-board-wrap" class="content" style="padding:0;display:none">
+        <div class="kanban-wrap" id="cases-board"></div>
+      </div>
+    </div>
+
+    <!-- CASE DETAIL -->
+    <div id="panel-case-detail" class="panel">
+      <div class="topbar">
+        <div class="topbar-actions">
+          <button class="btn" onclick="nav('cases',document.querySelectorAll('.nav-item')[1])">← חזרה לתיקים</button>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn btn-sm btn-warning" onclick="generateLegalDoc('attorney-fee')" id="btn-gen-atf">📄 הסכם שכ"ט</button>
+          <button class="btn btn-sm btn-warning" onclick="generateLegalDoc('poa')" id="btn-gen-poa">📄 ייפוי כוח</button>
+          <button class="btn btn-sm btn-danger" onclick="deleteCase()">מחק</button>
+          <button class="btn btn-sm btn-primary" onclick="editCase()">✏ עריכה</button>
+        </div>
+      </div>
+      <div class="content" id="case-detail-body"></div>
+    </div>
+
+    <!-- CLIENTS -->
+    <div id="panel-clients" class="panel">
+      <div class="topbar">
+        <div class="topbar-title">לקוחות</div>
+        <div class="topbar-actions">
+          <button class="btn btn-primary" onclick="openModal('modal-client')">+ לקוח חדש</button>
+        </div>
+      </div>
+      <div class="search-wrap">
+        <input class="search-input" placeholder="חיפוש לקוח..." oninput="renderClients(this.value)">
+      </div>
+      <div class="content"><div class="client-grid" id="clients-grid"></div><div id="clients-empty" class="empty" style="display:none">אין לקוחות</div></div>
+    </div>
+
+    <!-- CLIENT DETAIL -->
+    <div id="panel-client-detail" class="panel">
+      <div class="topbar">
+        <div class="topbar-actions">
+          <button class="btn" onclick="nav('clients',document.querySelectorAll('.nav-item')[2])">← חזרה ללקוחות</button>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn btn-sm btn-danger" onclick="deleteClient(currentClientId)">מחק</button>
+          <button class="btn btn-sm" onclick="editClient(currentClientId)">✏ עריכה</button>
+          <button class="btn btn-sm btn-primary" onclick="addCaseForClient(currentClientId)">+ תיק חדש</button>
+        </div>
+      </div>
+      <div class="content" id="client-detail-body"></div>
+    </div>
+
+    <!-- TASKS -->
+    <div id="panel-tasks" class="panel">
+      <div class="topbar">
+        <div class="topbar-title">משימות</div>
+        <div class="topbar-actions">
+          <select class="form-input btn" id="tasks-filter" onchange="renderTasks()" style="width:130px;padding:6px 10px;font-size:12px">
+            <option value="">כל התיקים</option>
+          </select>
+          <button class="btn btn-primary" onclick="openModal('modal-task')">+ משימה חדשה</button>
+        </div>
+      </div>
+      <div class="content">
+        <div class="two-col">
+          <div class="card"><div class="card-title" style="color:var(--danger)">פתוחות <span id="tasks-open-count" style="color:var(--text3)"></span></div><div id="tasks-open"></div></div>
+          <div class="card"><div class="card-title" style="color:var(--success)">הושלמו</div><div id="tasks-done"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CALENDAR -->
+    <div id="panel-calendar" class="panel">
+      <div class="topbar">
+        <div class="topbar-title" id="cal-title">יומן</div>
+        <div class="topbar-actions">
+          <button class="btn btn-sm" onclick="calMove(-1)">‹</button>
+          <button class="btn btn-sm" onclick="calToday()">היום</button>
+          <button class="btn btn-sm" onclick="calMove(1)">›</button>
+          <button class="btn btn-primary" onclick="openModal('modal-event')">+ דיון / אירוע</button>
+        </div>
+      </div>
+      <div class="content">
+        <div class="two-col" style="align-items:start">
+          <div class="card"><div class="cal-grid" id="cal-grid"></div></div>
+          <div>
+            <div class="card"><div class="card-title">אירועים – חודש זה</div><div id="events-month"></div></div>
+            <div class="card"><div class="card-title">קרובים</div><div id="events-list"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- FINANCE -->
+    <div id="panel-finance" class="panel">
+      <div class="topbar">
+        <div class="topbar-title">ניהול כספי</div>
+        <div class="topbar-actions">
+          <button class="btn" onclick="exportFinanceSummary()">📋 ייצוא דוח</button>
+          <button class="btn btn-primary" onclick="openModal('modal-payment')">+ רישום תשלום</button>
+        </div>
+      </div>
+      <div class="content">
+        <div class="stats-grid">
+          <div class="stat"><div class="stat-label">סה"כ חוב בטיפול</div><div class="amount-big" id="fin-total-debt">₪0</div></div>
+          <div class="stat"><div class="stat-label">גבוי סה"כ</div><div class="amount-big" id="fin-total-collected" style="color:var(--success)">₪0</div></div>
+          <div class="stat"><div class="stat-label">שכ"ט צפוי</div><div class="amount-big" id="fin-expected-fee" style="color:var(--warning)">₪0</div></div>
+          <div class="stat"><div class="stat-label">שכ"ט שנגבה</div><div class="amount-big" id="fin-collected-fee" style="color:var(--accent2)">₪0</div></div>
+        </div>
+        <div class="card">
+          <div class="card-title">גבייה מול יתרת חוב – 6 חודשים אחרונים</div>
+          <div id="fin-chart"></div>
+        </div>
+        <div class="two-col">
+          <div class="card">
+            <div class="card-title">תיקים – מעקב כספי</div>
+            <div id="fin-cases-list"></div>
+          </div>
+          <div class="card">
+            <div class="card-title">תשלומים אחרונים</div>
+            <div id="fin-payments-list"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">דוח שכר טרחה – לפי תיק</div>
+          <div id="fin-fee-report"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- DOCS -->
+    <div id="panel-docs" class="panel">
+      <div class="topbar">
+        <div class="topbar-title">מסמכים</div>
+        <div class="topbar-actions">
+          <button class="btn btn-primary" onclick="openModal('modal-doc')">+ הוסף מסמך</button>
+        </div>
+      </div>
+      <div class="search-wrap">
+        <input class="search-input" placeholder="חיפוש מסמכים..." oninput="renderDocs(this.value)">
+      </div>
+      <div class="content"><div id="docs-list"></div><div id="docs-empty" class="empty" style="display:none">אין מסמכים</div></div>
+    </div>
+
+    <!-- TEMPLATES (mobile-only: internal storage doesn't have a "browse to a Windows folder" option, so templates/reference docs are imported once here) -->
+    <div id="panel-templates" class="panel">
+      <div class="topbar">
+        <div class="topbar-title">ניהול תבניות</div>
+        <div class="topbar-actions">
+          <button class="btn btn-primary" onclick="tmImportFiles()">📥 ייבוא קבצים</button>
+        </div>
+      </div>
+      <div class="content">
+        <div class="alert alert-info">האפליקציה בנייד שומרת קבצים באחסון הפנימי שלה בלבד. ייבא כאן, לתוך תיקיית "תבניות", את קבצי התבניות בשמות המדויקים: טמפלט_הסכם_שכר_טרחה.docx וטמפלט_ייפוי_כוח.docx. ניתן גם לייבא תיקיות דוגמאות נוספות (בקשות, הסכמים וכו') – חד פעמי.</div>
+        <div class="form-group">
+          <label class="form-label">תיקיית יעד לייבוא</label>
+          <select class="form-input" id="tm-target-folder">
+            <option value="תבניות">תבניות (עבור atf.docx / poa.docx)</option>
+            <option value="בקשות">בקשות</option>
+            <option value="הסכמים">הסכמים</option>
+            <option value="התראות">התראות</option>
+            <option value="__new__">תיקייה חדשה...</option>
+          </select>
+        </div>
+        <div class="card">
+          <div class="card-title">קבצים באחסון הפנימי</div>
+          <div id="tm-tree"></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="notif" id="notif"></div>
+<div class="timer-fab" id="timer-fab" onclick="toggleTimer()">▶ 00:00:00</div>
+
+<!-- ============ AI AGENT ============ -->
+<div class="agent-panel" id="agent-panel">
+  <div class="agent-hd">
+    <div>
+      <div class="agent-hd-title">🤖 סוכן AI – LexTrack</div>
+      <div id="agent-session-cost" style="font-size:10px;color:var(--text3);margin-top:1px">עלות session: $0.0000</div>
+    </div>
+    <div class="agent-hd-btns">
+      <button class="agent-hd-btn" onclick="openSettingsModal()" title="הגדרות">⚙</button>
+      <button class="agent-hd-btn" onclick="clearAgentChat()" title="נקה שיחה">🗑</button>
+      <button class="agent-hd-btn" onclick="toggleAgent()" title="סגור" style="font-size:18px;line-height:1">×</button>
+    </div>
+  </div>
+  <div class="agent-msgs" id="agent-msgs">
+    <div class="agent-welcome">שלום! אני הסוכן החכם של LexTrack.<br>תוכל לבקש ממני לפתוח תיקים, להוסיף לקוחות,<br>ליצור הסכמי שכ"ט וייפויי כוח, לרשום משימות ועוד.<br>תוכל גם להעלות מסמך (PDF / תמונה) לחילוץ פרטים.</div>
+  </div>
+  <div class="agent-input-row">
+    <button class="agent-btn-upload" onclick="agentUploadFile()" title="העלאת מסמך לניתוח">📎</button>
+<textarea class="agent-textarea" id="agent-input" placeholder="הקלד פקודה בעברית..." rows="1" onkeydown="agentKeydown(event)" oninput="agentGrow(this)"></textarea>
+    <button class="agent-btn-send" onclick="agentSend()">שלח</button>
+  </div>
+</div>
+<button class="agent-fab" onclick="toggleAgent()">🤖 סוכן AI</button>
+
+<!-- ============ MODALS ============ -->
+
+<!-- MODAL CASE -->
+<div class="modal-overlay" id="modal-case">
+  <div class="modal modal-wide">
+    <div class="modal-header"><div class="modal-title" id="case-modal-title">תיק חדש</div><button class="modal-close" onclick="closeModal('modal-case')">×</button></div>
+    <input type="hidden" id="case-edit-id">
+    <div class="tabs" style="margin-bottom:18px">
+      <div class="tab active" onclick="switchFormTab(this,'ctab-basic')">פרטי תיק</div>
+      <div class="tab" onclick="switchFormTab(this,'ctab-debtor')">פרטי חייב</div>
+      <div class="tab" onclick="switchFormTab(this,'ctab-fee')">שכר טרחה</div>
+    </div>
+    <!-- Tab: פרטי תיק -->
+    <div id="ctab-basic">
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">שם התיק *</label><input class="form-input" id="case-name" placeholder="כהן נ׳ לוי בע״מ"></div>
+        <div class="form-group"><label class="form-label">מספר תיק</label><input class="form-input" id="case-number" placeholder="2025-001"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">לקוח (מזמין השירות)</label><select class="form-input" id="case-client"><option value="">בחר לקוח...</option></select></div>
+        <div class="form-group"><label class="form-label">סכום חוב (₪)</label><input class="form-input" id="case-amount" type="number" placeholder="0"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">שלב טיפול</label>
+          <select class="form-input" id="case-stage">
+            <option>איסוף מסמכים</option><option>התראה ראשונה</option><option>גישור</option>
+            <option>כתב תביעה</option><option>דיון</option><option>הוצאה לפועל</option><option>סגור</option>
+          </select>
+        </div>
+        <div class="form-group"><label class="form-label">סטטוס</label>
+          <select class="form-input" id="case-status">
+            <option value="active">פעיל</option><option value="urgent">דחוף</option>
+            <option value="pending">ממתין</option><option value="closed">סגור</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">בית משפט / לשכת הוצל"פ</label><input class="form-input" id="case-court" placeholder="לשכת ה.ל.פ תל אביב"></div>
+        <div class="form-group"><label class="form-label">מס' תיק בביהמ"ש / הוצל"פ</label><input class="form-input" id="case-court-number" placeholder="מ.ת. 12345-01-25"></div>
+      </div>
+      <div class="form-group"><label class="form-label">הערות</label><textarea class="form-input" id="case-notes" style="min-height:60px"></textarea></div>
+    </div>
+    <!-- Tab: פרטי חייב -->
+    <div id="ctab-debtor" style="display:none">
+      <div class="alert alert-info">פרטי החייב ישמשו לאוטומציה של הסכם שכ"ט וייפוי כוח</div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">שם החייב *</label><input class="form-input" id="case-debtor-name" placeholder="שם מלא / שם חברה"></div>
+        <div class="form-group"><label class="form-label">ת.ז / ח.פ של החייב</label><input class="form-input" id="case-debtor-id" placeholder="000000000"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">כתובת החייב</label><input class="form-input" id="case-debtor-address" placeholder="רחוב, עיר, מיקוד"></div>
+        <div class="form-group"><label class="form-label">טלפון החייב</label><input class="form-input" id="case-debtor-phone" placeholder="05X-XXXXXXX"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">אימייל החייב</label><input class="form-input" id="case-debtor-email" type="email"></div>
+        <div class="form-group"><label class="form-label">סוג חייב</label>
+          <select class="form-input" id="case-debtor-type"><option value="יחיד">יחיד</option><option value="חברה">חברה</option><option value="עוסק מורשה">עוסק מורשה</option></select>
+        </div>
+      </div>
+      <div class="form-group"><label class="form-label">מקור החוב / תיאור קצר</label><textarea class="form-input" id="case-debt-desc" placeholder="לדוגמה: חוב מחוזה שירות מיום..." style="min-height:60px"></textarea></div>
+    </div>
+    <!-- Tab: שכר טרחה -->
+    <div id="ctab-fee" style="display:none">
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">סוג שכ"ט</label>
+          <select class="form-input" id="case-fee-type" onchange="updateFeeFields()">
+            <option value="percent">אחוז מגבייה</option>
+            <option value="fixed">שכר קבוע</option>
+            <option value="both">שניהם</option>
+            <option value="hourly">שעתי</option>
+          </select>
+        </div>
+        <div class="form-group" id="fee-pct-group"><label class="form-label">אחוז שכ"ט (%)</label><input class="form-input" id="case-fee-pct" type="number" placeholder="15" value="15"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group" id="fee-fixed-group" style="display:none"><label class="form-label">סכום קבוע (₪)</label><input class="form-input" id="case-fee-fixed" type="number" placeholder="0"></div>
+        <div class="form-group"><label class="form-label">כולל מע"מ?</label>
+          <select class="form-input" id="case-fee-vat"><option value="yes">כן (+17%)</option><option value="no">לא</option></select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">הוצאות נפרדות</label>
+          <select class="form-input" id="case-expenses-type">
+            <option value="client">על חשבון הלקוח</option><option value="office">על חשבון המשרד</option><option value="na">לא רלוונטי</option>
+          </select>
+        </div>
+        <div class="form-group"><label class="form-label">מקדמה/ריטיינר (₪)</label><input class="form-input" id="case-retainer" type="number" placeholder="0"></div>
+      </div>
+      <div class="form-group"><label class="form-label">הערות לגבי שכ"ט</label><textarea class="form-input" id="case-fee-notes" style="min-height:50px" placeholder="הוצאות: אגרות וכו'..."></textarea></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="saveCase()">שמור תיק</button>
+      <button class="btn" onclick="closeModal('modal-case')">ביטול</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL CLIENT -->
+<div class="modal-overlay" id="modal-client">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title" id="client-modal-title">לקוח חדש</div><button class="modal-close" onclick="closeModal('modal-client')">×</button></div>
+    <input type="hidden" id="client-edit-id">
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">שם *</label><input class="form-input" id="client-name" placeholder="שם מלא / שם חברה"></div>
+      <div class="form-group"><label class="form-label">סוג</label><select class="form-input" id="client-type"><option>יחיד</option><option>חברה</option><option>עוסק מורשה</option></select></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">ת.ז / ח.פ</label><input class="form-input" id="client-idnum" placeholder="000000000"></div>
+      <div class="form-group"><label class="form-label">טלפון</label><input class="form-input" id="client-phone" placeholder="05X-XXXXXXX"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">אימייל</label><input class="form-input" id="client-email" type="email"></div>
+      <div class="form-group"><label class="form-label">כתובת</label><input class="form-input" id="client-address"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">איש קשר ראשי</label><input class="form-input" id="client-contact" placeholder="שם + תפקיד"></div>
+      <div class="form-group"><label class="form-label">טלפון איש קשר</label><input class="form-input" id="client-contact-phone"></div>
+    </div>
+    <div class="form-group"><label class="form-label">הערות</label><textarea class="form-input" id="client-notes" style="min-height:50px"></textarea></div>
+    <div class="modal-footer"><button class="btn btn-primary" onclick="saveClient()">שמור</button><button class="btn" onclick="closeModal('modal-client')">ביטול</button></div>
+  </div>
+</div>
+
+<!-- MODAL TASK -->
+<div class="modal-overlay" id="modal-task">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title">משימה חדשה</div><button class="modal-close" onclick="closeModal('modal-task')">×</button></div>
+    <div class="form-group"><label class="form-label">תיאור *</label><input class="form-input" id="task-text" placeholder="מה צריך לעשות?"></div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">תאריך יעד</label><input class="form-input" id="task-due" type="date"></div>
+      <div class="form-group"><label class="form-label">עדיפות</label>
+        <select class="form-input" id="task-priority"><option value="urgent">דחופה 🔴</option><option value="normal" selected>רגילה</option><option value="low">נמוכה</option></select>
+      </div>
+    </div>
+    <div class="form-group"><label class="form-label">תיק קשור</label><select class="form-input" id="task-case"><option value="">ללא תיק</option></select></div>
+    <div class="form-group"><label class="form-label">הערות</label><textarea class="form-input" id="task-notes" style="min-height:50px"></textarea></div>
+    <div class="modal-footer"><button class="btn btn-primary" onclick="saveTask()">שמור</button><button class="btn" onclick="closeModal('modal-task')">ביטול</button></div>
+  </div>
+</div>
+
+<!-- MODAL EVENT -->
+<div class="modal-overlay" id="modal-event">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title">דיון / אירוע</div><button class="modal-close" onclick="closeModal('modal-event')">×</button></div>
+    <div class="form-group"><label class="form-label">כותרת *</label><input class="form-input" id="event-title"></div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">תאריך *</label><input class="form-input" id="event-date" type="date"></div>
+      <div class="form-group"><label class="form-label">שעה</label><input class="form-input" id="event-time" type="time"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">מיקום / כתובת</label><input class="form-input" id="event-location"></div>
+      <div class="form-group"><label class="form-label">סוג</label>
+        <select class="form-input" id="event-type">
+          <option>דיון</option><option>קדם משפט</option><option>הוצאה לפועל</option>
+          <option>בוררות</option><option>פגישת לקוח</option><option>מועד אחרון</option><option>אחר</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-group"><label class="form-label">תיק קשור</label><select class="form-input" id="event-case"><option value="">ללא תיק</option></select></div>
+    <div class="form-group"><label class="form-label">הערות</label><textarea class="form-input" id="event-notes" style="min-height:50px"></textarea></div>
+    <div class="modal-footer"><button class="btn btn-primary" onclick="saveEvent()">שמור</button><button class="btn" onclick="closeModal('modal-event')">ביטול</button></div>
+  </div>
+</div>
+
+<!-- MODAL DOC -->
+<div class="modal-overlay" id="modal-doc">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title">הוסף מסמך</div><button class="modal-close" onclick="closeModal('modal-doc')">×</button></div>
+    <div class="form-group"><label class="form-label">שם המסמך *</label><input class="form-input" id="doc-name"></div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">קטגוריה</label>
+        <select class="form-input" id="doc-cat">
+          <option>תביעות וכתבי בי דין</option><option>התראות ומכתבים</option>
+          <option>חוזים ונספחים</option><option>פסקי דין</option><option>ראיות</option><option>אחר</option>
+        </select>
+      </div>
+      <div class="form-group"><label class="form-label">תיק קשור</label><select class="form-input" id="doc-case"><option value="">ללא תיק</option></select></div>
+    </div>
+    <div class="form-group"><label class="form-label">קובץ</label>
+      <div class="file-drop" id="file-drop" onclick="pickFile()">📎 לחץ לבחירת קובץ<br><span style="font-size:11px;color:var(--text3)">PDF, Word, Excel, תמונות</span></div>
+      <div id="file-info" style="font-size:12px;color:var(--success);margin-top:6px;display:none"></div>
+    </div>
+    <div class="form-group"><label class="form-label">הערות</label><textarea class="form-input" id="doc-notes"></textarea></div>
+    <div class="modal-footer"><button class="btn btn-primary" onclick="saveDoc()">שמור מסמך</button><button class="btn" onclick="closeModal('modal-doc')">ביטול</button></div>
+  </div>
+</div>
+
+<!-- MODAL PAYMENT -->
+<div class="modal-overlay" id="modal-payment">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title" id="pay-modal-title">רישום תשלום</div><button class="modal-close" onclick="closeModal('modal-payment')">×</button></div>
+    <input type="hidden" id="pay-edit-id">
+    <div class="form-group"><label class="form-label">תיק</label><select class="form-input" id="pay-case"><option value="">בחר תיק...</option></select></div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">סכום שנגבה (₪) *</label><input class="form-input" id="pay-amount" type="number" placeholder="0"></div>
+      <div class="form-group"><label class="form-label">תאריך תשלום</label><input class="form-input" id="pay-date" type="date"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">אמצעי תשלום</label>
+        <select class="form-input" id="pay-method"><option>העברה בנקאית</option><option>צ'ק</option><option>מזומן</option><option>כרטיס אשראי</option><option>אחר</option></select>
+      </div>
+      <div class="form-group"><label class="form-label">סוג</label>
+        <select class="form-input" id="pay-type"><option value="debt">גבייה מחייב</option><option value="retainer">מקדמה מלקוח</option><option value="expense">הוצאה</option></select>
+      </div>
+    </div>
+    <div class="form-group"><label class="form-label">הערה</label><input class="form-input" id="pay-note" placeholder="תיאור התשלום..."></div>
+    <div class="modal-footer"><button class="btn btn-primary" onclick="savePayment()">שמור תשלום</button><button class="btn" onclick="closeModal('modal-payment')">ביטול</button></div>
+  </div>
+</div>
+
+<!-- MODAL LEGAL DOC GENERATOR -->
+<div class="modal-overlay" id="modal-legal-gen">
+  <div class="modal modal-wide">
+    <div class="modal-header">
+      <div class="modal-title" id="legal-gen-title">יצירת מסמך משפטי</div>
+      <button class="modal-close" onclick="closeModal('modal-legal-gen')">×</button>
+    </div>
+    <div id="legal-gen-body"></div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="downloadLegalDoc()">⬇ הורד Word</button>
+      <button class="btn" onclick="closeModal('modal-legal-gen')">סגור</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL TIME LOG -->
+<div class="modal-overlay" id="modal-timelog">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title">שמירת שעות עבודה</div><button class="modal-close" onclick="discardTimeEntry()">×</button></div>
+    <div class="form-group" id="tl-duration-label" style="font-size:15px;font-weight:600;color:var(--accent2);margin-bottom:4px"></div>
+    <div class="form-group"><label class="form-label">תיק קשור</label><select class="form-input" id="tl-case"><option value="">ללא תיק</option></select></div>
+    <div class="form-group"><label class="form-label">תיאור</label><input class="form-input" id="tl-desc" placeholder="מה עשית?"></div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="saveTimeEntry()">שמור שעות</button>
+      <button class="btn btn-danger" onclick="discardTimeEntry()">בטל</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL MANUAL TIME ENTRY -->
+<div class="modal-overlay" id="modal-manual-time">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title">הוספת שעות ידנית</div><button class="modal-close" onclick="closeManualTime()">×</button></div>
+    <input type="hidden" id="mt-case-id">
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">שעות</label><input class="form-input" type="number" id="mt-hours" min="0" max="23" placeholder="0"></div>
+      <div class="form-group"><label class="form-label">דקות</label><input class="form-input" type="number" id="mt-minutes" min="0" max="59" placeholder="0"></div>
+    </div>
+    <div class="form-group"><label class="form-label">תאריך</label><input class="form-input" type="date" id="mt-date"></div>
+    <div class="form-group"><label class="form-label">תיאור</label><input class="form-input" id="mt-desc" placeholder="מה עשית?"></div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="saveManualTime()">שמור</button>
+      <button class="btn" onclick="closeManualTime()">ביטול</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL SETTINGS -->
+<div class="modal-overlay" id="modal-settings">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">⚙ הגדרות</div>
+      <button class="modal-close" onclick="closeModal('modal-settings')">×</button>
+    </div>
+    <div class="form-group">
+      <label class="form-label">מפתח Claude API (Anthropic)</label>
+      <input class="form-input" id="settings-api-key" type="password" placeholder="sk-ant-api03-...">
+      <div style="font-size:11px;color:var(--text3);margin-top:5px">המפתח נשמר מקומית בקובץ הנתונים בלבד ואינו נשלח לשום שרת חיצוני.</div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">ספריית מסמכים לדוגמה</label>
+      <div style="display:flex;gap:6px;align-items:center">
+        <input class="form-input" id="settings-library-path" placeholder="Documents\בקשות והסכמים" style="flex:1">
+        <button class="btn btn-sm" onclick="pickLibraryPath()" style="flex-shrink:0;white-space:nowrap">עיון...</button>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:5px">תיקייה עם תיקיות משנה לפי סוג מסמך (בקשות, הסכמים, התראות וכו׳)</div>
+    </div>
+    <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:14px">
+      <div style="font-size:12px;font-weight:700;color:var(--accent2);margin-bottom:10px">הגדרות סוכן AI</div>
+      <div class="form-group">
+        <label class="form-label">מודל ברירת מחדל</label>
+        <select class="form-input" id="settings-agent-model" style="width:100%">
+          <option value="">🤖 אוטומטי (מומלץ) – Haiku לפקודות, Sonnet לניסוח</option>
+          <option value="haiku">💨 Haiku תמיד – הכי זול</option>
+          <option value="sonnet">🧠 Sonnet תמיד – הכי חכם</option>
+        </select>
+      </div>
+      <div class="form-group" style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+        <input type="checkbox" id="settings-agent-caching" style="width:auto;margin:0">
+        <label class="form-label" style="margin:0">הפעל prompt caching (~90% חיסכון על system prompt)</label>
+      </div>
+      <div style="font-size:12px;color:var(--text3);margin-top:6px">עלות session נוכחית: <strong id="settings-session-cost-modal">$0.0000</strong></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="saveSettings()">שמור הגדרות</button>
+      <button class="btn" onclick="closeModal('modal-settings')">ביטול</button>
+    </div>
+  </div>
+</div>
+
+<!-- SCRIPTS: injected by build.mjs per target (electron vs www) -->
+
+</body>
+</html>

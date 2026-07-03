@@ -1,0 +1,9 @@
+{
+  "appId": "com.ashual.lextrack",
+  "appName": "LexTrack",
+  "webDir": "www",
+  "server": {
+    "url": "https://zesty-marigold-0edcb2.netlify.app/",
+    "androidScheme": "https"
+  }
+}

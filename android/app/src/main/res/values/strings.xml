@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">LexTrack</string>
+    <string name="title_activity_main">LexTrack</string>
+    <string name="package_name">com.ashual.lextrack</string>
+    <string name="custom_url_scheme">com.ashual.lextrack</string>
+</resources>

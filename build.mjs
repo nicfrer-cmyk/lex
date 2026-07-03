@@ -1,0 +1,54 @@
+// Phase 2: single web build. Netlify runs `node build.mjs` and publishes dist/.
+// Electron and the Android app (Capacitor "remote URL" mode) both just load the deployed
+// site, so this is now the only build target that matters.
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import esbuild from 'esbuild';
+
+const root = path.dirname(fileURLToPath(import.meta.url));
+const src = path.join(root, 'src');
+const outDir = path.join(root, 'dist');
+const vendorDir = path.join(outDir, 'vendor');
+
+fs.mkdirSync(vendorDir, { recursive: true });
+
+// index.html: markup/CSS from src/app.html, with the real script tags injected.
+const appHtml = fs.readFileSync(path.join(src, 'app.html'), 'utf8');
+const html = appHtml.replace(
+  '<!-- SCRIPTS: injected by build.mjs per target (electron vs www) -->',
+  [
+    'vendor/docx.umd.js',
+    'vendor/pizzip.min.js',
+    'vendor/mammoth.browser.min.js',
+    'platform.js',
+    'app.js',
+    'auth.js',
+    'template-manager.js',
+  ].map(s => `<script src="${s}"></script>`).join('\n')
+);
+fs.writeFileSync(path.join(outDir, 'index.html'), html, 'utf8');
+
+// Plain, unbundled files — must stay plain scripts so top-level function declarations
+// (nav(), saveCase(), etc.) stay reachable from the HTML's onclick="..." attributes.
+fs.copyFileSync(path.join(src, 'app.js'), path.join(outDir, 'app.js'));
+fs.copyFileSync(path.join(src, 'auth.js'), path.join(outDir, 'auth.js'));
+fs.copyFileSync(path.join(src, 'template-manager.js'), path.join(outDir, 'template-manager.js'));
+
+// Prebuilt browser/UMD dist files straight from node_modules.
+fs.copyFileSync(path.join(root, 'node_modules/docx/dist/index.umd.cjs'), path.join(vendorDir, 'docx.umd.js'));
+fs.copyFileSync(path.join(root, 'node_modules/pizzip/dist/pizzip.min.js'), path.join(vendorDir, 'pizzip.min.js'));
+fs.copyFileSync(path.join(root, 'node_modules/mammoth/mammoth.browser.min.js'), path.join(vendorDir, 'mammoth.browser.min.js'));
+
+// platform.web.js needs real bundling: @supabase/supabase-js, buffer, docxtemplater.
+await esbuild.build({
+  entryPoints: [path.join(src, 'platform.web.js')],
+  bundle: true,
+  platform: 'browser',
+  format: 'iife',
+  target: 'es2019',
+  outfile: path.join(outDir, 'platform.js'),
+  logLevel: 'info',
+});
+
+console.log('[build] wrote dist/ (index.html, app.js, auth.js, platform.js, template-manager.js, vendor/*)');
