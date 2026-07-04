@@ -203,6 +203,18 @@ function closeModal(id) {
 // quick-add-from-case flow never returning to the case form).
 document.querySelectorAll('.modal-overlay').forEach(m=>m.addEventListener('click',function(e){if(e.target===this)closeModal(this.id);}));
 
+// Delegated so it works for every task-cb rendered anywhere (dashboard, tasks
+// screen, case detail) without a listener per element. A div with role="checkbox"
+// only gets a11y semantics from the role/aria attributes (see taskCbHtml) — the
+// browser doesn't wire up Enter/Space activation for it the way a real
+// <input type=checkbox> gets for free, so this does it by hand.
+document.addEventListener('keydown', function(e){
+  if((e.key===' '||e.key==='Enter') && e.target.matches && e.target.matches('.task-cb[role="checkbox"]')){
+    e.preventDefault();
+    e.target.click();
+  }
+});
+
 function populateSelects() {
   const co='<option value="">בחר לקוח...</option>'+db.clients.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
   const cas='<option value="">ללא תיק</option>'+db.cases.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
@@ -579,7 +591,7 @@ function openCaseDetail(id) {
       <div id="ct-tasks">
         <button class="btn btn-sm" style="margin-bottom:10px" onclick="addTaskForCase('${id}')">+ משימה</button>
         ${caseTasks.length?caseTasks.map(t=>`<div class="task-item">
-          <div class="task-cb ${t.done?'done':''}" onclick="toggleTask('${t.id}',true)">${t.done?'✓':''}</div>
+          ${taskCbHtml(t,true)}
           <div class="prio-dot prio-${t.priority||'normal'}"></div>
           <div style="flex:1"><div class="task-text ${t.done?'done':''}">${t.text}</div>${t.notes?`<div style="font-size:11px;color:var(--text3)">${t.notes}</div>`:''}</div>
           <div class="task-meta ${t.priority==='urgent'&&!t.done?'urgent':''}">${t.due||''}</div>
@@ -1092,6 +1104,16 @@ function toggleTask(id,inDetail=false){
   if(currentPanel==='dashboard') renderDashboard();
 }
 
+// Every "task-cb" checkbox is a styled <div>, not a real <input type=checkbox> (the
+// custom checkmark/coloring is easier this way) — role/aria-checked/tabindex make it
+// identify as a checkbox to a screen reader, and the delegated keydown listener
+// below (added once, near the other document-level listeners) gives it Enter/Space
+// keyboard activation, since a plain div with onclick otherwise only responds to a
+// mouse/touch click.
+function taskCbHtml(t, inDetail){
+  return `<div class="task-cb ${t.done?'done':''}" role="checkbox" aria-checked="${!!t.done}" tabindex="0" onclick="toggleTask('${t.id}'${inDetail?',true':''})">${t.done?'✓':''}</div>`;
+}
+
 function renderTasks(){
   const filterCase=document.getElementById('tasks-filter')?document.getElementById('tasks-filter').value:'';
   let allTasks=filterCase?db.tasks.filter(t=>t.caseId===filterCase):db.tasks;
@@ -1107,7 +1129,7 @@ function renderTasks(){
     const c=t.caseId?db.cases.find(x=>x.id===t.caseId):null;
     const ov=t.due&&t.due<today&&!t.done;
     return `<div class="task-item">
-      <div class="task-cb ${t.done?'done':''}" onclick="toggleTask('${t.id}')">${t.done?'✓':''}</div>
+      ${taskCbHtml(t)}
       <div class="prio-dot prio-${t.priority||'normal'}"></div>
       <div style="flex:1">
         <div class="task-text ${t.done?'done':''}">${t.text}</div>
@@ -1462,7 +1484,7 @@ function renderDashboard(){
 
   const urgentTasks=db.tasks.filter(t=>!t.done&&(t.priority==='urgent'||(t.due&&t.due<=today))).slice(0,5);
   document.getElementById('d-tasks').innerHTML=urgentTasks.length?urgentTasks.map(t=>`<div class="task-item">
-    <div class="task-cb" onclick="toggleTask('${t.id}')"></div>
+    ${taskCbHtml(t)}
     <div class="prio-dot prio-${t.priority||'normal'}"></div>
     <div class="task-text" style="flex:1;font-size:13px">${t.text}</div>
     <div class="task-meta ${t.due&&t.due<today?'urgent':''}">${t.due||''}</div>
