@@ -11,7 +11,13 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase-config.js';
 window.Buffer = Buffer;
 window.process = window.process || { browser: true, env: {}, version: '' };
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+// persistSession:false is a deliberate product decision, not the Supabase default:
+// this app holds client debt/legal data, so every fresh open of the app (closing and
+// reopening the tab/PWA, not just a same-tab reload) requires signing in again,
+// instead of silently restoring whatever session was last active on this device.
+// detectSessionInUrl (default true, unaffected by this) still lets the password-reset
+// email link log the user in for that one recovery flow.
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: false } });
 window.supabaseClient = supabase; // used by auth.js for sign in/up/out + session state
 
 // docx and pizzip are loaded separately as plain <script> tags (prebuilt UMD bundles,
