@@ -215,6 +215,31 @@ document.addEventListener('keydown', function(e){
   }
 });
 
+// ===== CLIENT-SIDE ERROR LOGGING (see client_errors table / fix8.sql) =====
+// A lightweight, zero-new-account alternative to a third-party error monitoring
+// service — logs to the same Supabase project this app already runs on, so there's
+// nothing new to sign up for. Deduped by message text and capped per session so a
+// tight error loop can't flood the table.
+const _loggedErrorKeys = new Set();
+let _clientErrorCount = 0;
+function logClientErrorOnce(message, stack) {
+  if (_clientErrorCount >= 20) return;
+  const key = String(message).slice(0, 200);
+  if (_loggedErrorKeys.has(key)) return;
+  _loggedErrorKeys.add(key);
+  _clientErrorCount++;
+  if (typeof Platform !== 'undefined' && Platform.logClientError) {
+    Platform.logClientError({ message, stack, url: location.href }).catch(()=>{});
+  }
+}
+window.addEventListener('error', (e) => {
+  logClientErrorOnce(e.message, e.error && e.error.stack);
+});
+window.addEventListener('unhandledrejection', (e) => {
+  const reason = e.reason;
+  logClientErrorOnce(reason && reason.message ? reason.message : String(reason), reason && reason.stack);
+});
+
 function populateSelects() {
   const co='<option value="">בחר לקוח...</option>'+db.clients.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
   const cas='<option value="">ללא תיק</option>'+db.cases.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
@@ -1633,7 +1658,9 @@ async function openSettingsModal() {
     document.getElementById('settings-office-name').disabled = !isOwner;
     document.getElementById('settings-vat-rate').disabled = !isOwner;
     document.getElementById('settings-team-section').style.display = isOwner ? '' : 'none';
-    if (isOwner) renderTeamSection();
+    document.getElementById('settings-errors-section').style.display = isOwner ? '' : 'none';
+    document.getElementById('settings-subscription-section').style.display = isOwner ? '' : 'none';
+    if (isOwner) { renderTeamSection(); renderErrorsSection(); renderSubscriptionSection(); }
   } catch (e) { /* office info is best-effort in this modal */ }
   try {
     const me = await Platform.getUser();
@@ -1661,6 +1688,41 @@ function saveSettings() {
   closeModal('modal-settings'); notify('הגדרות נשמרו ✓');
 }
 
+// See supabase-schema-phase1-fix9.sql / supabase/functions/create-payment-page —
+// the payment provider isn't fully wired up yet, so a failed upgradeSubscription()
+// call is expected right now, not a bug; the catch below reports that plainly
+// instead of leaving the button looking broken with no feedback.
+async function renderSubscriptionSection() {
+  const el = document.getElementById('settings-subscription-status');
+  if (!el) return;
+  el.textContent = 'טוען...';
+  try {
+    const sub = await Platform.getSubscriptionStatus();
+    const statusLabel = { trial:'תקופת ניסיון', active:'פעיל', past_due:'תשלום מאחר', canceled:'בוטל' };
+    const trialTxt = sub?.status === 'trial' && sub.trial_ends_at
+      ? ` (מסתיימת ${new Date(sub.trial_ends_at).toLocaleDateString('he-IL')})` : '';
+    el.textContent = 'סטטוס: ' + (statusLabel[sub?.status] || sub?.status || '—') + trialTxt;
+  } catch (e) { el.textContent = 'לא ניתן לטעון את סטטוס המנוי'; }
+}
+async function upgradeSubscription() {
+  try {
+    const { url } = await Platform.createPaymentPage();
+    if (url) window.open(url, '_blank');
+  } catch (e) { notify('שגיאה: ' + e.message); }
+}
+
+async function renderErrorsSection() {
+  const wrap = document.getElementById('settings-errors-list');
+  if (!wrap) return;
+  wrap.innerHTML = '<div class="empty">טוען...</div>';
+  try {
+    const errors = await Platform.listClientErrors();
+    wrap.innerHTML = errors.length
+      ? errors.map(e => `<div style="padding:4px 0;border-bottom:1px solid var(--border)"><div>${e.message}</div><div style="opacity:0.7">${new Date(e.created_at).toLocaleString('he-IL')}</div></div>`).join('')
+      : '<div class="empty">אין שגיאות רשומות — נראה שהכל תקין 🙂</div>';
+  } catch (e) { wrap.innerHTML = '<div class="empty">שגיאה בטעינת היומן</div>'; }
+}
+
 // ===== TEAM / INVITES =====
 async function renderTeamSection() {
   const wrap = document.getElementById('settings-team-list');
@@ -1685,11 +1747,20 @@ async function createTeamInvite() {
   const role = document.getElementById('invite-role').value;
   if (!email) { notify('נא להזין אימייל'); return; }
   try {
-    const link = await Platform.createInvite(email, role);
+    const { token, link } = await Platform.createInvite(email, role);
     const linkEl = document.getElementById('invite-link-result');
     linkEl.style.display = 'block';
     linkEl.textContent = link;
-    notify('קישור הזמנה נוצר — העתק ושלח אותו למוזמן');
+    // Best-effort automatic email (see send-invite-email / Platform.sendInviteEmail)
+    // — not deployed/configured yet in this project, so this is expected to fail
+    // for now. Either way the link above still works via copy-paste, which is why
+    // the invite itself was already created successfully regardless of this result.
+    try {
+      await Platform.sendInviteEmail(token);
+      notify('הזמנה נשלחה באימייל! (הקישור זמין למעלה גם להעתקה ידנית)');
+    } catch (e) {
+      notify('קישור הזמנה נוצר — העתק ושלח אותו למוזמן (שליחה אוטומטית באימייל עדיין לא מוגדרת)');
+    }
   } catch (e) { notify('שגיאה: ' + e.message); }
 }
 // ===== AI AGENT =====

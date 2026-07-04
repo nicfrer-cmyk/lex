@@ -78,35 +78,52 @@ window.Platform = {
 
   // ---- auth ----
   async signUp(email, password) {
-    const { data, error } = await supabase.auth.signUp({ email, password });
+    const { error } = await supabase.auth.signUp({ email, password });
     if (error) throw error;
-    // New account = new solo office, owned by them — UNLESS they arrived via an
-    // invite link (?invite=token), in which case auth.js redeems that invite right
-    // after this resolves, which creates their membership in the INVITING office
-    // instead. Auto-creating a solo office here too would both give them a stray
-    // extra office AND make the invite redemption fail (a user may only ever
-    // belong to one office in v1 — see supabase-schema-phase1.sql).
-    const hasInvite = new URLSearchParams(location.search).has('invite');
-    if (data.session && data.user && !hasInvite) {
-      // Generate the office's id client-side and insert with return=minimal (no
-      // automatic select-back) — right after creating the office, the user isn't a
-      // member of it YET (that's the next statement), so the follow-up select an
-      // .insert().select() would normally do fails the offices_select_member RLS
-      // policy and Postgres reports it as "new row violates row-level security
-      // policy" even though the insert itself succeeded. Knowing the id upfront
-      // sidesteps the read entirely.
-      const officeId = crypto.randomUUID();
-      const { error: officeErr } = await supabase
-        .from('offices').insert({ id: officeId, name: 'המשרד שלי' });
-      if (officeErr) throw officeErr;
-      const { error: memberErr } = await supabase
-        .from('office_members').insert({ office_id: officeId, user_id: data.user.id, role: 'owner', email: data.user.email });
-      if (memberErr) throw memberErr;
-    }
+    // Office bootstrap (new solo office, unless arriving via an invite link) happens
+    // uniformly in auth.js's showApp() via ensureSoloOffice() — the same path a
+    // first-time Google sign-in goes through too, since OAuth has no separate
+    // "signUp" step of its own to hang this off of.
   },
   async signIn(email, password) {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw error;
+    clearOfficeCache();
+  },
+  async signInWithGoogle() {
+    // location.href (not just origin+pathname) so a `?invite=token` in the current
+    // URL survives the round-trip to Google and back — showApp() still needs it
+    // afterward to redeem the invite instead of bootstrapping a stray solo office.
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: location.href },
+    });
+    if (error) throw error;
+  },
+  // Ensures the signed-in user belongs to SOME office, creating a new solo one
+  // (owned by them) if not — called from showApp() on every first-time-this-session
+  // login that didn't arrive via an invite link, regardless of auth method. A no-op
+  // for a returning user who already has a membership (one extra select, no writes).
+  async ensureSoloOffice() {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    const { data: existing, error: existingErr } = await supabase
+      .from('office_members').select('office_id').eq('user_id', user.id).maybeSingle();
+    if (existingErr) throw existingErr;
+    if (existing) return;
+    // Generate the office's id client-side and insert with return=minimal (no
+    // automatic select-back) — right after creating the office, the user isn't a
+    // member of it YET (that's the next statement), so a follow-up .insert().select()
+    // would normally fail the offices_select_member RLS policy and Postgres reports
+    // it as "new row violates row-level security policy" even though the insert
+    // itself succeeded. Knowing the id upfront sidesteps the read entirely.
+    const officeId = crypto.randomUUID();
+    const { error: officeErr } = await supabase
+      .from('offices').insert({ id: officeId, name: 'המשרד שלי' });
+    if (officeErr) throw officeErr;
+    const { error: memberErr } = await supabase
+      .from('office_members').insert({ office_id: officeId, user_id: user.id, role: 'owner', email: user.email });
+    if (memberErr) throw memberErr;
     clearOfficeCache();
   },
   async signOut() {
@@ -155,7 +172,14 @@ window.Platform = {
     const { data, error } = await supabase.from('office_invites')
       .insert({ office_id: officeId, email, role }).select('token').single();
     if (error) throw error;
-    return `${location.origin}${location.pathname}?invite=${data.token}`;
+    return { token: data.token, link: `${location.origin}${location.pathname}?invite=${data.token}` };
+  },
+  // Best-effort — see supabase/functions/send-invite-email: needs the service_role
+  // key AND real SMTP configured to actually work. Callers should treat a thrown
+  // error here as "fall back to the copy-paste link", not a hard failure.
+  async sendInviteEmail(inviteToken) {
+    const { error } = await supabase.functions.invoke('send-invite-email', { body: { inviteToken } });
+    if (error) throw error;
   },
   async redeemInvite(token) {
     const { data: invite, error: findErr } = await supabase.from('office_invites').select('*').eq('token', token).maybeSingle();
@@ -167,6 +191,23 @@ window.Platform = {
     if (joinErr) throw joinErr;
     await supabase.from('office_invites').update({ redeemed_at: new Date().toISOString() }).eq('token', token);
     clearOfficeCache();
+  },
+
+  // ---- subscription / billing (see supabase-schema-phase1-fix9.sql) ----
+  async getSubscriptionStatus() {
+    const { officeId } = await currentOffice();
+    const { data, error } = await supabase.from('subscriptions')
+      .select('status, plan, trial_ends_at').eq('office_id', officeId).maybeSingle();
+    if (error) throw error;
+    return data;
+  },
+  // Calls supabase/functions/create-payment-page, which isn't deployed/configured
+  // yet (needs GROW_USER_ID/GROW_PAGE_CODE secrets) — this will throw a normal,
+  // catchable error until that's done, not crash the app.
+  async createPaymentPage() {
+    const { data, error } = await supabase.functions.invoke('create-payment-page', { body: {} });
+    if (error) throw error;
+    return data;
   },
 
   // ---- AI (server-side proxy — see supabase/functions/ai-proxy) ----
@@ -323,5 +364,35 @@ window.Platform = {
     const path = `${officeId}/templates/${toSafeKey(folderName)}/${toSafeKey(filename)}`;
     const { error } = await supabase.storage.from(BUCKET).remove([path]);
     if (error) throw error;
+  },
+
+  // ---- client-side error logging (see client_errors table / fix8.sql) ----
+  async logClientError({ message, stack, url }) {
+    // Never let logging an error throw another one — if we don't have a resolved
+    // office yet (e.g. the error happened before login finished), there's nothing
+    // useful to attach it to, so just skip rather than force officeId to be
+    // nullable and widen the insert policy.
+    try {
+      if (!_officeCache) return;
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      await supabase.from('client_errors').insert({
+        office_id: _officeCache.officeId,
+        user_id: user.id,
+        message: String(message == null ? 'Unknown error' : message).slice(0, 2000),
+        stack: stack ? String(stack).slice(0, 4000) : null,
+        url: url || null,
+        user_agent: navigator.userAgent,
+      });
+    } catch (e) { /* logging must never itself throw */ }
+  },
+  async listClientErrors() {
+    const { officeId, role } = await currentOffice();
+    if (role !== 'owner') throw new Error('רק בעל המשרד יכול לצפות ביומן השגיאות');
+    const { data, error } = await supabase.from('client_errors')
+      .select('message, url, created_at').eq('office_id', officeId)
+      .order('created_at', { ascending: false }).limit(20);
+    if (error) throw error;
+    return data;
   },
 };

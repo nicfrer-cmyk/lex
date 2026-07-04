@@ -34,6 +34,11 @@ function loadApp() {
       addEventListener: () => {},
       getElementById: () => null,
     },
+    // Top-level window.addEventListener('error'/'unhandledrejection', ...) calls
+    // (client-side error logging) run at script-load time just like the
+    // document.* listeners above, so this needs the same kind of stub.
+    window: { addEventListener: () => {} },
+    navigator: { userAgent: 'test' },
   };
   vm.createContext(sandbox);
   vm.runInContext(appJsSource + bridge, sandbox, { filename: 'app.js' });

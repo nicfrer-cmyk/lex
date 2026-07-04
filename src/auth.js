@@ -58,12 +58,30 @@ async function authSignUp() {
   try {
     await Platform.signUp(email, password);
     authShowStatus('');
-    // Only now — after office creation (inside Platform.signUp) has actually finished —
-    // do we transition to the app. See the race-condition comment on suppressAuthListener.
+    // showApp() itself now creates the solo office (via ensureSoloOffice(), so the
+    // same bootstrap covers Google sign-in too) — calling it explicitly here, only
+    // after Platform.signUp() resolves, is what the suppressAuthListener guard above
+    // exists for: without it, the auth-state listener would race to call showApp()
+    // the instant supabase.auth.signUp() establishes a session, before we're ready.
     suppressAuthListener = false;
     showApp();
   } catch (e) {
     suppressAuthListener = false;
+    authShowStatus('');
+    authShowError(authFriendlyError(e));
+  }
+}
+
+async function authSignInWithGoogle() {
+  authShowError('');
+  authShowStatus('מפנה ל-Google...');
+  try {
+    await Platform.signInWithGoogle();
+    // No showApp() call here: signInWithOAuth() navigates the browser away to
+    // Google immediately, then back — this code doesn't keep running across that
+    // redirect. The returning page load's onAuthStateChange fires showApp() itself
+    // once Supabase's client detects the session in the redirect URL.
+  } catch (e) {
     authShowStatus('');
     authShowError(authFriendlyError(e));
   }
@@ -139,6 +157,16 @@ async function showApp() {
       // no-op (fails the "not already a member" check with a clear error), but
       // there's no reason to keep offering it after the first attempt.
       history.replaceState(null, '', location.pathname);
+    } else {
+      // No invite in the URL: make sure this user has SOME office before bootApp()'s
+      // loadDB() needs one. Used to only happen inside Platform.signUp(), which
+      // silently broke a first-time Google sign-in — OAuth has no separate "signUp"
+      // step to hang that on, it just lands here via the normal session-restored path.
+      try {
+        await Platform.ensureSoloOffice();
+      } catch (e) {
+        alert('שגיאה ביצירת משרד: ' + e.message);
+      }
     }
     bootApp();
   }
