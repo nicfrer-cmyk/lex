@@ -18,10 +18,18 @@ const appHtml = fs.readFileSync(path.join(src, 'app.html'), 'utf8');
 const html = appHtml.replace(
   '<!-- SCRIPTS: injected by build.mjs per target (electron vs www) -->',
   [
+    // platform.js MUST load first: it sets window.Buffer (a polyfill). JSZip, bundled
+    // inside vendor/docx.umd.js, feature-detects "is Buffer available" ONCE at that
+    // script's own load time and caches the result — if the polyfill isn't there yet,
+    // JSZip permanently decides nodebuffer output isn't supported, and every docx
+    // generation (AI agent reports, ATF/POA templates) fails at Packer.toBuffer()
+    // with "nodebuffer is not supported by this platform", even though the polyfill
+    // exists by the time it's actually called. Confirmed via a real headless Chromium
+    // test, not just guessed.
+    'platform.js',
     'vendor/docx.umd.js',
     'vendor/pizzip.min.js',
     'vendor/mammoth.browser.min.js',
-    'platform.js',
     'app.js',
     'auth.js',
     'template-manager.js',

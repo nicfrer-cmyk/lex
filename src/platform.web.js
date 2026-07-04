@@ -53,6 +53,20 @@ async function blobToByteArray(blob) {
   return Array.from(new Uint8Array(ab));
 }
 
+// Supabase Storage rejects object keys containing Hebrew (or most non-ASCII) characters
+// with "Invalid key" — confirmed against the live bucket, not assumed. Every path this
+// file builds from a human-entered name (uploaded docs, generated report/ATF/POA
+// filenames, template library folder/file names — almost always Hebrew in this app)
+// must go through this reversible, collision-free encoding instead of the raw name.
+function toSafeKey(str) {
+  return btoa(unescape(encodeURIComponent(str))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function fromSafeKey(key) {
+  let b64 = key.replace(/-/g, '+').replace(/_/g, '/');
+  while (b64.length % 4) b64 += '=';
+  return decodeURIComponent(escape(atob(b64)));
+}
+
 window.Platform = {
   isMobile: false,
 
@@ -92,6 +106,14 @@ window.Platform = {
   async signOut() {
     await supabase.auth.signOut();
     clearOfficeCache();
+  },
+  async resetPasswordForEmail(email) {
+    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+    if (error) throw error;
+  },
+  async updatePassword(newPassword) {
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) throw error;
   },
   async getUser() {
     const { data: { user } } = await supabase.auth.getUser();
@@ -174,18 +196,22 @@ window.Platform = {
   // ---- files (Supabase Storage, private bucket, path-scoped to the OFFICE) ----
   async saveFile({ buffer, filename }) {
     const { officeId } = await currentOffice();
-    const path = `${officeId}/documents/${filename}`;
+    const path = `${officeId}/documents/${toSafeKey(filename)}`;
     const { error } = await supabase.storage.from(BUCKET).upload(path, bytesToBlob(buffer), { upsert: true });
     if (error) throw error;
     return path;
   },
 
-  async openFile(filePath) {
-    const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(filePath, 60);
+  async openFile(filePath, displayName) {
+    // The signed URL's response carries its own Content-Disposition (using the raw,
+    // base64-safe-encoded storage key), which browsers honor over the <a download>
+    // attribute — passing `download` here is what actually controls the filename the
+    // user sees saved to disk.
+    const { data, error } = await supabase.storage.from(BUCKET)
+      .createSignedUrl(filePath, 60, { download: displayName || filePath.split('/').pop() });
     if (error) throw error;
     const a = document.createElement('a');
     a.href = data.signedUrl;
-    a.download = filePath.split('/').pop();
     a.target = '_blank';
     document.body.appendChild(a);
     a.click();
@@ -222,7 +248,7 @@ window.Platform = {
   async readTemplate(templateName) {
     try {
       const { officeId } = await currentOffice();
-      const path = `${officeId}/templates/תבניות/${templateName}`;
+      const path = `${officeId}/templates/${toSafeKey('תבניות')}/${toSafeKey(templateName)}`;
       const { data, error } = await supabase.storage.from(BUCKET).download(path);
       if (error) throw error;
       return { buffer: await blobToByteArray(data) };
@@ -236,23 +262,23 @@ window.Platform = {
       const { officeId } = await currentOffice();
       const { data, error } = await supabase.storage.from(BUCKET).list(`${officeId}/templates`);
       if (error) throw error;
-      return (data || []).filter(f => f.id === null).map(f => f.name);
+      return (data || []).filter(f => f.id === null).map(f => fromSafeKey(f.name));
     } catch (e) { return { error: e.message }; }
   },
 
   async listFolderDocs({ folderName }) {
     try {
       const { officeId } = await currentOffice();
-      const { data, error } = await supabase.storage.from(BUCKET).list(`${officeId}/templates/${folderName}`);
+      const { data, error } = await supabase.storage.from(BUCKET).list(`${officeId}/templates/${toSafeKey(folderName)}`);
       if (error) throw error;
-      return (data || []).filter(f => f.id !== null && /\.(docx|pdf)$/i.test(f.name)).map(f => f.name);
+      return (data || []).filter(f => f.id !== null && /\.(docx|pdf)$/i.test(fromSafeKey(f.name))).map(f => fromSafeKey(f.name));
     } catch (e) { return { error: e.message }; }
   },
 
   async readLibraryDoc({ folderName, fileName }) {
     try {
       const { officeId } = await currentOffice();
-      const path = `${officeId}/templates/${folderName}/${fileName}`;
+      const path = `${officeId}/templates/${toSafeKey(folderName)}/${toSafeKey(fileName)}`;
       const { data, error } = await supabase.storage.from(BUCKET).download(path);
       if (error) throw error;
       const ext = (fileName.split('.').pop() || '').toLowerCase();
@@ -273,7 +299,7 @@ window.Platform = {
     const result = [];
     for (const f of (folders || []).filter(x => x.id === null)) {
       const { data: files } = await supabase.storage.from(BUCKET).list(`${officeId}/templates/${f.name}`);
-      result.push({ name: f.name, files: (files || []).filter(x => x.id !== null).map(x => x.name) });
+      result.push({ name: fromSafeKey(f.name), files: (files || []).filter(x => x.id !== null).map(x => fromSafeKey(x.name)) });
     }
     return result;
   },
@@ -285,14 +311,14 @@ window.Platform = {
 
   async tmImportFile(folderName, filename, buffer) {
     const { officeId } = await currentOffice();
-    const path = `${officeId}/templates/${folderName}/${filename}`;
+    const path = `${officeId}/templates/${toSafeKey(folderName)}/${toSafeKey(filename)}`;
     const { error } = await supabase.storage.from(BUCKET).upload(path, bytesToBlob(buffer), { upsert: true });
     if (error) throw error;
   },
 
   async tmDeleteFile(folderName, filename) {
     const { officeId } = await currentOffice();
-    const path = `${officeId}/templates/${folderName}/${filename}`;
+    const path = `${officeId}/templates/${toSafeKey(folderName)}/${toSafeKey(filename)}`;
     const { error } = await supabase.storage.from(BUCKET).remove([path]);
     if (error) throw error;
   },

@@ -147,6 +147,14 @@ function openModal(id) {
       document.getElementById('case-fee-pct').value='15';
       document.getElementById('case-stage').selectedIndex=0;
       document.getElementById('case-status').selectedIndex=0;
+      // These selects don't get rebuilt like case-client does — without resetting
+      // them explicitly, a new case silently inherits fee type/VAT/debtor type/
+      // expenses-on from whichever case was last edited in this session.
+      document.getElementById('case-debtor-type').selectedIndex=0;
+      document.getElementById('case-fee-type').selectedIndex=0;
+      document.getElementById('case-fee-vat').selectedIndex=0;
+      document.getElementById('case-expenses-type').selectedIndex=0;
+      updateFeeFields();
     }
   }
   if(id==='modal-client' && !document.getElementById('client-edit-id').value) {
@@ -156,7 +164,7 @@ function openModal(id) {
   if(id==='modal-task'){['task-text','task-due','task-notes'].forEach(f=>document.getElementById(f).value='');document.getElementById('task-priority').value='normal';document.getElementById('task-case').value='';}
   if(id==='modal-event'){['event-title','event-date','event-time','event-location','event-notes'].forEach(f=>document.getElementById(f).value='');document.getElementById('event-type').selectedIndex=0;document.getElementById('event-case').value='';}
   if(id==='modal-doc'){['doc-name','doc-notes'].forEach(f=>document.getElementById(f).value='');selectedFile=null;document.getElementById('file-info').style.display='none';document.getElementById('doc-case').value='';}
-  if(id==='modal-payment'){['pay-amount','pay-note'].forEach(f=>document.getElementById(f).value='');document.getElementById('pay-date').value=new Date().toISOString().split('T')[0];document.getElementById('pay-case').value='';document.getElementById('pay-type').value='debt';document.getElementById('pay-method').selectedIndex=0;}
+  if(id==='modal-payment'){['pay-amount','pay-note'].forEach(f=>document.getElementById(f).value='');document.getElementById('pay-date').value=localDateISO(new Date());document.getElementById('pay-case').value='';document.getElementById('pay-type').value='debt';document.getElementById('pay-method').selectedIndex=0;}
 }
 
 function closeModal(id) {
@@ -201,6 +209,13 @@ function updateFeeFields() {
 function saveCase() {
   const name=document.getElementById('case-name').value.trim();
   if(!name){notify('נא להזין שם תיק');return;}
+  const debtorName=document.getElementById('case-debtor-name').value.trim();
+  if(!debtorName){
+    notify('נא להזין שם חייב (שדה חובה)');
+    const debtorTab=document.querySelector(`[onclick="switchFormTab(this,'ctab-debtor')"]`);
+    if(debtorTab) switchFormTab(debtorTab,'ctab-debtor');
+    return;
+  }
   const eid=document.getElementById('case-edit-id').value;
   const old = eid ? db.cases.find(c=>c.id===eid) : {};
   const obj={
@@ -233,7 +248,10 @@ function saveCase() {
     collected:eid?(old.collected||0):0,
     caseSubNumber:eid?(old.caseSubNumber||''):''
   };
-  if(!eid && obj.client) obj.caseSubNumber = getNextCaseSubNumber(obj.client);
+  // Generate a sub-number on first save, and also if a client gets attached later
+  // via edit to a case that started with none — otherwise it silently never gets
+  // one at all.
+  if(obj.client && !obj.caseSubNumber) obj.caseSubNumber = getNextCaseSubNumber(obj.client);
 
   if(eid){const i=db.cases.findIndex(c=>c.id===eid);if(i>=0)db.cases[i]=obj;}
   else db.cases.unshift(obj);
@@ -256,6 +274,57 @@ function heToISO(dateStr){
   const p=dateStr.split('.');
   if(p.length!==3) return dateStr;
   return `${p[2]}-${p[1].padStart(2,'0')}-${p[0].padStart(2,'0')}`;
+}
+// YYYY-MM-DD using LOCAL date parts. Same issue as localMonthKey below: plain
+// `d.toISOString().split('T')[0]` converts to UTC first, so it returns YESTERDAY's
+// date for the ~2-3 hours after local midnight in Israel — wrong "today" for
+// default form dates, overdue-task checks, and upcoming-event filters.
+function localDateISO(d){
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+// YYYY-MM using LOCAL date parts — d.toISOString() converts to UTC first, which in
+// Israel (UTC+2/+3) shifts local midnight of the 1st into the previous UTC day,
+// silently bucketing everything into the wrong month for finance reporting.
+function localMonthKey(d){
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+}
+
+// Single source of truth for expected fee, covering all 4 fee types + VAT — this
+// used to be duplicated inline in 4+ places, and the 'both' case (percent + fixed)
+// was wrong everywhere except the AI's getFinancialReport tool (it silently dropped
+// the percent portion). Hourly wasn't computed anywhere despite being a selectable
+// fee type — it's now (hours logged in timeEntries) × feeFixed-as-hourly-rate.
+function calcExpectedFee(c){
+  const vatMult = c.feeVat==='yes' ? 1+((officeVatRate||18)/100) : 1;
+  let base = 0;
+  if (c.feeType==='percent') base = (c.amount||0)*((c.feePct||15)/100);
+  else if (c.feeType==='fixed') base = c.feeFixed||0;
+  else if (c.feeType==='both') base = (c.feeFixed||0) + (c.amount||0)*((c.feePct||0)/100);
+  else if (c.feeType==='hourly') {
+    const totalSecs = (db.timeEntries||[]).filter(t=>t.caseId===c.id).reduce((s,t)=>s+(t.duration||0),0);
+    base = (totalSecs/3600) * (c.feeFixed||0);
+  }
+  return base * vatMult;
+}
+// How much of the expected fee has actually been earned so far. Preserves the
+// existing (correct) business rule: a percent-of-collection fee is earned
+// PROPORTIONALLY as debt payments come in; a fixed fee is only earned once the debt
+// is fully collected (all-or-nothing); hourly is earned as time gets logged,
+// independent of collection. 'both' combines the proportional percent piece with
+// the all-or-nothing fixed piece. Now also applies VAT, and requires a real
+// positive debt amount for the "fully collected" fixed-fee check — previously
+// `0 >= 0` made an unset debt amount look fully collected with zero payments.
+function calcCollectedFee(c){
+  if (c.feeType==='hourly') return calcExpectedFee(c);
+  const vatMult = c.feeVat==='yes' ? 1+((officeVatRate||18)/100) : 1;
+  const cPay=db.payments.filter(p=>p.caseId===c.id&&p.type==='debt').reduce((s,p)=>s+(p.amount||0),0);
+  const debtAmount=c.amount||0;
+  const fixedEarned=(debtAmount>0 && cPay>=debtAmount)?(c.feeFixed||0):0;
+  let base=0;
+  if (c.feeType==='percent') base=cPay*((c.feePct||15)/100);
+  else if (c.feeType==='fixed') base=fixedEarned;
+  else if (c.feeType==='both') base=fixedEarned+cPay*((c.feePct||0)/100);
+  return base*vatMult;
 }
 
 function toggleCasesView(){
@@ -312,7 +381,7 @@ function renderCasesTable(cases){
     return `<tr onclick="openCaseDetail('${c.id}')">
       <td>
         <div style="display:flex;align-items:center;gap:6px">
-          <b style="color:#fff">${c.name}</b>
+          <b style="color:var(--navy)">${c.name}</b>
           ${c.caseSubNumber?`<span style="font-size:10px;color:var(--accent2);background:var(--accent-dim);border-radius:4px;padding:1px 5px;font-weight:700;flex-shrink:0">${c.caseSubNumber}</span>`:''}
         </div>
         <span style="font-size:11px;color:var(--text3)">${c.number||''} ${c.courtNumber?'| '+c.courtNumber:''}</span>
@@ -383,7 +452,7 @@ function openCaseDetail(id) {
   const stageIdx=stages.indexOf(c.stage);
   const pct=Math.round(((stageIdx+1)/stages.length)*100);
   const totalCollected=casePayments.filter(p=>p.type==='debt').reduce((s,p)=>s+p.amount,0);
-  const expectedFee=c.feeType==='percent'?Math.round((c.amount||0)*(c.feePct||15)/100):(c.feeFixed||0);
+  const expectedFee=Math.round(calcExpectedFee(c));
   const atfStatus=c.legalDocs?.atf ? 'signed' : (c.legalDocs?.atfDraft ? 'draft' : 'none');
   const poaStatus=c.legalDocs?.poa ? 'signed' : (c.legalDocs?.poaDraft ? 'draft' : 'none');
   const statusLabels={none:'לא נוצר',draft:'טיוטה',signed:'נחתם'};
@@ -392,8 +461,8 @@ function openCaseDetail(id) {
     <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px">
       <div>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <h2 style="font-size:20px;font-weight:700;color:#fff">${c.name}</h2>
-          ${c.caseSubNumber?`<span style="font-size:13px;color:var(--accent2);background:var(--accent-dim);border:1px solid rgba(108,99,255,0.3);border-radius:6px;padding:2px 9px;font-weight:700">${c.caseSubNumber}</span>`:''}
+          <h2 style="font-size:20px;font-weight:700;color:var(--navy)">${c.name}</h2>
+          ${c.caseSubNumber?`<span style="font-size:13px;color:var(--accent2);background:var(--accent-dim);border:1px solid rgba(37,99,235,0.3);border-radius:6px;padding:2px 9px;font-weight:700">${c.caseSubNumber}</span>`:''}
         </div>
         <div style="font-size:12px;color:var(--text3);margin-top:4px">
           ${c.number?'#'+c.number+' · ':''}נפתח ${c.opened||''}
@@ -415,7 +484,7 @@ function openCaseDetail(id) {
       <div class="stat"><div class="stat-label">סכום חוב</div><div class="stat-value" style="color:var(--accent2);font-size:20px">${c.amount?'₪'+c.amount.toLocaleString():'—'}</div></div>
       <div class="stat"><div class="stat-label">גבוי בפועל</div><div class="stat-value" style="color:var(--success);font-size:20px">₪${totalCollected.toLocaleString()}</div></div>
       <div class="stat"><div class="stat-label">שכ"ט צפוי</div><div class="stat-value" style="color:var(--warning);font-size:18px">₪${expectedFee.toLocaleString()}</div></div>
-      <div class="stat"><div class="stat-label">שלב</div><div style="font-size:14px;font-weight:600;color:#fff;margin-top:4px">${c.stage}</div>
+      <div class="stat"><div class="stat-label">שלב</div><div style="font-size:14px;font-weight:600;color:var(--navy);margin-top:4px">${c.stage}</div>
         <div class="stage-bar">${stages.map((s,i)=>`<div class="stage-step ${i<stageIdx?'done':i===stageIdx?'current':''}"></div>`).join('')}</div>
       </div>
     </div>
@@ -424,22 +493,33 @@ function openCaseDetail(id) {
     <div class="two-col" style="margin-bottom:0">
       ${c.debtorName?`<div class="debtor-card">
         <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px">פרטי חייב</div>
-        <div style="font-weight:600;color:#fff;margin-bottom:4px">${c.debtorName} ${c.debtorId?'('+c.debtorId+')':''}</div>
+        <div style="font-weight:600;color:var(--navy);margin-bottom:4px">${c.debtorName} ${c.debtorId?'('+c.debtorId+')':''}</div>
         ${c.debtorAddress?`<div style="font-size:12px;color:var(--text2)">📍 ${c.debtorAddress}</div>`:''}
         ${c.debtorPhone?`<div style="font-size:12px;color:var(--text2)">📞 ${c.debtorPhone}</div>`:''}
+        ${c.debtorEmail?`<div style="font-size:12px;color:var(--text2)">✉ ${c.debtorEmail}</div>`:''}
         ${c.debtDesc?`<div style="font-size:11px;color:var(--text3);margin-top:6px">${c.debtDesc}</div>`:''}
       </div>`:'<div></div>'}
       ${cl?`<div class="debtor-card" style="border-right-color:var(--success)">
         <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px">פרטי לקוח</div>
-        <div style="font-weight:600;color:#fff;margin-bottom:4px">${cl.name}</div>
+        <div style="font-weight:600;color:var(--navy);margin-bottom:4px">${cl.name}</div>
         ${cl.phone?`<div style="font-size:12px;color:var(--text2)">📞 ${cl.phone}</div>`:''}
         ${cl.email?`<div style="font-size:12px;color:var(--text2)">✉ ${cl.email}</div>`:''}
         ${cl.address?`<div style="font-size:12px;color:var(--text2)">📍 ${cl.address}</div>`:''}
       </div>`:'<div></div>'}
     </div>
 
+    ${(c.feeVat==='yes'||c.expensesType||c.retainer||c.feeNotes)?`<div class="card" style="padding:12px 14px">
+      <div class="card-title" style="margin-bottom:8px">פרטי שכר טרחה נוספים</div>
+      <div style="display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--text2)">
+        ${c.feeVat==='yes'?`<span>מע"מ: כולל (+${officeVatRate}%)</span>`:''}
+        ${c.expensesType?`<span>הוצאות: ${c.expensesType==='client'?'על חשבון הלקוח':c.expensesType==='office'?'על חשבון המשרד':'לא רלוונטי'}</span>`:''}
+        ${c.retainer?`<span>מקדמה/ריטיינר: ₪${c.retainer.toLocaleString()}</span>`:''}
+      </div>
+      ${c.feeNotes?`<div style="font-size:12px;color:var(--text3);margin-top:8px">${c.feeNotes}</div>`:''}
+    </div>`:''}
+
     <!-- Legal Documents Section -->
-    <div class="card" style="border-color:rgba(108,99,255,0.3);padding:10px 14px">
+    <div class="card" style="border-color:rgba(37,99,235,0.3);padding:10px 14px">
       <div style="font-size:11px;font-weight:600;color:var(--accent2);margin-bottom:8px;letter-spacing:0.05em">מסמכים משפטיים</div>
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
         <span style="font-size:13px;min-width:110px">הסכם שכ"ט</span>
@@ -488,7 +568,7 @@ function openCaseDetail(id) {
             <div style="font-size:13px;font-weight:700;color:var(--accent2)">${(e.date||'').split('-')[2]||''}</div>
             <div style="font-size:9px;color:var(--text3)">${monthHE((e.date||'').split('-')[1])}</div>
           </div>
-          <div style="flex:1"><div style="font-weight:500;color:#fff">${e.title}</div><div style="font-size:11px;color:var(--text3)">${e.type||''} ${e.location?'| '+e.location:''} ${e.time?'| '+e.time:''}</div>${e.notes?`<div style="font-size:11px;color:var(--text3)">${e.notes}</div>`:''}</div>
+          <div style="flex:1"><div style="font-weight:500;color:var(--navy)">${e.title}</div><div style="font-size:11px;color:var(--text3)">${e.type||''} ${e.location?'| '+e.location:''} ${e.time?'| '+e.time:''}</div>${e.notes?`<div style="font-size:11px;color:var(--text3)">${e.notes}</div>`:''}</div>
           <button class="btn btn-sm" style="color:var(--danger);border:none;padding:2px 6px" onclick="delEvent('${e.id}',true)">✕</button>
         </div>`).join(''):'<div class="empty" style="padding:16px">אין דיונים</div>'}
       </div>
@@ -498,8 +578,8 @@ function openCaseDetail(id) {
         <button class="btn btn-sm" style="margin-bottom:10px" onclick="addDocForCase('${id}')">+ מסמך</button>
         ${caseDocs.length?caseDocs.map(d=>`<div class="doc-item">
           <div class="doc-icon ${d.ext}">${d.ext.toUpperCase()}</div>
-          <div style="flex:1"><div style="font-size:13px;font-weight:500;color:#fff">${d.name}</div><div style="font-size:11px;color:var(--text3)">${d.date||''} ${d.notes?'· '+d.notes:''}</div></div>
-          ${d.filePath?`<button class="btn btn-sm" onclick="openFile('${d.filePath.replace(/\\/g,'/')}')">פתח</button>`:''}
+          <div style="flex:1"><div style="font-size:13px;font-weight:500;color:var(--navy)">${d.name}</div><div style="font-size:11px;color:var(--text3)">${d.date||''} ${d.notes?'· '+d.notes:''}</div></div>
+          ${d.filePath?`<button class="btn btn-sm" onclick="openFile('${d.filePath.replace(/\\/g,'/')}','${(d.origName||d.name||'').replace(/\\/g,'')}')">פתח</button>`:''}
           <button class="btn btn-sm" style="color:var(--danger);border:none;padding:2px 6px" onclick="delDoc('${d.id}',true)">✕</button>
         </div>`).join(''):'<div class="empty" style="padding:16px">אין מסמכים</div>'}
       </div>
@@ -508,7 +588,7 @@ function openCaseDetail(id) {
       <div id="ct-payments" style="display:none">
         <button class="btn btn-sm" style="margin-bottom:10px" onclick="addPaymentForCase('${id}')">+ תשלום</button>
         ${casePayments.length?casePayments.map(p=>`<div class="fin-row">
-          <div><div style="font-weight:500;color:#fff">₪${p.amount.toLocaleString()}</div><div style="font-size:11px;color:var(--text3)">${p.type==='debt'?'גבייה':p.type==='retainer'?'מקדמה':'הוצאה'} | ${p.method||''}</div></div>
+          <div><div style="font-weight:500;color:var(--navy)">₪${p.amount.toLocaleString()}</div><div style="font-size:11px;color:var(--text3)">${p.type==='debt'?'גבייה':p.type==='retainer'?'מקדמה':'הוצאה'} | ${p.method||''}</div></div>
           <div style="display:flex;align-items:center;gap:6px">
             <div style="text-align:left"><div style="font-size:12px;color:var(--text2)">${p.date||''}</div><div style="font-size:11px;color:var(--text3)">${p.note||''}</div></div>
             <button class="btn btn-sm" onclick="editPayment('${p.id}')">✏</button>
@@ -538,7 +618,7 @@ function openCaseDetail(id) {
         </div>
         ${caseTime.length?caseTime.map(t=>`<div class="fin-row">
           <div>
-            <div style="font-weight:500;color:#fff">${t.description||'—'}</div>
+            <div style="font-weight:500;color:var(--navy)">${t.description||'—'}</div>
             <div style="font-size:11px;color:var(--text3)">${formatDuration(t.duration)} | ${t.date||''}</div>
           </div>
           <button class="btn btn-sm" style="color:var(--danger);border:none;padding:2px 6px" onclick="delTimeEntry('${t.id}')">✕</button>
@@ -664,18 +744,22 @@ async function downloadLegalDoc() {
   const c = db.cases.find(x=>x.id===currentCaseId);
   if(!c) return;
   if(currentLegalDocType==='attorney-fee') {
-    await buildWithTemplate('atf', {
+    const fields = {
       clientName: document.getElementById('lg-client-name').value,
       clientId:   document.getElementById('lg-client-id').value,
       matter:     document.getElementById('lg-matter').value,
       feePct:     document.getElementById('lg-fee-pct').value,
-    }, c);
+    };
+    if (!fields.clientName.trim() && !confirm('שם הלקוח ריק במסמך. ליצור בכל זאת?')) return;
+    await buildWithTemplate('atf', fields, c);
   } else if(currentLegalDocType==='poa') {
-    await buildWithTemplate('poa', {
+    const fields = {
       grantorName: document.getElementById('poa-grantor-name').value,
       grantorId:   document.getElementById('poa-grantor-id').value,
       matter:      document.getElementById('poa-matter').value,
-    }, c);
+    };
+    if (!fields.grantorName.trim() && !confirm('שם מייפה הכוח ריק במסמך. ליצור בכל זאת?')) return;
+    await buildWithTemplate('poa', fields, c);
   }
 }
 
@@ -738,16 +822,16 @@ async function fillLegalTemplate(type, data, caseObj) {
     caseObj.legalDocs.poaDate = dateStr;
   }
   saveDB();
-  return filePath;
+  return { filePath, filename };
 }
 
 async function buildWithTemplate(type, data, caseObj) {
   notify('מכין מסמך...');
   try {
-    const filePath = await fillLegalTemplate(type, data, caseObj);
+    const { filePath, filename } = await fillLegalTemplate(type, data, caseObj);
     closeModal('modal-legal-gen');
     notify('המסמך נשמר! פותח...');
-    await Platform.openFile(filePath);
+    await Platform.openFile(filePath, filename);
     if (currentPanel === 'case-detail') openCaseDetail(currentCaseId);
   } catch(e) {
     notify('שגיאה: ' + e.message);
@@ -761,7 +845,7 @@ function saveClient() {
   if(!name){notify('נא להזין שם');return;}
   const eid=document.getElementById('client-edit-id').value;
   const existingClient=eid?db.clients.find(c=>c.id===eid):null;
-  const colors=[['rgba(108,99,255,0.15)','var(--accent2)'],['rgba(76,219,140,0.15)','var(--success)'],['rgba(245,166,35,0.15)','var(--warning)'],['rgba(255,94,94,0.15)','var(--danger)']];
+  const colors=[['rgba(37,99,235,0.15)','var(--accent2)'],['rgba(22,163,74,0.15)','var(--success)'],['rgba(217,119,6,0.15)','var(--warning)'],['rgba(220,38,38,0.15)','var(--danger)']];
   const [bg,tc]=colors[(eid?db.clients.findIndex(c=>c.id===eid):db.clients.length)%4];
   const obj={
     id:eid||uid(),
@@ -799,7 +883,7 @@ function renderClients(filter='') {
       <div class="client-avatar" style="background:${c.color};color:${c.textColor};margin-bottom:0">${c.initials}</div>
       <div style="flex:1;min-width:0">
         ${c.clientNumber?`<div style="font-size:10px;color:var(--accent2);font-weight:700;letter-spacing:0.04em">מספר לקוח: ${c.clientNumber}</div>`:''}
-        <div style="font-weight:600;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.name}</div>
+        <div style="font-weight:600;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.name}</div>
         <div style="font-size:11px;color:var(--text3)">${c.type}${c.idNum?' · '+c.idNum:''}</div>
       </div>
     </div>
@@ -864,11 +948,11 @@ function openClientDetail(id) {
 
   document.getElementById('client-detail-body').innerHTML=`
     <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px">
-      <div class="client-avatar" style="background:${cl.color||'rgba(108,99,255,0.15)'};color:${cl.textColor||'var(--accent2)'};width:56px;height:56px;font-size:18px;margin-bottom:0">
+      <div class="client-avatar" style="background:${cl.color||'rgba(37,99,235,0.15)'};color:${cl.textColor||'var(--accent2)'};width:56px;height:56px;font-size:18px;margin-bottom:0">
         ${cl.initials||cl.name.substring(0,2).toUpperCase()}
       </div>
       <div>
-        <h2 style="font-size:20px;font-weight:700;color:#fff;margin-bottom:3px">${cl.name}</h2>
+        <h2 style="font-size:20px;font-weight:700;color:var(--navy);margin-bottom:3px">${cl.name}</h2>
         <div style="font-size:12px;color:var(--text3)">
           ${cl.clientNumber?`<span style="color:var(--accent2);font-weight:700">מספר לקוח: ${cl.clientNumber}</span> · `:''}${cl.type}${cl.idNum?' · ת.ז/ח.פ: '+cl.idNum:''}
         </div>
@@ -904,7 +988,7 @@ function openClientDetail(id) {
           <td>
             <div style="display:flex;align-items:center;gap:6px">
               ${c.caseSubNumber?`<span style="font-size:10px;color:var(--accent2);font-weight:700;flex-shrink:0">${c.caseSubNumber}</span>`:''}
-              <b style="color:#fff">${c.name}</b>
+              <b style="color:var(--navy)">${c.name}</b>
             </div>
             ${c.number?`<span style="font-size:11px;color:var(--text3)">#${c.number}</span>`:''}
           </td>
@@ -921,7 +1005,7 @@ function openClientDetail(id) {
         const pc=db.cases.find(c=>c.id===p.caseId);
         return `<div class="fin-row">
           <div>
-            <div style="font-weight:500;color:#fff">₪${p.amount.toLocaleString()}</div>
+            <div style="font-weight:500;color:var(--navy)">₪${p.amount.toLocaleString()}</div>
             <div style="font-size:11px;color:var(--text3)">${p.type==='debt'?'גבייה':p.type==='retainer'?'מקדמה':'הוצאה'} | ${p.method||''}</div>
             ${pc?`<div style="font-size:11px;color:var(--accent2)">${pc.name}</div>`:''}
           </div>
@@ -943,7 +1027,7 @@ function openClientDetail(id) {
             <div style="font-size:9px;color:var(--text3)">${monthHE((e.date||'').split('-')[1])}</div>
           </div>
           <div style="flex:1">
-            <div style="font-weight:500;color:#fff">${e.title}</div>
+            <div style="font-weight:500;color:var(--navy)">${e.title}</div>
             <div style="font-size:11px;color:var(--text3)">${e.type||''} ${e.location?'| '+e.location:''} ${e.time?'| '+e.time:''}</div>
             ${ec?`<div style="font-size:11px;color:var(--accent2);cursor:pointer" onclick="openCaseDetail('${ec.id}')">${ec.name}</div>`:''}
           </div>
@@ -983,7 +1067,7 @@ function renderTasks(){
     return (a.due||'9999')>(b.due||'9999')?1:-1;
   });
   const done=allTasks.filter(t=>t.done).slice(0,20);
-  const today=new Date().toISOString().split('T')[0];
+  const today=localDateISO(new Date());
   document.getElementById('tasks-open-count').textContent=`(${open.length})`;
   const row=t=>{
     const c=t.caseId?db.cases.find(x=>x.id===t.caseId):null;
@@ -1029,7 +1113,7 @@ function renderCalendar(){
   const monthEvts=db.events.filter(e=>(e.date||'').startsWith(yStr+'-'+mStr)).sort((a,b)=>a.date>b.date?1:-1);
   document.getElementById('events-month').innerHTML=monthEvts.length?monthEvts.map(eventRow).join(''):'<div class="empty" style="padding:12px">אין אירועים החודש</div>';
 
-  const now=new Date().toISOString().split('T')[0];
+  const now=localDateISO(new Date());
   const up=db.events.filter(e=>e.date>=now).sort((a,b)=>a.date>b.date?1:-1).slice(0,5);
   document.getElementById('events-list').innerHTML=up.length?up.map(eventRow).join(''):'<div class="empty">אין אירועים קרובים</div>';
 }
@@ -1042,9 +1126,9 @@ function eventRow(e) {
       <div style="font-size:9px;color:var(--text3)">${monthHE((e.date||'').split('-')[1])}</div>
     </div>
     <div style="flex:1">
-      <div style="font-weight:500;color:#fff">${e.title}</div>
+      <div style="font-weight:500;color:var(--navy)">${e.title}</div>
       <div style="font-size:11px;color:var(--text3)">${e.type||''} ${e.location?'| '+e.location:''} ${e.time?'| '+e.time:''}</div>
-      ${c?`<div style="font-size:11px;color:var(--accent2)">${c.name}</div>`:''}
+      ${c?`<div style="font-size:11px;color:var(--accent2);cursor:pointer" onclick="openCaseDetail('${c.id}')">${c.name}</div>`:''}
     </div>
     <button class="btn btn-sm" style="color:var(--danger);border:none;padding:2px 6px" onclick="delEvent('${e.id}')">✕</button>
   </div>`;
@@ -1055,7 +1139,13 @@ function calDayClick(dateStr) {
   document.getElementById('event-date').value=dateStr;
 }
 
-function calMove(d){calDate.setMonth(calDate.getMonth()+d);renderCalendar();}
+function calMove(d){
+  // Don't use calDate.setMonth() directly — it preserves the current day-of-month,
+  // so e.g. moving back a month from the 31st lands on a nonexistent day and JS
+  // silently rolls forward into the following month instead. Pin to the 1st first.
+  calDate=new Date(calDate.getFullYear(),calDate.getMonth()+d,1);
+  renderCalendar();
+}
 function calToday(){calDate=new Date();renderCalendar();}
 
 function saveEvent(){
@@ -1115,13 +1205,8 @@ function delPayment(id){
 function renderFinance(){
   const totalDebt=db.cases.filter(c=>c.status!=='closed').reduce((s,c)=>s+(c.amount||0),0);
   const totalCollected=db.payments.filter(p=>p.type==='debt').reduce((s,p)=>s+p.amount,0);
-  const expectedFees=db.cases.filter(c=>c.status!=='closed').reduce((s,c)=>{
-    return s+(c.feeType==='percent'?Math.round((c.amount||0)*(c.feePct||15)/100):(c.feeFixed||0));
-  },0);
-  const collectedFees=db.cases.reduce((s,c)=>{
-    const cPay=db.payments.filter(p=>p.caseId===c.id&&p.type==='debt').reduce((a,p)=>a+p.amount,0);
-    return s+(c.feeType==='percent'?Math.round(cPay*(c.feePct||15)/100):(cPay>=(c.amount||0)?c.feeFixed||0:0));
-  },0);
+  const expectedFees=db.cases.filter(c=>c.status!=='closed').reduce((s,c)=>s+calcExpectedFee(c),0);
+  const collectedFees=db.cases.reduce((s,c)=>s+calcCollectedFee(c),0);
   document.getElementById('fin-total-debt').textContent='₪'+totalDebt.toLocaleString();
   document.getElementById('fin-total-collected').textContent='₪'+totalCollected.toLocaleString();
   document.getElementById('fin-expected-fee').textContent='₪'+expectedFees.toLocaleString();
@@ -1133,7 +1218,7 @@ function renderFinance(){
   const months=[];
   for(let i=5;i>=0;i--){
     const d=new Date(now.getFullYear(),now.getMonth()-i,1);
-    months.push({key:d.toISOString().substring(0,7),label:heM[d.getMonth()]});
+    months.push({key:localMonthKey(d),label:heM[d.getMonth()]});
   }
   const monthData=months.map(({key,label})=>{
     const collected=db.payments.filter(p=>p.type==='debt'&&(p.date||'').startsWith(key)).reduce((s,p)=>s+p.amount,0);
@@ -1152,7 +1237,7 @@ function renderFinance(){
         const oh=Math.max(2,Math.round((d.outstanding/maxVal)*BAR_H));
         return `<div style="flex:1;display:flex;align-items:flex-end;gap:2px;height:100%">
           <div class="has-tooltip" data-tip="גבוי: ₪${d.collected.toLocaleString()}" style="flex:1;height:${ch}px;background:var(--success);border-radius:3px 3px 0 0;opacity:0.85;position:relative;cursor:default"></div>
-          <div class="has-tooltip" data-tip="יתרת חוב: ₪${d.outstanding.toLocaleString()}" style="flex:1;height:${oh}px;background:rgba(255,94,94,0.45);border-radius:3px 3px 0 0;position:relative;cursor:default"></div>
+          <div class="has-tooltip" data-tip="יתרת חוב: ₪${d.outstanding.toLocaleString()}" style="flex:1;height:${oh}px;background:rgba(220,38,38,0.45);border-radius:3px 3px 0 0;position:relative;cursor:default"></div>
         </div>`;
       }).join('')}
     </div>
@@ -1161,7 +1246,7 @@ function renderFinance(){
     </div>
     <div style="display:flex;gap:16px;font-size:11px;color:var(--text3)">
       <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:2px;background:var(--success);display:inline-block"></span>גבוי</span>
-      <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:2px;background:rgba(255,94,94,0.45);display:inline-block"></span>יתרת חוב</span>
+      <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:2px;background:rgba(220,38,38,0.45);display:inline-block"></span>יתרת חוב</span>
     </div>`;
 
   // ── Cases financial list ──
@@ -1169,7 +1254,7 @@ function renderFinance(){
     const cPay=db.payments.filter(p=>p.caseId===c.id&&p.type==='debt').reduce((s,p)=>s+p.amount,0);
     const pct=c.amount?Math.round(cPay/c.amount*100):0;
     return `<div class="fin-row" onclick="openCaseDetail('${c.id}')" style="cursor:pointer">
-      <div><div style="font-weight:500;color:#fff;font-size:13px">${c.name}</div>
+      <div><div style="font-weight:500;color:var(--navy);font-size:13px">${c.name}</div>
         <div style="font-size:11px;color:var(--text3)">חוב: ₪${(c.amount||0).toLocaleString()} | שכ"ט: ${c.feeType==='percent'?(c.feePct||15)+'%':'₪'+(c.feeFixed||0).toLocaleString()}</div>
         <div class="progress-wrap" style="margin-top:4px;width:120px"><div class="progress-fill" style="width:${Math.min(pct,100)}%"></div></div>
       </div>
@@ -1200,13 +1285,13 @@ function renderFinance(){
   // ── Fee report per case ──
   const feeRows=db.cases.map(c=>{
     const cPay=db.payments.filter(p=>p.caseId===c.id&&p.type==='debt').reduce((s,p)=>s+p.amount,0);
-    const expFee=c.feeType==='percent'?Math.round((c.amount||0)*(c.feePct||15)/100):(c.feeFixed||0);
-    const actFee=c.feeType==='percent'?Math.round(cPay*(c.feePct||15)/100):(cPay>=(c.amount||0)?expFee:0);
+    const expFee=Math.round(calcExpectedFee(c));
+    const actFee=Math.round(calcCollectedFee(c));
     const delta=actFee-expFee;
     const smap={active:'פעיל',urgent:'דחוף',pending:'ממתין',closed:'סגור'};
     return `<div class="fin-row" onclick="openCaseDetail('${c.id}')" style="cursor:pointer">
       <div style="flex:2;min-width:0">
-        <div style="font-weight:500;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.name}</div>
+        <div style="font-weight:500;color:var(--navy);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.name}</div>
         <div style="font-size:11px;color:var(--text3)">${smap[c.status]||c.status} | ${c.feeType==='percent'?(c.feePct||15)+'% מגבייה':'₪'+(c.feeFixed||0).toLocaleString()+' קבוע'}</div>
       </div>
       <div style="flex:1;text-align:left">
@@ -1242,15 +1327,15 @@ function exportFinanceSummary(){
   txt+=`גבייה חודשית (6 חודשים אחרונים):\n`;
   for(let i=5;i>=0;i--){
     const d=new Date(now.getFullYear(),now.getMonth()-i,1);
-    const key=d.toISOString().substring(0,7);
+    const key=localMonthKey(d);
     const mc=db.payments.filter(p=>p.type==='debt'&&(p.date||'').startsWith(key)).reduce((s,p)=>s+p.amount,0);
     txt+=`  ${heML[d.getMonth()]} ${d.getFullYear()}: ₪${mc.toLocaleString()}\n`;
   }
   txt+=`\nדוח שכר טרחה לפי תיק:\n${'─'.repeat(40)}\n`;
   db.cases.forEach(c=>{
     const cPay=db.payments.filter(p=>p.caseId===c.id&&p.type==='debt').reduce((s,p)=>s+p.amount,0);
-    const expFee=c.feeType==='percent'?Math.round((c.amount||0)*(c.feePct||15)/100):(c.feeFixed||0);
-    const actFee=c.feeType==='percent'?Math.round(cPay*(c.feePct||15)/100):(cPay>=(c.amount||0)?expFee:0);
+    const expFee=Math.round(calcExpectedFee(c));
+    const actFee=Math.round(calcCollectedFee(c));
     const smap={active:'פעיל',urgent:'דחוף',pending:'ממתין',closed:'סגור'};
     txt+=`\n  ${c.name} [${smap[c.status]||c.status}]\n`;
     txt+=`    חוב: ₪${(c.amount||0).toLocaleString()} | גבוי: ₪${cPay.toLocaleString()}\n`;
@@ -1285,12 +1370,12 @@ async function saveDoc(){
   saveDB();closeModal('modal-doc');notify('מסמך נשמר! ✓');renderDocs();selectedFile=null;
 }
 
-async function openFile(p){await Platform.openFile(p);}
+async function openFile(p,displayName){await Platform.openFile(p,displayName);}
 
 function renderDocs(filter=''){
   const list=document.getElementById('docs-list');
   const empty=document.getElementById('docs-empty');
-  let docs=filter?db.docs.filter(d=>d.name.includes(filter)):db.docs;
+  let docs=filter?db.docs.filter(d=>d.name.includes(filter)||(d.cat||'').includes(filter)||(d.notes||'').includes(filter)):db.docs;
   if(!docs.length){list.innerHTML='';empty.style.display='block';return;}
   empty.style.display='none';
   const cats=[...new Set(docs.map(d=>d.cat))];
@@ -1298,8 +1383,8 @@ function renderDocs(filter=''){
     <div class="card-title">${cat}</div>
     ${docs.filter(d=>d.cat===cat).map(d=>`<div class="doc-item">
       <div class="doc-icon ${d.ext}">${d.ext.toUpperCase()}</div>
-      <div style="flex:1"><div style="font-size:13px;font-weight:500;color:#fff">${d.name}</div><div style="font-size:11px;color:var(--text3)">${d.date||''} ${d.notes?'· '+d.notes:''}</div></div>
-      ${d.filePath?`<button class="btn btn-sm" onclick="openFile('${d.filePath.replace(/\\/g,'/')}')">פתח</button>`:''}
+      <div style="flex:1"><div style="font-size:13px;font-weight:500;color:var(--navy)">${d.name}</div><div style="font-size:11px;color:var(--text3)">${d.date||''} ${d.notes?'· '+d.notes:''}</div></div>
+      ${d.filePath?`<button class="btn btn-sm" onclick="openFile('${d.filePath.replace(/\\/g,'/')}','${(d.origName||d.name||'').replace(/\\/g,'')}')">פתח</button>`:''}
       <button class="btn btn-sm" style="color:var(--danger);border:none;padding:2px 6px" onclick="delDoc('${d.id}')">✕</button>
     </div>`).join('')}
   </div>`).join('');
@@ -1311,10 +1396,10 @@ function renderDashboard(){
   const active=db.cases.filter(c=>c.status!=='closed').length;
   const urgent=db.cases.filter(c=>c.status==='urgent').length;
   const debt=db.cases.filter(c=>c.status!=='closed').reduce((s,c)=>s+(c.amount||0),0);
-  const thisMonth=new Date().toISOString().substr(0,7);
+  const thisMonth=localMonthKey(new Date());
   const collected=db.payments.filter(p=>p.type==='debt'&&(p.date||'').startsWith(thisMonth)).reduce((s,p)=>s+p.amount,0);
   const openT=db.tasks.filter(t=>!t.done).length;
-  const today=new Date().toISOString().split('T')[0];
+  const today=localDateISO(new Date());
   const overdue=db.tasks.filter(t=>!t.done&&t.due&&t.due<today).length;
 
   const _now=new Date();const _curM=String(_now.getMonth()+1).padStart(2,'0');const _curY=String(_now.getFullYear());
@@ -1337,7 +1422,7 @@ function renderDashboard(){
       <div style="width:80px;height:4px;background:var(--bg4);border-radius:2px">
         <div style="width:${stageCounts[s]?Math.min(100,stageCounts[s]/Math.max(1,db.cases.length)*100*3):0}%;height:4px;background:var(--accent);border-radius:2px"></div>
       </div>
-      <span style="font-size:13px;font-weight:600;color:#fff;min-width:16px">${stageCounts[s]}</span>
+      <span style="font-size:13px;font-weight:600;color:var(--navy);min-width:16px">${stageCounts[s]}</span>
     </div>
   </div>`).join('');
 
@@ -1351,7 +1436,7 @@ function renderDashboard(){
 
   const smap={active:'פעיל',urgent:'דחוף',pending:'ממתין',closed:'סגור'};
   document.getElementById('d-cases').innerHTML=db.cases.slice(0,5).map(c=>`<div class="task-item" style="cursor:pointer" onclick="openCaseDetail('${c.id}')">
-    <div style="flex:1"><div style="font-weight:500;color:#fff;font-size:13px">${c.name}</div>
+    <div style="flex:1"><div style="font-weight:500;color:var(--navy);font-size:13px">${c.name}</div>
       <div style="font-size:11px;color:var(--text3)">${c.debtorName||''} ${c.amount?'| ₪'+c.amount.toLocaleString():''}</div>
     </div>
     <span class="badge badge-${c.status}">${smap[c.status]}</span>
@@ -1381,14 +1466,6 @@ function formatDuration(s){
 }
 
 function updateTimerDisplay(){
-  const fab=document.getElementById('timer-fab');
-  if(timerRunning && timerCaseId){
-    const tc=db.cases.find(c=>c.id===timerCaseId);
-    const name=tc?(tc.name.length>14?tc.name.substring(0,14)+'…':tc.name):'';
-    fab.textContent='⏹ '+formatDuration(timerSeconds)+(name?' · '+name:'');
-  } else {
-    fab.textContent=(timerRunning?'⏹ ':'▶ ')+formatDuration(timerSeconds);
-  }
   const btn=document.getElementById('case-timer-btn');
   if(btn){
     if(timerRunning && timerCaseId===currentCaseId){
@@ -1404,36 +1481,14 @@ function updateTimerDisplay(){
   }
 }
 
-function toggleTimer(){
-  if(!timerRunning){
-    timerCaseId=currentPanel==='case-detail'?currentCaseId:null;
-    timerRunning=true;
-    timerInterval=setInterval(()=>{timerSeconds++;updateTimerDisplay();},1000);
-    document.getElementById('timer-fab').classList.add('running');
-    updateTimerDisplay();
-  } else {
-    clearInterval(timerInterval);timerInterval=null;
-    timerRunning=false;
-    pendingTimerSecs=timerSeconds;
-    timerSeconds=0;
-    const savedCaseId=timerCaseId;
-    timerCaseId=null;
-    document.getElementById('timer-fab').classList.remove('running');
-    updateTimerDisplay();
-    populateSelects();
-    document.getElementById('tl-desc').value='';
-    document.getElementById('tl-case').value=savedCaseId||currentCaseId||'';
-    document.getElementById('tl-duration-label').textContent='זמן שנרשם: '+formatDuration(pendingTimerSecs);
-    document.getElementById('modal-timelog').classList.add('open');
-  }
-}
-
+// Timer only exists inside a case's detail screen (#case-timer-btn) — there is no
+// app-wide floating clock anymore, per the product decision to keep it scoped to
+// the case you're actually working on.
 function toggleCaseTimer(caseId){
   if(!timerRunning){
     timerCaseId=caseId;
     timerRunning=true;
     timerInterval=setInterval(()=>{timerSeconds++;updateTimerDisplay();},1000);
-    document.getElementById('timer-fab').classList.add('running');
     updateTimerDisplay();
   } else if(timerCaseId===caseId){
     clearInterval(timerInterval);timerInterval=null;
@@ -1441,7 +1496,6 @@ function toggleCaseTimer(caseId){
     pendingTimerSecs=timerSeconds;
     timerSeconds=0;
     timerCaseId=null;
-    document.getElementById('timer-fab').classList.remove('running');
     updateTimerDisplay();
     populateSelects();
     document.getElementById('tl-desc').value='';
@@ -1476,7 +1530,7 @@ function openManualTime(caseId){
   document.getElementById('mt-case-id').value=caseId;
   document.getElementById('mt-hours').value='';
   document.getElementById('mt-minutes').value='';
-  document.getElementById('mt-date').value=new Date().toISOString().split('T')[0];
+  document.getElementById('mt-date').value=localDateISO(new Date());
   document.getElementById('mt-desc').value='';
   document.getElementById('modal-manual-time').classList.add('open');
 }
@@ -1906,10 +1960,10 @@ async function agentExecTool(name, input) {
         };
         if (clientId) obj.caseSubNumber = getNextCaseSubNumber(clientId);
         db.cases.unshift(obj); saveDB(); refreshAll();
-        return `✅ תיק "${obj.name}" נוצר בהצלחה (מזהה: ${obj.id})${clientId?'':''}`;
+        return `✅ תיק "${obj.name}" נוצר בהצלחה (מזהה: ${obj.id})`;
       }
       case 'createClient': {
-        const colors=[['rgba(108,99,255,0.15)','var(--accent2)'],['rgba(76,219,140,0.15)','var(--success)'],['rgba(245,166,35,0.15)','var(--warning)'],['rgba(255,94,94,0.15)','var(--danger)']];
+        const colors=[['rgba(37,99,235,0.15)','var(--accent2)'],['rgba(22,163,74,0.15)','var(--success)'],['rgba(217,119,6,0.15)','var(--warning)'],['rgba(220,38,38,0.15)','var(--danger)']];
         const [bg,tc]=colors[db.clients.length%4];
         const obj = {
           id:uid(), clientNumber:getNextClientNumber(),
@@ -1926,24 +1980,24 @@ async function agentExecTool(name, input) {
         const c = db.cases.find(x=>x.id===input.caseId);
         if (!c) return 'שגיאה: תיק לא נמצא. השתמש ב-listCases כדי למצוא מזהה.';
         const cl = db.clients.find(x=>x.id===c.client)||{};
-        const fpAtf = await fillLegalTemplate('atf', {
+        const { filePath: fpAtf, filename: fnAtf } = await fillLegalTemplate('atf', {
           clientName:cl.name||'', clientId:cl.idNum||'',
           matter:c.name||'', feePct:c.feePct||15
         }, c);
         notify('הסכם שכ"ט נפתח!');
-        await Platform.openFile(fpAtf);
+        await Platform.openFile(fpAtf, fnAtf);
         return `✅ הסכם שכ"ט לתיק "${c.name}" נוצר ונשמר`;
       }
       case 'generatePOA': {
         const c = db.cases.find(x=>x.id===input.caseId);
         if (!c) return 'שגיאה: תיק לא נמצא.';
         const cl = db.clients.find(x=>x.id===c.client)||{};
-        const fpPoa = await fillLegalTemplate('poa', {
+        const { filePath: fpPoa, filename: fnPoa } = await fillLegalTemplate('poa', {
           grantorName:cl.name||'', grantorId:cl.idNum||'',
           matter:`גבייה מ${c.debtorName||'החייב'} בסך ₪${(c.amount||0).toLocaleString()}${c.debtDesc?' – '+c.debtDesc:''}`
         }, c);
         notify('ייפוי כוח נפתח!');
-        await Platform.openFile(fpPoa);
+        await Platform.openFile(fpPoa, fnPoa);
         return `✅ ייפוי כוח לתיק "${c.name}" נוצר ונשמר`;
       }
       case 'addTask': {
@@ -1954,7 +2008,11 @@ async function agentExecTool(name, input) {
       case 'addPayment': {
         const c = db.cases.find(x=>x.id===input.caseId);
         if (!c) return 'שגיאה: תיק לא נמצא.';
-        const pay = { id:uid(), caseId:input.caseId, amount:input.amount, date:new Date().toISOString().split('T')[0], method:input.method||'העברה בנקאית', type:input.type||'debt', note:input.note||'' };
+        // Coerce to a number — the model is expected to send one, but if it sends a
+        // numeric string (e.g. "5000"), `c.collected += pay.amount` would silently do
+        // string concatenation instead of addition, corrupting every later finance total.
+        const payAmount = parseFloat(input.amount) || 0;
+        const pay = { id:uid(), caseId:input.caseId, amount:payAmount, date:localDateISO(new Date()), method:input.method||'העברה בנקאית', type:input.type||'debt', note:input.note||'' };
         db.payments.push(pay);
         if (pay.type==='debt') c.collected=(c.collected||0)+pay.amount;
         saveDB();
@@ -2038,7 +2096,7 @@ async function agentExecTool(name, input) {
         const gctd=gcc.reduce((s,c)=>s+(c.amount||0),0);
         const gctc=gcc.reduce((s,c)=>s+(c.collected||0),0);
         const gcp2=db.payments.filter(p=>gcc.some(c=>c.id===p.caseId));
-        const todayGCL=new Date().toISOString().split('T')[0];
+        const todayGCL=localDateISO(new Date());
         const gcev=db.events.filter(e=>gcc.some(c=>c.id===e.caseId)&&e.date>=todayGCL).sort((a,b)=>a.date>b.date?1:-1);
         return [
           `=== לקוח: ${gcl2.name} (${gcl2.clientNumber}) ===`,
@@ -2076,9 +2134,9 @@ async function agentExecTool(name, input) {
         return await agentExecTool('getCaseDetails',{caseId:input.caseId});
       }
       case 'analyzeCaseload': {
-        const todayAC=new Date().toISOString().split('T')[0];
+        const todayAC=localDateISO(new Date());
         const next7=new Date(); next7.setDate(next7.getDate()+7);
-        const next7s=next7.toISOString().split('T')[0];
+        const next7s=localDateISO(next7);
         const acActive=db.cases.filter(c=>c.status!=='closed');
         const acUrgent=db.cases.filter(c=>c.status==='urgent');
         const acStuck=acActive.filter(c=>{const ld=c.diary&&c.diary.length?c.diary[c.diary.length-1].date:c.opened;const d=daysSinceHE(ld);return d!==null&&d>=14;});
@@ -2107,7 +2165,7 @@ async function agentExecTool(name, input) {
       }
       case 'getRecommendations': {
         const stRec={'איסוף מסמכים':'לאסוף מסמכי חוב ולשלוח מכתב התראה ראשון','התראה ראשונה':'לבדוק אם חלפו 14-30 יום ולשקול פנייה משפטית או גישור','גישור':'לתאם ישיבת גישור; אם נכשל – לעבור לכתב תביעה','כתב תביעה':'להגיש כתב תביעה לבית המשפט המוסמך','דיון':'להתכונן לדיון ולוודא כל המסמכים מוכנים','הוצאה לפועל':'לעקוב אחר הליכי הוצל"פ ולדרוש עיקולים','סגור':'תיק סגור'};
-        const todayRec=new Date().toISOString().split('T')[0];
+        const todayRec=localDateISO(new Date());
         let recList;
         if (input.caseId&&input.caseId!=='all'){const rc=db.cases.find(x=>x.id===input.caseId);if(!rc) return 'תיק לא נמצא.';recList=[rc];}
         else recList=db.cases.filter(c=>c.status!=='closed').slice(0,20);
@@ -2139,7 +2197,7 @@ async function agentExecTool(name, input) {
         const frColl=db.cases.reduce((s,c)=>s+(c.collected||0),0);
         const frDP=frPay.filter(p=>p.type==='debt'), frRP=frPay.filter(p=>p.type==='retainer'), frEP=frPay.filter(p=>p.type==='expense');
         const frSum=arr=>arr.reduce((s,p)=>s+(p.amount||0),0);
-        const frFee=frActive.reduce((s,c)=>{if(c.feeType==='percent') return s+(c.amount||0)*((c.feePct||15)/100);if(c.feeType==='fixed') return s+(c.feeFixed||0);if(c.feeType==='both') return s+(c.feeFixed||0)+(c.amount||0)*((c.feePct||0)/100);return s;},0);
+        const frFee=frActive.reduce((s,c)=>s+calcExpectedFee(c),0);
         const frCB=db.clients.map(cl=>{const cc=db.cases.filter(c=>c.client===cl.id);const d=cc.reduce((s,c)=>s+(c.amount||0),0);const co=cc.reduce((s,c)=>s+(c.collected||0),0);const cp=frPay.filter(p=>cc.some(c=>c.id===p.caseId));return {name:cl.name,debt:d,collected:co,cases:cc.length};}).filter(x=>x.debt>0).sort((a,b)=>b.debt-a.debt);
         return [
           `=== דוח כספי – ${frLabel} ===`,'',
@@ -2211,27 +2269,27 @@ async function agentExecTool(name, input) {
           const ddCaseForTpl = input.caseId ? db.cases.find(x => x.id === input.caseId) : null;
           if (!ddCaseForTpl) return 'שגיאה: נדרש תיק לייצור הסכם שכ"ט';
           const ddClientForTpl = db.clients.find(x => x.id === ddCaseForTpl.client) || {};
-          const tplPath = await fillLegalTemplate('atf', {
+          const { filePath: tplPath, filename: tplFilename } = await fillLegalTemplate('atf', {
             clientName: ddClientForTpl.name || '',
             clientId: ddClientForTpl.idNum || '',
             matter: ddCaseForTpl.name || '',
             feePct: ddCaseForTpl.feePct || '15',
           }, ddCaseForTpl);
           notify('הסכם שכ"ט נשמר! פותח...');
-          await Platform.openFile(tplPath);
+          await Platform.openFile(tplPath, tplFilename);
           return `✅ הסכם שכ"ט נשמר ונפתח`;
         }
         if (ddType === 'ייפוי כוח' || ddType === 'ייפוי כח') {
           const ddCaseForTpl = input.caseId ? db.cases.find(x => x.id === input.caseId) : null;
           if (!ddCaseForTpl) return 'שגיאה: נדרש תיק לייצור ייפוי כוח';
           const ddClientForTpl = db.clients.find(x => x.id === ddCaseForTpl.client) || {};
-          const tplPath = await fillLegalTemplate('poa', {
+          const { filePath: tplPath, filename: tplFilename } = await fillLegalTemplate('poa', {
             grantorName: ddClientForTpl.name || '',
             grantorId: ddClientForTpl.idNum || '',
             matter: ddCaseForTpl.name || '',
           }, ddCaseForTpl);
           notify('ייפוי כוח נשמר! פותח...');
-          await Platform.openFile(tplPath);
+          await Platform.openFile(tplPath, tplFilename);
           return `✅ ייפוי כוח נשמר ונפתח`;
         }
 
@@ -2386,7 +2444,7 @@ async function agentExecTool(name, input) {
           saveDB();
         }
         notify('טיוטה נשמרה! פותח...');
-        await Platform.openFile(ddFilePath);
+        await Platform.openFile(ddFilePath, ddFilename);
         const ddSub = ddCaseObj && ddCaseObj.caseSubNumber ? ` [${ddCaseObj.caseSubNumber}]` : '';
         return `✅ טיוטת "${ddType}" נשמרה ונפתחה${ddSub}${ddNoLibNote}`;
       }
@@ -2411,7 +2469,7 @@ async function agentExecTool(name, input) {
         const grFilename=`${grTitle} – ${grDate}.docx`.replace(/[\\/:*?"<>|]/g,'_');
         const grPath=await Platform.saveFile({buffer:Array.from(grBuf),filename:grFilename});
         notify('הדוח נשמר! פותח...');
-        await Platform.openFile(grPath);
+        await Platform.openFile(grPath, grFilename);
         return `✅ המסמך "${grFilename}" נשמר ונפתח`;
       }
       default: return 'שגיאה: כלי לא מוכר – ' + name;

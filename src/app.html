@@ -181,8 +181,6 @@ textarea.form-input{resize:vertical;min-height:80px}
 .kanban-card-foot{display:flex;align-items:center;justify-content:space-between}
 .kanban-days{font-size:10px;color:var(--text3)}
 /* Timer */
-.timer-fab{position:fixed;bottom:20px;left:20px;background:var(--bg3);border:1px solid var(--border2);border-radius:24px;padding:8px 16px;font-size:13px;color:var(--text);cursor:pointer;z-index:150;font-family:'Heebo',sans-serif;transition:all 0.15s;user-select:none;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.timer-fab:hover{background:var(--bg4)}.timer-fab.running{border-color:var(--danger);color:var(--danger);background:rgba(220,38,38,0.08)}
 /* ===== AI AGENT ===== */
 .agent-fab{position:fixed;bottom:20px;right:20px;background:var(--accent);border:none;border-radius:24px;padding:9px 18px;font-size:13px;color:#fff;cursor:pointer;z-index:150;font-family:'Heebo',sans-serif;font-weight:600;box-shadow:0 4px 16px rgba(37,99,235,0.35);transition:all 0.15s;user-select:none}
 .agent-fab:hover{background:var(--accent2);transform:translateY(-1px);box-shadow:0 6px 20px rgba(37,99,235,0.5)}
@@ -272,7 +270,6 @@ textarea.form-input{resize:vertical;min-height:80px}
   /* AI agent panel: fit the viewport instead of a fixed 390px box, and clear the bottom nav */
   .agent-panel{width:calc(100vw - 24px);right:12px;left:12px;height:min(70vh,560px);bottom:76px}
   .agent-fab{bottom:76px;right:12px}
-  .timer-fab{bottom:76px;left:12px;max-width:180px}
   .notif{bottom:130px;left:12px;right:12px;max-width:none}
 
   /* Kanban stays horizontally scrollable but with slightly narrower columns */
@@ -295,11 +292,20 @@ textarea.form-input{resize:vertical;min-height:80px}
   <div class="modal" style="width:380px">
     <div class="modal-header"><div class="modal-title">⚖ LexTrack</div></div>
     <div id="auth-error" class="alert alert-warning" style="display:none"></div>
-    <div class="form-group"><label class="form-label">אימייל</label><input class="form-input" id="auth-email" type="email" autocomplete="username"></div>
-    <div class="form-group"><label class="form-label">סיסמה</label><input class="form-input" id="auth-password" type="password" autocomplete="current-password"></div>
-    <div class="modal-footer" style="flex-direction:column;gap:8px">
-      <button class="btn btn-primary" style="width:100%" onclick="authSignIn()">התחבר</button>
-      <button class="btn" style="width:100%" onclick="authSignUp()">משתמש חדש? הרשמה</button>
+    <div id="auth-login-form">
+      <div class="form-group"><label class="form-label">אימייל</label><input class="form-input" id="auth-email" type="email" autocomplete="username"></div>
+      <div class="form-group"><label class="form-label">סיסמה</label><input class="form-input" id="auth-password" type="password" autocomplete="current-password"></div>
+      <div class="modal-footer" style="flex-direction:column;gap:8px">
+        <button class="btn btn-primary" style="width:100%" onclick="authSignIn()">התחבר</button>
+        <button class="btn" style="width:100%" onclick="authSignUp()">משתמש חדש? הרשמה</button>
+      </div>
+      <div style="text-align:center;margin-top:8px"><a href="#" onclick="authForgotPassword();return false" style="font-size:12px;color:var(--accent2)">שכחת סיסמה?</a></div>
+    </div>
+    <div id="auth-recovery-form" style="display:none">
+      <div class="form-group"><label class="form-label">סיסמה חדשה</label><input class="form-input" id="auth-new-password" type="password" autocomplete="new-password"></div>
+      <div class="modal-footer" style="flex-direction:column;gap:8px">
+        <button class="btn btn-primary" style="width:100%" onclick="authSetNewPassword()">עדכן סיסמה</button>
+      </div>
     </div>
     <div id="auth-status" style="font-size:12px;color:var(--text3);margin-top:8px;text-align:center"></div>
   </div>
@@ -608,7 +614,9 @@ textarea.form-input{resize:vertical;min-height:80px}
 </nav>
 
 <div class="notif" id="notif"></div>
-<div class="timer-fab" id="timer-fab" onclick="toggleTimer()">▶ 00:00:00</div>
+<!-- Timer lives inside the case-detail screen only (see #case-timer-btn) — no more
+     app-wide floating clock; a running timer just shows "טיימר פועל לתיק אחר" on
+     that button if you're viewing a different case while one is running. -->
 
 <!-- ============ AI AGENT ============ -->
 <div class="agent-panel" id="agent-panel">

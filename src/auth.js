@@ -10,6 +10,12 @@ let appBooted = false;
 // once office creation is fully done.
 let suppressAuthListener = false;
 
+// Set true while the user is on the "set new password" screen reached via a Supabase
+// recovery-link redirect — stays true until they actually submit a new password, so the
+// auth-state listener doesn't route them straight into the app on the temporary recovery
+// session Supabase establishes when the page loads with a recovery link's URL hash.
+let inPasswordRecovery = false;
+
 function authShowError(msg) {
   const el = document.getElementById('auth-error');
   el.textContent = msg;
@@ -69,6 +75,45 @@ async function authSignOut() {
   location.reload();
 }
 
+async function authForgotPassword() {
+  authShowError('');
+  const email = document.getElementById('auth-email').value.trim();
+  if (!email) { authShowError('נא להזין למעלה את כתובת האימייל שלך, ואז ללחוץ שוב על "שכחת סיסמה"'); return; }
+  authShowStatus('שולח קישור לאיפוס סיסמה...');
+  try {
+    await Platform.resetPasswordForEmail(email);
+    authShowStatus('');
+    alert('נשלח אימייל עם קישור לאיפוס סיסמה. בדוק/י את תיבת הדואר.');
+  } catch (e) {
+    authShowStatus('');
+    authShowError(authFriendlyError(e));
+  }
+}
+
+async function authSetNewPassword() {
+  authShowError('');
+  const pw = document.getElementById('auth-new-password').value;
+  if (!pw || pw.length < 6) { authShowError('הסיסמה חייבת להכיל לפחות 6 תווים'); return; }
+  authShowStatus('מעדכן סיסמה...');
+  try {
+    await Platform.updatePassword(pw);
+    authShowStatus('');
+    inPasswordRecovery = false;
+    alert('הסיסמה עודכנה בהצלחה!');
+    showApp();
+  } catch (e) {
+    authShowStatus('');
+    authShowError(authFriendlyError(e));
+  }
+}
+
+function showPasswordRecoveryForm() {
+  document.getElementById('auth-gate').style.display = 'flex';
+  document.getElementById('app-root').style.display = 'none';
+  document.getElementById('auth-login-form').style.display = 'none';
+  document.getElementById('auth-recovery-form').style.display = 'block';
+}
+
 async function showApp() {
   document.getElementById('auth-gate').style.display = 'none';
   document.getElementById('app-root').style.display = 'flex';
@@ -93,9 +138,13 @@ async function showApp() {
 function showAuthGate() {
   document.getElementById('auth-gate').style.display = 'flex';
   document.getElementById('app-root').style.display = 'none';
+  document.getElementById('auth-login-form').style.display = 'block';
+  document.getElementById('auth-recovery-form').style.display = 'none';
 }
 
-window.supabaseClient.auth.onAuthStateChange((_event, session) => {
+window.supabaseClient.auth.onAuthStateChange((event, session) => {
   if (suppressAuthListener) return;
+  if (event === 'PASSWORD_RECOVERY') { inPasswordRecovery = true; showPasswordRecoveryForm(); return; }
+  if (inPasswordRecovery) return;
   if (session) showApp(); else showAuthGate();
 });
