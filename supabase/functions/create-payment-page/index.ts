@@ -1,24 +1,30 @@
-// LexTrack — creates a hosted Grow (formerly Meshulam) payment page URL for the
-// calling office's subscription. Mirrors ai-proxy's auth pattern: identify the
-// caller from their JWT, resolve their office, service_role bypasses RLS for the
+// LexTrack — creates a hosted Grow (formerly Meshulam) payment page URL for a
+// recurring monthly subscription charge. Mirrors ai-proxy's auth pattern: identify
+// the caller from their JWT, resolve their office, service_role bypasses RLS for the
 // actual subscriptions write (see supabase-schema-phase1-fix9.sql for why that
 // table has no client-writable policy at all).
 //
 // Deploy: `supabase functions deploy create-payment-page`
-// Secrets: `supabase secrets set GROW_USER_ID=... GROW_PAGE_CODE=...`
-//   (from Grow's onboarding — Dashboard → Settings → API, or ask their support;
-//   these are NOT the same as your Grow dashboard login)
+// Secrets: `supabase secrets set GROW_USER_ID=... GROW_PAGE_CODE=... GROW_WEBHOOK_SECRET=...`
+//   (userId/pageCode from Grow's onboarding — Dashboard → Settings → API; the
+//   webhook secret is one YOU make up — see grow-webhook/index.ts for why)
 //
-// *** NOT YET WIRED TO A REAL CHARGE — see the TODO below. ***
-// Grow's docs site (grow-il.readme.io) renders its endpoint reference client-side,
-// which this environment couldn't scrape field-by-field, so the exact request body
-// for a RECURRING charge (vs. a one-off payment) is unverified. What's confirmed
-// from Grow's own docs: CreatePaymentProcess takes `userId` + `pageCode` (server-side
-// only — client-side calls are rejected), returns a hosted payment URL good for 10
-// minutes, and `ApproveTransaction` finalizes it. The one-off shape below is a
-// reasonable starting point; before going live, get the recurring-specific fields
-// (likely something like `paymentType`/`numberOfPayments`/a recurring flag) from
-// Grow's actual reference for your account and fill in the TODO section.
+// Confirmed from Grow's docs (grow-il.readme.io — the reference pages themselves
+// render client-side and only surface real field names through their search index,
+// not a browsable page): CreatePaymentProcess is called with FORM-ENCODED data (NOT
+// JSON), required fields pageCode/sum/fullName/phone (email/description optional),
+// paymentType=1 + paymentNum=<count> for a Grow-MANAGED recurring charge (as opposed
+// to isRecurringDebitId=1, which is the alternative "you manage the token yourself"
+// approach — not used here, this is simpler), notifyUrl for the webhook callback,
+// and cField1/cField2 etc. for custom fields Grow echoes back on the webhook.
+//
+// *** STILL UNCONFIRMED — verify against Grow's sandbox before going live: ***
+// - Whether a direct (non-aggregator) merchant needs BOTH userId and pageCode, or
+//   just pageCode alone (the first onboarding doc mentioned both; a second page
+//   mentioned apiKey+userId specifically for aggregators managing multiple
+//   merchants — unclear which category a direct Meshulam account falls into).
+// - The exact shape of CreatePaymentProcess's own response (which field holds the
+//   payment page URL) — "GROW will respond with a link" is all their docs confirm.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -26,7 +32,10 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const GROW_USER_ID = Deno.env.get('GROW_USER_ID')!;
 const GROW_PAGE_CODE = Deno.env.get('GROW_PAGE_CODE')!;
-const GROW_API_BASE = 'https://api.meshulam.co.il'; // sandbox: https://sandbox.meshulam.co.il
+const GROW_WEBHOOK_SECRET = Deno.env.get('GROW_WEBHOOK_SECRET')!;
+const GROW_API_BASE = 'https://sandbox.meshulam.co.il'; // switch to https://api.meshulam.co.il for real charges
+const SITE_URL = Deno.env.get('SITE_URL') || 'https://zesty-marigold-0edcb2.netlify.app';
+const MONTHLY_PRICE_ILS = 99; // TODO: your real monthly price
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -57,32 +66,42 @@ Deno.serve(async (req) => {
   if (memberErr || !member) return json({ error: 'לא נמצא משרד מקושר למשתמש' }, 403);
   if (member.role !== 'owner') return json({ error: 'רק בעל המשרד יכול לשדרג את המנוי' }, 403);
 
-  // TODO: replace with the verified recurring-payment fields from Grow's reference
-  // for your account (likely a recurring/subscription flag + amount + frequency).
-  // This is the one-off "CreatePaymentProcess" shape confirmed from their public docs.
-  const growPayload = {
+  const { data: office } = await supabase.from('offices').select('name').eq('id', member.office_id).maybeSingle();
+
+  // cField1 = office_id (so grow-webhook can match the payment back to an office
+  // without needing a prior grow_customer_id), cField2 = a shared secret only we
+  // know (Grow's webhook has no signature scheme — this is the practical substitute:
+  // grow-webhook rejects any callback where this doesn't come back unchanged).
+  const growForm = new URLSearchParams({
     userId: GROW_USER_ID,
     pageCode: GROW_PAGE_CODE,
-    sum: 99, // TODO: real monthly price in ILS
-    description: 'מנוי LexTrack',
-    successUrl: `${SUPABASE_URL.replace('.supabase.co', '')}`, // TODO: real success redirect (your app's URL)
-    cancelUrl: `${SUPABASE_URL.replace('.supabase.co', '')}`, // TODO: real cancel redirect
-    // TODO: pass officeId through as custom/metadata field if Grow supports one, so
-    // grow-webhook can match the incoming payment notification back to this office
-    // without relying solely on grow_customer_id (which doesn't exist until after
-    // the first successful charge).
-  };
+    sum: String(MONTHLY_PRICE_ILS),
+    fullName: office?.name || userData.user.email || 'לקוח LexTrack',
+    phone: '0000000000', // TODO: Grow requires this — collect a real phone number before charging, or confirm a placeholder is accepted
+    email: userData.user.email || '',
+    description: 'מנוי LexTrack חודשי',
+    paymentType: '1', // Grow-managed recurring (not token-managed) — see comment above
+    paymentNum: '999', // TODO: confirm how Grow expects "ongoing until canceled" vs a fixed count
+    notifyUrl: `${SUPABASE_URL}/functions/v1/grow-webhook`,
+    successUrl: `${SITE_URL}?payment=success`,
+    cancelUrl: `${SITE_URL}?payment=cancelled`,
+    cField1: member.office_id,
+    cField2: GROW_WEBHOOK_SECRET,
+  });
 
   const growResp = await fetch(`${GROW_API_BASE}/api/light/server/1.0/CreatePaymentProcess`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(growPayload),
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: growForm.toString(),
   });
-  const growData = await growResp.json();
+  // TODO: confirm response envelope against a real sandbox call — this assumes JSON
+  // with a `data.url` (or `url`) field per Grow's overview page; adjust once verified.
+  const growData = await growResp.json().catch(() => null);
+  const payUrl = growData?.data?.url || growData?.url;
 
-  if (!growResp.ok || growData.status !== 1) {
-    return json({ error: growData.message || 'שגיאה ביצירת עמוד תשלום' }, 502);
+  if (!growResp.ok || !payUrl) {
+    return json({ error: (growData && (growData.message || growData.errorMessage)) || 'שגיאה ביצירת עמוד תשלום' }, 502);
   }
 
-  return json({ url: growData.data?.url });
+  return json({ url: payUrl });
 });
