@@ -370,7 +370,13 @@ textarea.form-input{resize:vertical;min-height:80px}
   <div class="main">
 
     <!-- DASHBOARD -->
-    <div id="panel-dashboard" class="panel">
+    <!-- Starts with .active (matching the sidebar/bottom-nav dashboard items, which
+         both start "active" in their own markup below): nav('dashboard') is the only
+         code path that ever adds .panel.active, and nothing called it on boot, so
+         without this the dashboard's data rendered into the DOM correctly but the
+         panel itself stayed display:none (base .panel rule) until the user manually
+         clicked "דשבורד" once. -->
+    <div id="panel-dashboard" class="panel active">
       <div class="topbar">
         <div class="topbar-title">דשבורד</div>
         <div class="topbar-actions">
