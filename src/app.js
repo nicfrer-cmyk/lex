@@ -18,6 +18,11 @@ let selectedFile = null;
 let currentLegalDocType = null;
 let casesView = localStorage.getItem('lextrack-view') || 'table';
 let currentClientId = null;
+// Set by openClientQuickAdd() when "+ לקוח" is clicked from inside the case form —
+// lets saveClient()/closeModal() know to return to (and reselect the new client in)
+// the case modal instead of the normal clients-grid flow, whether the user saves or
+// cancels out of the client modal.
+let quickAddClientForCase = false;
 
 // ===== DB =====
 async function loadDB() {
@@ -167,14 +172,36 @@ function openModal(id) {
   if(id==='modal-payment'){['pay-amount','pay-note'].forEach(f=>document.getElementById(f).value='');document.getElementById('pay-date').value=localDateISO(new Date());document.getElementById('pay-case').value='';document.getElementById('pay-type').value='debt';document.getElementById('pay-method').selectedIndex=0;}
 }
 
+// Opens the "new client" modal on top of an in-progress case form, without losing
+// whatever the user already typed into the case (a plain closeModal('modal-case')
+// here would clear case-edit-id and make the case modal reopen in "new case" mode,
+// wiping every field). See quickAddClientForCase and saveClient()/closeModal().
+function openClientQuickAdd() {
+  quickAddClientForCase = true;
+  document.getElementById('modal-case').classList.remove('open');
+  openModal('modal-client');
+}
+
 function closeModal(id) {
   document.getElementById(id).classList.remove('open');
   if(id==='modal-case') document.getElementById('case-edit-id').value='';
-  if(id==='modal-client') document.getElementById('client-edit-id').value='';
+  if(id==='modal-client') {
+    document.getElementById('client-edit-id').value='';
+    // Covers both cancelling out of the quick-add (X button / backdrop click) and
+    // the post-save path in saveClient() — either way the case form must reappear.
+    if(quickAddClientForCase) {
+      quickAddClientForCase=false;
+      document.getElementById('modal-case').classList.add('open');
+    }
+  }
   if(id==='modal-payment') { document.getElementById('pay-edit-id').value=''; document.getElementById('pay-modal-title').textContent='רישום תשלום'; }
 }
 
-document.querySelectorAll('.modal-overlay').forEach(m=>m.addEventListener('click',function(e){if(e.target===this)this.classList.remove('open');}));
+// Routed through closeModal(), not a bare classList.remove('open') — otherwise
+// dismissing a modal by clicking its backdrop skips the per-modal cleanup above
+// (stale case/client edit-id sticking around for the next "new" open, or the
+// quick-add-from-case flow never returning to the case form).
+document.querySelectorAll('.modal-overlay').forEach(m=>m.addEventListener('click',function(e){if(e.target===this)closeModal(this.id);}));
 
 function populateSelects() {
   const co='<option value="">בחר לקוח...</option>'+db.clients.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
@@ -864,8 +891,15 @@ function saveClient() {
   };
   if(eid){const i=db.clients.findIndex(c=>c.id===eid);if(i>=0)db.clients[i]=obj;}
   else db.clients.push(obj);
-  saveDB(); closeModal('modal-client'); notify(eid?'לקוח עודכן':'לקוח נוסף! ✓');
-  if(currentPanel==='client-detail') openClientDetail(obj.id);
+  saveDB();
+  const wasQuickAdd=quickAddClientForCase;
+  closeModal('modal-client'); notify(eid?'לקוח עודכן':'לקוח נוסף! ✓');
+  if(wasQuickAdd){
+    // closeModal('modal-client') already reopened modal-case — just refresh its
+    // client dropdown and land on the client we came here to create.
+    populateSelects();
+    document.getElementById('case-client').value=obj.id;
+  } else if(currentPanel==='client-detail') openClientDetail(obj.id);
   else renderClients();
 }
 

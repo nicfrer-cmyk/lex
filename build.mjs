@@ -13,6 +13,14 @@ const vendorDir = path.join(outDir, 'vendor');
 
 fs.mkdirSync(vendorDir, { recursive: true });
 
+// Cache-busting query string appended to every script tag below. Without this, a
+// deploy that only changes app.js/platform.js etc. (not index.html's own bytes)
+// can leave phones/browsers serving a stale cached copy of those scripts indefinitely
+// — the exact "I fixed it but the site still does the old thing" trap. index.html
+// itself is also marked no-cache in netlify.toml so the browser always re-fetches it
+// and picks up this new query string.
+const buildVersion = Date.now();
+
 // index.html: markup/CSS from src/app.html, with the real script tags injected.
 const appHtml = fs.readFileSync(path.join(src, 'app.html'), 'utf8');
 const html = appHtml.replace(
@@ -33,7 +41,7 @@ const html = appHtml.replace(
     'app.js',
     'auth.js',
     'template-manager.js',
-  ].map(s => `<script src="${s}"></script>`).join('\n')
+  ].map(s => `<script src="${s}?v=${buildVersion}"></script>`).join('\n')
 );
 fs.writeFileSync(path.join(outDir, 'index.html'), html, 'utf8');
 

@@ -661,7 +661,12 @@ textarea.form-input{resize:vertical;min-height:80px}
         <div class="form-group"><label class="form-label">מספר תיק</label><input class="form-input" id="case-number" placeholder="2025-001"></div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label class="form-label">לקוח (מזמין השירות)</label><select class="form-input" id="case-client"><option value="">בחר לקוח...</option></select></div>
+        <div class="form-group"><label class="form-label">לקוח (מזמין השירות)</label>
+          <div style="display:flex;gap:6px">
+            <select class="form-input" id="case-client" style="flex:1"><option value="">בחר לקוח...</option></select>
+            <button type="button" class="btn btn-sm" style="flex-shrink:0" onclick="openClientQuickAdd()" title="הוסף לקוח חדש">+ לקוח</button>
+          </div>
+        </div>
         <div class="form-group"><label class="form-label">סכום חוב (₪)</label><input class="form-input" id="case-amount" type="number" placeholder="0"></div>
       </div>
       <div class="form-row">

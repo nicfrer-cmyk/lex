@@ -2,6 +2,14 @@
   command = "npm install && node build.mjs"
   publish = "dist"
 
+# index.html carries the cache-busting "?v=" query string build.mjs stamps onto every
+# script tag — if the browser ever caches index.html itself, it keeps requesting the
+# OLD versioned URLs forever and a deploy can look like it silently didn't ship.
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache, must-revalidate"
+
 [[redirects]]
   from = "/*"
   to = "/index.html"
