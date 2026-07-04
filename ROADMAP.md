@@ -6,6 +6,9 @@ Last updated 2026-07-04. Payment processor: Meshulam/Grow (existing account).
 
 - [x] SQL migrations fix6–fix9 — run
 - [x] Google Cloud OAuth app — configured (per you)
+- [ ] **`supabase-schema-phase1-fix10.sql` — run this now.** Fixes a real "infinite
+      recursion" error hit during Google sign-in (office_members' own RLS policies
+      were self-referencing — a classic Postgres trap, unrelated to anything you did).
 - [ ] Grow payment — code rewritten with real field names, needs your credentials + a sandbox test
 - [ ] Email (Resend, temporary) — next up
 - [ ] `service_role` key — next up
