@@ -203,6 +203,23 @@ function closeModal(id) {
 // quick-add-from-case flow never returning to the case form).
 document.querySelectorAll('.modal-overlay').forEach(m=>m.addEventListener('click',function(e){if(e.target===this)closeModal(this.id);}));
 
+// ===== OVERFLOW MENU ("⋮ עוד") =====
+function toggleOverflowMenu(btn){
+  const menu = btn.nextElementSibling;
+  const wasOpen = menu.classList.contains('open');
+  closeAllOverflowMenus();
+  if(!wasOpen) menu.classList.add('open');
+}
+function closeAllOverflowMenus(){
+  document.querySelectorAll('.overflow-menu.open').forEach(m=>m.classList.remove('open'));
+}
+// Click-outside-to-close — the button's own onclick already stopped it from
+// re-closing itself (see toggleOverflowMenu's own event bubbling up to here after
+// already having opened the menu on the same click).
+document.addEventListener('click', function(e){
+  if(!e.target.closest('.overflow-menu-wrap')) closeAllOverflowMenus();
+});
+
 // Delegated so it works for every task-cb rendered anywhere (dashboard, tasks
 // screen, case detail) without a listener per element. A div with role="checkbox"
 // only gets a11y semantics from the role/aria attributes (see taskCbHtml) — the

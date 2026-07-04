@@ -33,9 +33,9 @@ the exact label may vary slightly). Add each one as a Name/Value pair and save.
    - Sender email: `onboarding@resend.dev`
    - Sender name: `LexTrack`
 5. Supabase Dashboard → **Authentication → Providers → Email** → turn ON "Confirm email".
-6. Send me the confirmation/invite/reset email templates from **Authentication → Email
-   Templates** if you'd like me to draft better Hebrew wording for them (I can write
-   the text; you paste it in there — that screen isn't part of this codebase).
+6. Already drafted for you: see **EMAIL_TEMPLATES.md** — ready-to-paste HTML for the
+   3 emails LexTrack actually sends (confirm signup, invite user, reset password).
+   Paste each into **Authentication → Email Templates**, per the instructions there.
 
 ## 2. `service_role` key (needed for auto-sent team invites)
 
@@ -97,7 +97,6 @@ something's off, and I'll fix it from the actual error.
 
 ## Longer-term / not urgent
 
-- Case detail still has 5 action buttons up top — a "⋮ עוד" overflow menu would be cleaner on small phones.
 - Template import still requires exact Hebrew filenames — a real upload + field-mapping UI would remove that friction for a new customer who doesn't know the convention.
 
 ## Already done (see git log for full detail)
@@ -109,6 +108,8 @@ something's off, and I'll fix it from the actual error.
 - Dead code removal: unused Electron/Capacitor platform shims, dead "library path" picker
 - Team invite email case-sensitivity fix, team list shows real emails
 - Settings: profile (email + password reset), legal disclaimer, subscription status section
+- Case detail's 4 secondary buttons collapsed into a "⋮ עוד" overflow menu (reusable `.overflow-menu` pattern)
+- EMAIL_TEMPLATES.md — ready-to-paste Hebrew HTML for Supabase's 3 auth emails
 - Removed the "prompt caching" toggle (dev jargon, no real user trade-off)
 - `test/pure-functions.test.js` (`npm test`) — regression coverage for fee/VAT/date logic
 - Self-hosted error log (`client_errors` table + Settings viewer) — no third-party account needed

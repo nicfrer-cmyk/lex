@@ -193,6 +193,13 @@ textarea.form-input{resize:vertical;min-height:80px}
 .kanban-card-foot{display:flex;align-items:center;justify-content:space-between}
 .kanban-days{font-size:10px;color:var(--text3)}
 /* Timer */
+/* Overflow menu ("⋮ עוד") — for topbars with too many secondary actions to show as
+   separate buttons on a phone screen (see case-detail: was 4 buttons in a row). */
+.overflow-menu-wrap{position:relative;display:inline-block}
+.overflow-menu{position:absolute;top:calc(100% + 4px);left:0;background:var(--bg2);border:1px solid var(--border2);border-radius:var(--radius);box-shadow:var(--shadow-md);display:none;flex-direction:column;min-width:170px;z-index:120;overflow:hidden}
+.overflow-menu.open{display:flex}
+.overflow-menu button{background:none;border:none;text-align:right;padding:10px 14px;font-size:13px;cursor:pointer;font-family:'Heebo',sans-serif;color:var(--text);white-space:nowrap}
+.overflow-menu button:hover{background:var(--bg3)}
 /* ===== AI AGENT ===== */
 .agent-fab{position:fixed;bottom:20px;right:20px;background:var(--accent);border:none;border-radius:24px;padding:9px 18px;font-size:13px;color:#fff;cursor:pointer;z-index:150;font-family:'Heebo',sans-serif;font-weight:600;box-shadow:0 4px 16px rgba(37,99,235,0.35);transition:all 0.15s;user-select:none}
 .agent-fab:hover{background:var(--accent2);transform:translateY(-1px);box-shadow:0 6px 20px rgba(37,99,235,0.5)}
@@ -450,9 +457,14 @@ textarea.form-input{resize:vertical;min-height:80px}
           <button class="btn" onclick="nav('cases',document.querySelectorAll('.nav-item')[1])">← חזרה לתיקים</button>
         </div>
         <div class="topbar-actions">
-          <button class="btn btn-sm btn-warning" onclick="generateLegalDoc('attorney-fee')" id="btn-gen-atf">📄 הסכם שכ"ט</button>
-          <button class="btn btn-sm btn-warning" onclick="generateLegalDoc('poa')" id="btn-gen-poa">📄 ייפוי כוח</button>
-          <button class="btn btn-sm btn-danger" onclick="deleteCase()">מחק</button>
+          <div class="overflow-menu-wrap">
+            <button class="btn btn-sm" onclick="toggleOverflowMenu(this)">⋮ עוד</button>
+            <div class="overflow-menu">
+              <button onclick="closeAllOverflowMenus();generateLegalDoc('attorney-fee')" id="btn-gen-atf">📄 הסכם שכ"ט</button>
+              <button onclick="closeAllOverflowMenus();generateLegalDoc('poa')" id="btn-gen-poa">📄 ייפוי כוח</button>
+              <button onclick="closeAllOverflowMenus();deleteCase()" style="color:var(--danger)">🗑 מחק תיק</button>
+            </div>
+          </div>
           <button class="btn btn-sm btn-primary" onclick="editCase()">✏ עריכה</button>
         </div>
       </div>
