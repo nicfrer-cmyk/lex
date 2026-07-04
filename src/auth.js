@@ -125,7 +125,15 @@ async function showApp() {
         await Platform.redeemInvite(inviteToken);
         notify('הצטרפת למשרד בהצלחה!');
       } catch (e) {
-        alert('שגיאה בהצטרפות למשרד: ' + e.message);
+        // A denied insert (RLS) is the expected shape for every real failure reason
+        // here — wrong/already-redeemed/expired invite, or the invite's email not
+        // matching the signed-in account — but Postgres's raw message ("new row
+        // violates row-level security policy...") means nothing to a non-technical
+        // user, so translate it to the actual likely causes instead.
+        const msg = /row-level security/i.test(e.message)
+          ? 'לא ניתן להצטרף עם קישור זה — ייתכן שההזמנה כבר נוצלה/פגה, שאתה כבר חבר במשרד אחר, או שנרשמת עם כתובת אימייל שונה מזו שהוזמנה.'
+          : e.message;
+        alert('שגיאה בהצטרפות למשרד: ' + msg);
       }
       // Clean the token out of the URL either way — redeeming twice is a harmless
       // no-op (fails the "not already a member" check with a clear error), but

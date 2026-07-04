@@ -1622,9 +1622,6 @@ function delTimeEntry(id){
 
 // ===== SETTINGS =====
 async function openSettingsModal() {
-  const s = db.settings||{};
-  document.getElementById('settings-library-path').value = s.libraryPath||'';
-  document.getElementById('settings-agent-caching').checked = s.agentCaching !== false;
   updateSessionCost();
   document.getElementById('modal-settings').classList.add('open');
   try {
@@ -1638,12 +1635,24 @@ async function openSettingsModal() {
     document.getElementById('settings-team-section').style.display = isOwner ? '' : 'none';
     if (isOwner) renderTeamSection();
   } catch (e) { /* office info is best-effort in this modal */ }
+  try {
+    const me = await Platform.getUser();
+    document.getElementById('settings-user-email').value = me?.email || '';
+  } catch (e) { /* best-effort */ }
+}
+// Reuses the same "send recovery email" call the logged-out "שכחת סיסמה?" link uses
+// (Platform.resetPasswordForEmail), but for a user who's already signed in and whose
+// email we already know — no need to route them through the auth-gate's email field,
+// which isn't even visible/reachable while #app-root is showing.
+async function settingsChangePassword() {
+  const email = document.getElementById('settings-user-email').value;
+  if (!email) { notify('שגיאה: לא נמצא אימייל למשתמש הנוכחי'); return; }
+  try {
+    await Platform.resetPasswordForEmail(email);
+    alert('נשלח אימייל עם קישור לאיפוס סיסמה. בדוק/י את תיבת הדואר.');
+  } catch (e) { notify('שגיאה: ' + e.message); }
 }
 function saveSettings() {
-  if (!db.settings) db.settings = {};
-  db.settings.libraryPath = document.getElementById('settings-library-path').value.trim();
-  db.settings.agentCaching = document.getElementById('settings-agent-caching').checked;
-  saveDB();
   const officeName = document.getElementById('settings-office-name');
   if (officeName && !officeName.disabled) {
     const vatRate = parseFloat(document.getElementById('settings-vat-rate').value) || 18;
@@ -1661,11 +1670,18 @@ async function renderTeamSection() {
     const team = await Platform.listTeam();
     const me = await Platform.getUser();
     const roleLabel = { owner:'בעלים', lawyer:'עו"ד', secretary:'מזכירה' };
-    wrap.innerHTML = team.map(m => `<div class="fin-row"><span>${m.user_id === me.id ? 'את/ה' : m.user_id.slice(0,8)}</span><span class="badge badge-active">${roleLabel[m.role]||m.role}</span></div>`).join('') || '<div class="empty">אין חברי צוות נוספים</div>';
+    // m.email is null for rows created before the office_members.email column existed
+    // (fix7.sql) — falls back to a truncated user_id rather than showing "undefined".
+    wrap.innerHTML = team.map(m => `<div class="fin-row"><span>${m.user_id === me.id ? 'את/ה' : (m.email || m.user_id.slice(0,8))}</span><span class="badge badge-active">${roleLabel[m.role]||m.role}</span></div>`).join('') || '<div class="empty">אין חברי צוות נוספים</div>';
   } catch (e) { wrap.innerHTML = '<div class="empty">שגיאה בטעינת הצוות</div>'; }
 }
 async function createTeamInvite() {
-  const email = (document.getElementById('invite-email').value || '').trim();
+  // Lowercased because office_invites.email is later matched against auth.users.email
+  // by exact SQL equality (see office_members_insert_via_invite policy) — if the owner
+  // types "Name@Example.COM" here but the invitee's account ends up as
+  // "name@example.com", the match silently fails and redemption breaks for a reason
+  // that has nothing to do with security.
+  const email = (document.getElementById('invite-email').value || '').trim().toLowerCase();
   const role = document.getElementById('invite-role').value;
   if (!email) { notify('נא להזין אימייל'); return; }
   try {
@@ -1676,11 +1692,6 @@ async function createTeamInvite() {
     notify('קישור הזמנה נוצר — העתק ושלח אותו למוזמן');
   } catch (e) { notify('שגיאה: ' + e.message); }
 }
-async function pickLibraryPath() {
-  const picked = await Platform.pickDirectory();
-  if (picked) document.getElementById('settings-library-path').value = picked;
-}
-
 // ===== AI AGENT =====
 const AGENT_SYSTEM_PROMPT = `אתה עוזר משפטי חכם ומנוסה בתוכנת LexTrack של עו״ד ירין אשואל לניהול תיקי גבייה. יש לך גישה מלאה לקרוא את כל הנתונים: תיקים, לקוחות, תשלומים, יומני טיפול, מסמכים ואירועים. אתה יכול: ליצור תיקים ולקוחות, להפיק הסכמי שכר טרחה וייפויי כוח, לרשום משימות/תשלומים/אירועים, לסכם תיקים לפי יומן הטיפול, לנתח את כל התיקים (מה דחוף, מה תקוע, מה הוזנח), לתת המלצות לפעולה, ולהפיק דוחות כספיים. יש לך גישה לספריית מסמכים משפטיים (בקשות והסכמים) המכילה דוגמאות אמיתיות לפי סוג מסמך – כשמתבקש לנסח מסמך, קרא דוגמאות רלוונטיות מהספרייה, שלב אותן עם נתוני התיק והידע המשפטי שלך, וצור טיוטה מקצועית. כשמבקשים סיכום או דוח – הצג כטקסט ברור, ואם מבקשים 'מסמך' או 'קובץ' – הפק מסמך Word. תמיד אשר פעולות יצירה מיד, ובקש אישור לפני מחיקה או עריכה. דבר עברית מקצועית, תמציתית ומדויקת. כשאתה מנתח תיק – התבסס על העובדות מהיומן ומהנתונים, אל תמציא.`;
 
@@ -1974,19 +1985,18 @@ async function agentRunLoop(messages, statusEl, depth, opts) {
 
 async function agentCallAPI(messages, opts) {
   opts = opts || {};
-  const s = db.settings || {};
   const model = opts.model || 'claude-haiku-4-5-20251001';
   const maxTokens = opts.maxTokens || 800;
-  const useCaching = s.agentCaching !== false;
-
-  const systemBlock = useCaching
-    ? [{ type:'text', text:AGENT_SYSTEM_PROMPT, cache_control:{ type:'ephemeral' } }]
-    : AGENT_SYSTEM_PROMPT;
+  // Prompt caching is a pure cost/latency optimization with no functional
+  // trade-off a user could meaningfully choose about, so it's always on — this
+  // used to be a Settings toggle exposing raw API terms ("prompt caching",
+  // "system prompt") to a lawyer end-user for no real benefit. Removed.
+  const systemBlock = [{ type:'text', text:AGENT_SYSTEM_PROMPT, cache_control:{ type:'ephemeral' } }];
 
   // Server-side proxy (supabase/functions/ai-proxy) holds the real Anthropic key,
   // enforces the office's monthly quota, and logs usage — the client never sees
   // cost or the API key anymore (Phase 1).
-  const data = await Platform.callAI({ model, max_tokens:maxTokens, system:systemBlock, tools:AGENT_TOOLS, messages, useCaching });
+  const data = await Platform.callAI({ model, max_tokens:maxTokens, system:systemBlock, tools:AGENT_TOOLS, messages, useCaching:true });
   if (data.error) throw new Error(data.error);
   data._model = model;
   return data;
@@ -2297,27 +2307,23 @@ async function agentExecTool(name, input) {
         return `נמצאו ${seR.length} תוצאות עבור "${input.query}":\n\n`+seR.join('\n');
       }
       case 'listLibraryFolders': {
-        const llLibPath = (db.settings||{}).libraryPath || '';
-        const llRes = await Platform.listLibraryFolders(llLibPath);
+        const llRes = await Platform.listLibraryFolders();
         if (llRes && llRes.error) return `שגיאה: ${llRes.error}`;
-        if (!Array.isArray(llRes) || !llRes.length) return 'הספרייה ריקה או לא הוגדרה. הגדר נתיב בהגדרות.';
+        if (!Array.isArray(llRes) || !llRes.length) return 'הספרייה ריקה. ייבא קבצים במסך "תבניות".';
         return 'תיקיות בספרייה:\n' + llRes.join('\n');
       }
       case 'listDocumentsInFolder': {
-        const ldfLibPath = (db.settings||{}).libraryPath || '';
-        const ldfRes = await Platform.listFolderDocs({ libraryPath: ldfLibPath, folderName: input.folderName });
+        const ldfRes = await Platform.listFolderDocs({ folderName: input.folderName });
         if (ldfRes && ldfRes.error) return `שגיאה: ${ldfRes.error}`;
         if (!Array.isArray(ldfRes) || !ldfRes.length) return `אין מסמכים בתיקייה "${input.folderName}"`;
         return `מסמכים בתיקייה "${input.folderName}":\n` + ldfRes.join('\n');
       }
       case 'readLibraryDocument': {
-        const rldLibPath = (db.settings||{}).libraryPath || '';
-        const rldRes = await Platform.readLibraryDoc({ libraryPath: rldLibPath, folderName: input.folderName, fileName: input.fileName });
+        const rldRes = await Platform.readLibraryDoc({ folderName: input.folderName, fileName: input.fileName });
         if (rldRes && rldRes.error) return `שגיאה בקריאת "${input.fileName}": ${rldRes.error}`;
         return `=== תוכן "${input.fileName}" ===\n` + (rldRes.text||'').substring(0, 8000);
       }
       case 'draftDocument': {
-        const ddLibPath = (db.settings||{}).libraryPath || '';
         const ddType = input.documentType || '';
 
         // Route ATF and POA to template-based generation
@@ -2360,14 +2366,14 @@ async function agentExecTool(name, input) {
         // Read reference docs from library
         const ddRefs = [];
         let ddNoLibNote = '';
-        const ddDocsRes = await Platform.listFolderDocs({ libraryPath: ddLibPath, folderName: ddFolder });
+        const ddDocsRes = await Platform.listFolderDocs({ folderName: ddFolder });
         if (!Array.isArray(ddDocsRes) || !ddDocsRes.length) {
           ddNoLibNote = '\n[לא נמצאו דוגמאות בספרייה – נוסח מידע משפטי בלבד]';
         } else {
           const ddKws = (input.instructions + ' ' + ddType).split(/[\s,]+/).filter(w => w.length > 2);
           const ddScored = ddDocsRes.map(f => ({ f, score: ddKws.filter(k => f.includes(k)).length })).sort((a,b) => b.score-a.score).slice(0,3);
           for (const { f } of ddScored) {
-            const rr = await Platform.readLibraryDoc({ libraryPath: ddLibPath, folderName: ddFolder, fileName: f });
+            const rr = await Platform.readLibraryDoc({ folderName: ddFolder, fileName: f });
             if (!rr || rr.error) continue;
             ddRefs.push({ name: f, text: (rr.text||'').substring(0,5000) });
           }

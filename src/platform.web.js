@@ -100,7 +100,7 @@ window.Platform = {
         .from('offices').insert({ id: officeId, name: 'המשרד שלי' });
       if (officeErr) throw officeErr;
       const { error: memberErr } = await supabase
-        .from('office_members').insert({ office_id: officeId, user_id: data.user.id, role: 'owner' });
+        .from('office_members').insert({ office_id: officeId, user_id: data.user.id, role: 'owner', email: data.user.email });
       if (memberErr) throw memberErr;
     }
   },
@@ -145,7 +145,7 @@ window.Platform = {
   // ---- team / invites ----
   async listTeam() {
     const { officeId } = await currentOffice();
-    const { data, error } = await supabase.from('office_members').select('user_id, role, joined_at').eq('office_id', officeId);
+    const { data, error } = await supabase.from('office_members').select('user_id, email, role, joined_at').eq('office_id', officeId);
     if (error) throw error;
     return data;
   },
@@ -161,8 +161,9 @@ window.Platform = {
     const { data: invite, error: findErr } = await supabase.from('office_invites').select('*').eq('token', token).maybeSingle();
     if (findErr) throw findErr;
     if (!invite) throw new Error('קישור ההזמנה לא תקין או שפג תוקפו');
+    const me = (await supabase.auth.getUser()).data.user;
     const { error: joinErr } = await supabase.from('office_members')
-      .insert({ office_id: invite.office_id, user_id: (await supabase.auth.getUser()).data.user.id, role: invite.role });
+      .insert({ office_id: invite.office_id, user_id: me.id, role: invite.role, email: me.email });
     if (joinErr) throw joinErr;
     await supabase.from('office_invites').update({ redeemed_at: new Date().toISOString() }).eq('token', token);
     clearOfficeCache();
@@ -244,11 +245,6 @@ window.Platform = {
       document.body.appendChild(input);
       input.click();
     });
-  },
-
-  async pickDirectory() {
-    alert('בגרסת הענן אין תיקיות מחשב לבחירה. עבור למסך "תבניות" בתפריט הצד כדי לייבא קבצים לחשבון שלך.');
-    return null;
   },
 
   async readTemplate(templateName) {
