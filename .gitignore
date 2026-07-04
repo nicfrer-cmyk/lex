@@ -22,3 +22,7 @@ android/captures/
 # Never commit real secrets even though supabase-config.js only ever holds the public anon key
 .env
 .env.local
+
+# Supabase CLI's local link/session cache (contains this machine's project link info,
+# not something to share via the repo)
+supabase/.temp/

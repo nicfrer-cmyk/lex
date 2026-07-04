@@ -615,7 +615,7 @@ textarea.form-input{resize:vertical;min-height:80px}
   <div class="agent-hd">
     <div>
       <div class="agent-hd-title">🤖 סוכן AI – LexTrack</div>
-      <div id="agent-session-cost" style="font-size:10px;color:var(--text3);margin-top:1px">עלות session: $0.0000</div>
+      <div id="agent-session-cost" style="font-size:10px;color:var(--text3);margin-top:1px">פעולות AI שנותרו החודש: —</div>
     </div>
     <div class="agent-hd-btns">
       <button class="agent-hd-btn" onclick="openSettingsModal()" title="הגדרות">⚙</button>
@@ -711,7 +711,7 @@ textarea.form-input{resize:vertical;min-height:80px}
       <div class="form-row">
         <div class="form-group" id="fee-fixed-group" style="display:none"><label class="form-label">סכום קבוע (₪)</label><input class="form-input" id="case-fee-fixed" type="number" placeholder="0"></div>
         <div class="form-group"><label class="form-label">כולל מע"מ?</label>
-          <select class="form-input" id="case-fee-vat"><option value="yes">כן (+17%)</option><option value="no">לא</option></select>
+          <select class="form-input" id="case-fee-vat"><option id="case-fee-vat-yes-option" value="yes">כן (+18%)</option><option value="no">לא</option></select>
         </div>
       </div>
       <div class="form-row">
@@ -898,10 +898,9 @@ textarea.form-input{resize:vertical;min-height:80px}
       <div class="modal-title">⚙ הגדרות</div>
       <button class="modal-close" onclick="closeModal('modal-settings')">×</button>
     </div>
-    <div class="form-group">
-      <label class="form-label">מפתח Claude API (Anthropic)</label>
-      <input class="form-input" id="settings-api-key" type="password" placeholder="sk-ant-api03-...">
-      <div style="font-size:11px;color:var(--text3);margin-top:5px">המפתח נשמר מקומית בקובץ הנתונים בלבד ואינו נשלח לשום שרת חיצוני.</div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">שם המשרד</label><input class="form-input" id="settings-office-name" placeholder="המשרד שלי"></div>
+      <div class="form-group"><label class="form-label">שיעור מע"מ (%)</label><input class="form-input" id="settings-vat-rate" type="number" step="0.5" value="18"></div>
     </div>
     <div class="form-group">
       <label class="form-label">ספריית מסמכים לדוגמה</label>
@@ -912,20 +911,24 @@ textarea.form-input{resize:vertical;min-height:80px}
       <div style="font-size:11px;color:var(--text3);margin-top:5px">תיקייה עם תיקיות משנה לפי סוג מסמך (בקשות, הסכמים, התראות וכו׳)</div>
     </div>
     <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:14px">
-      <div style="font-size:12px;font-weight:700;color:var(--accent2);margin-bottom:10px">הגדרות סוכן AI</div>
-      <div class="form-group">
-        <label class="form-label">מודל ברירת מחדל</label>
-        <select class="form-input" id="settings-agent-model" style="width:100%">
-          <option value="">🤖 אוטומטי (מומלץ) – Haiku לפקודות, Sonnet לניסוח</option>
-          <option value="haiku">💨 Haiku תמיד – הכי זול</option>
-          <option value="sonnet">🧠 Sonnet תמיד – הכי חכם</option>
-        </select>
-      </div>
+      <div style="font-size:12px;font-weight:700;color:var(--accent2);margin-bottom:10px">סוכן AI</div>
       <div class="form-group" style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
         <input type="checkbox" id="settings-agent-caching" style="width:auto;margin:0">
         <label class="form-label" style="margin:0">הפעל prompt caching (~90% חיסכון על system prompt)</label>
       </div>
-      <div style="font-size:12px;color:var(--text3);margin-top:6px">עלות session נוכחית: <strong id="settings-session-cost-modal">$0.0000</strong></div>
+      <div style="font-size:12px;color:var(--text3);margin-top:6px"><strong id="settings-session-cost-modal">—</strong></div>
+    </div>
+    <div id="settings-team-section" style="border-top:1px solid var(--border);margin-top:14px;padding-top:14px">
+      <div style="font-size:12px;font-weight:700;color:var(--accent2);margin-bottom:10px">צוות המשרד</div>
+      <div id="settings-team-list" style="margin-bottom:12px"></div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">אימייל להזמנה</label><input class="form-input" id="invite-email" type="email" placeholder="colleague@example.com"></div>
+        <div class="form-group"><label class="form-label">תפקיד</label>
+          <select class="form-input" id="invite-role"><option value="lawyer">עו"ד</option><option value="secretary">מזכירה</option></select>
+        </div>
+      </div>
+      <button class="btn btn-sm" onclick="createTeamInvite()">📧 צור קישור הזמנה</button>
+      <div id="invite-link-result" style="display:none;font-size:12px;color:var(--accent2);margin-top:8px;word-break:break-all;background:var(--bg3);padding:8px 10px;border-radius:var(--radius)"></div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-primary" onclick="saveSettings()">שמור הגדרות</button>

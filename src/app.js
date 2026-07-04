@@ -97,6 +97,7 @@ function refreshSidebar() {
 // ===== NAV =====
 let currentPanel = 'dashboard';
 function nav(id, el) {
+  if (id === 'finance' && currentRole === 'secretary') { id = 'dashboard'; el = null; }
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   document.getElementById('panel-'+id).classList.add('active');
@@ -1510,22 +1511,60 @@ function delTimeEntry(id){
 }
 
 // ===== SETTINGS =====
-function openSettingsModal() {
+async function openSettingsModal() {
   const s = db.settings||{};
-  document.getElementById('settings-api-key').value = s.claudeApiKey||'';
   document.getElementById('settings-library-path').value = s.libraryPath||'';
-  document.getElementById('settings-agent-model').value = s.agentForceModel||'';
   document.getElementById('settings-agent-caching').checked = s.agentCaching !== false;
-  document.getElementById('settings-session-cost-modal').textContent = '$' + agentSessionCost.toFixed(4);
+  updateSessionCost();
   document.getElementById('modal-settings').classList.add('open');
+  try {
+    const office = await Platform.getOfficeInfo();
+    document.getElementById('settings-office-name').value = office.name || '';
+    document.getElementById('settings-vat-rate').value = office.vat_rate ?? 18;
+    const role = await Platform.getRole();
+    const isOwner = role === 'owner';
+    document.getElementById('settings-office-name').disabled = !isOwner;
+    document.getElementById('settings-vat-rate').disabled = !isOwner;
+    document.getElementById('settings-team-section').style.display = isOwner ? '' : 'none';
+    if (isOwner) renderTeamSection();
+  } catch (e) { /* office info is best-effort in this modal */ }
 }
 function saveSettings() {
   if (!db.settings) db.settings = {};
-  db.settings.claudeApiKey = document.getElementById('settings-api-key').value.trim();
   db.settings.libraryPath = document.getElementById('settings-library-path').value.trim();
-  db.settings.agentForceModel = document.getElementById('settings-agent-model').value;
   db.settings.agentCaching = document.getElementById('settings-agent-caching').checked;
-  saveDB(); closeModal('modal-settings'); notify('הגדרות נשמרו ✓');
+  saveDB();
+  const officeName = document.getElementById('settings-office-name');
+  if (officeName && !officeName.disabled) {
+    const vatRate = parseFloat(document.getElementById('settings-vat-rate').value) || 18;
+    Platform.updateOfficeInfo({ name: officeName.value.trim(), vatRate }).catch(e => notify('שגיאה בשמירת פרטי משרד: ' + e.message));
+  }
+  closeModal('modal-settings'); notify('הגדרות נשמרו ✓');
+}
+
+// ===== TEAM / INVITES =====
+async function renderTeamSection() {
+  const wrap = document.getElementById('settings-team-list');
+  if (!wrap) return;
+  wrap.innerHTML = '<div class="empty">טוען...</div>';
+  try {
+    const team = await Platform.listTeam();
+    const me = await Platform.getUser();
+    const roleLabel = { owner:'בעלים', lawyer:'עו"ד', secretary:'מזכירה' };
+    wrap.innerHTML = team.map(m => `<div class="fin-row"><span>${m.user_id === me.id ? 'את/ה' : m.user_id.slice(0,8)}</span><span class="badge badge-active">${roleLabel[m.role]||m.role}</span></div>`).join('') || '<div class="empty">אין חברי צוות נוספים</div>';
+  } catch (e) { wrap.innerHTML = '<div class="empty">שגיאה בטעינת הצוות</div>'; }
+}
+async function createTeamInvite() {
+  const email = (document.getElementById('invite-email').value || '').trim();
+  const role = document.getElementById('invite-role').value;
+  if (!email) { notify('נא להזין אימייל'); return; }
+  try {
+    const link = await Platform.createInvite(email, role);
+    const linkEl = document.getElementById('invite-link-result');
+    linkEl.style.display = 'block';
+    linkEl.textContent = link;
+    notify('קישור הזמנה נוצר — העתק ושלח אותו למוזמן');
+  } catch (e) { notify('שגיאה: ' + e.message); }
 }
 async function pickLibraryPath() {
   const picked = await Platform.pickDirectory();
@@ -1675,13 +1714,10 @@ const AGENT_TOOLS = [
 
 let agentMessages = [];
 let agentOpen = false;
-let agentSessionCost = 0;
 
-// Model routing: Haiku for simple ops, Sonnet for drafting/analysis
+// Model routing: Haiku for simple ops, Sonnet for drafting/analysis. Internal only —
+// Phase 1 removed the manual Haiku/Sonnet picker from Settings (developer-facing UX).
 function chooseModel(text) {
-  const s = db.settings || {};
-  if (s.agentForceModel === 'sonnet') return 'claude-sonnet-4-6';
-  if (s.agentForceModel === 'haiku') return 'claude-haiku-4-5-20251001';
   const draftPat = /נסח|טיוט|בקש|תביע|עתיר|ניתוח|מסמך|ייפוי|הסכם שכ|draft|analyz/i;
   return draftPat.test(text) ? 'claude-sonnet-4-6' : 'claude-haiku-4-5-20251001';
 }
@@ -1706,21 +1742,29 @@ function trimMessages(messages, max) {
   return slice;
 }
 
-function updateSessionCost() {
-  const fmt = '$' + agentSessionCost.toFixed(4);
+// AI_MONTHLY_QUOTA must match MONTHLY_QUOTA in supabase/functions/ai-proxy/index.ts —
+// this is display-only (the real enforcement happens server-side in the proxy).
+const AI_MONTHLY_QUOTA = 200;
+
+async function updateSessionCost() {
+  let remaining = '—';
+  try {
+    const used = await Platform.getAIUsageThisMonth();
+    remaining = `${Math.max(0, AI_MONTHLY_QUOTA - used)}/${AI_MONTHLY_QUOTA}`;
+  } catch (e) { /* leave as — if the count fails to load */ }
+  const label = 'פעולות AI שנותרו החודש: ' + remaining;
   const el1 = document.getElementById('agent-session-cost');
-  if (el1) el1.textContent = 'עלות session: ' + fmt;
+  if (el1) el1.textContent = label;
   const el2 = document.getElementById('settings-session-cost-modal');
-  if (el2) el2.textContent = fmt;
+  if (el2) el2.textContent = remaining;
 }
 
 function agentAddCostLabel(cost, model) {
   const msgs = document.getElementById('agent-msgs');
   const el = document.createElement('div');
   el.className = 'agent-cost-label';
-  const modelLabel = model && model.includes('haiku') ? '💨 Haiku' : '🧠 Sonnet';
-  const costStr = cost < 0.0005 ? '<$0.001' : `~$${cost.toFixed(3)}`;
-  el.textContent = `${modelLabel} · ${costStr}`;
+  const modelLabel = model && model.includes('haiku') ? '💨 מהיר' : '🧠 מעמיק';
+  el.textContent = modelLabel;
   msgs.appendChild(el);
   msgs.scrollTop = msgs.scrollHeight;
 }
@@ -1728,7 +1772,7 @@ function agentAddCostLabel(cost, model) {
 function toggleAgent() {
   agentOpen = !agentOpen;
   const panel = document.getElementById('agent-panel');
-  if (agentOpen) { panel.classList.add('open'); setTimeout(()=>document.getElementById('agent-input').focus(),100); }
+  if (agentOpen) { panel.classList.add('open'); setTimeout(()=>document.getElementById('agent-input').focus(),100); updateSessionCost(); }
   else panel.classList.remove('open');
 }
 
@@ -1775,8 +1819,6 @@ async function agentSend() {
   const text = input.value.trim();
   if (!text) return;
   input.value = ''; input.style.height = 'auto';
-  const apiKey = (db.settings||{}).claudeApiKey;
-  if (!apiKey) { agentAddBubble('assistant','⚠️ נא להגדיר מפתח Claude API – לחץ ⚙ בכותרת הסוכן או בסרגל הצד'); return; }
   agentAddBubble('user', text);
   agentMessages.push({ role:'user', content:text });
   const statusEl = agentAddStatus('חושב...');
@@ -1822,46 +1864,21 @@ async function agentRunLoop(messages, statusEl, depth, opts) {
 
 async function agentCallAPI(messages, opts) {
   opts = opts || {};
-  const apiKey = (db.settings||{}).claudeApiKey;
   const s = db.settings || {};
   const model = opts.model || 'claude-haiku-4-5-20251001';
   const maxTokens = opts.maxTokens || 800;
   const useCaching = s.agentCaching !== false;
 
-  const headers = {
-    'content-type': 'application/json',
-    'x-api-key': apiKey,
-    'anthropic-version': '2023-06-01',
-    'anthropic-dangerous-direct-browser-access': 'true'
-  };
-  if (useCaching) headers['anthropic-beta'] = 'prompt-caching-2024-07-31';
-
   const systemBlock = useCaching
     ? [{ type:'text', text:AGENT_SYSTEM_PROMPT, cache_control:{ type:'ephemeral' } }]
     : AGENT_SYSTEM_PROMPT;
 
-  const resp = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ model, max_tokens:maxTokens, system:systemBlock, tools:AGENT_TOOLS, messages })
-  });
-  if (!resp.ok) { const err = await resp.text(); throw new Error(`API ${resp.status}: ${err}`); }
-  const data = await resp.json();
-
-  // Calculate cost
-  if (data.usage) {
-    const isHaiku = model.includes('haiku');
-    const rates = isHaiku
-      ? { in:1/1e6, out:5/1e6, cw:1.25/1e6, cr:0.1/1e6 }
-      : { in:3/1e6, out:15/1e6, cw:3.75/1e6, cr:0.3/1e6 };
-    const u = data.usage;
-    const cost = (u.input_tokens||0)*rates.in + (u.output_tokens||0)*rates.out
-               + (u.cache_creation_input_tokens||0)*rates.cw
-               + (u.cache_read_input_tokens||0)*rates.cr;
-    agentSessionCost += cost;
-    data._cost = cost;
-    data._model = model;
-  }
+  // Server-side proxy (supabase/functions/ai-proxy) holds the real Anthropic key,
+  // enforces the office's monthly quota, and logs usage — the client never sees
+  // cost or the API key anymore (Phase 1).
+  const data = await Platform.callAI({ model, max_tokens:maxTokens, system:systemBlock, tools:AGENT_TOOLS, messages, useCaching });
+  if (data.error) throw new Error(data.error);
+  data._model = model;
   return data;
 }
 
@@ -2186,8 +2203,6 @@ async function agentExecTool(name, input) {
         return `=== תוכן "${input.fileName}" ===\n` + (rldRes.text||'').substring(0, 8000);
       }
       case 'draftDocument': {
-        const ddApiKey = (db.settings||{}).claudeApiKey;
-        if (!ddApiKey) return 'שגיאה: מפתח Claude API לא הוגדר';
         const ddLibPath = (db.settings||{}).libraryPath || '';
         const ddType = input.documentType || '';
 
@@ -2278,13 +2293,8 @@ async function agentExecTool(name, input) {
 לציטוטים: ##QUOTE## טקסט ##ENDQUOTE##`;
 
         // Inner Claude call to draft
-        const ddFetchResp = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: { 'content-type':'application/json','x-api-key':ddApiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true' },
-          body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:4000, system:'אתה עורך דין מומחה בישראל. נסח מסמכים משפטיים בעברית בלבד. עקוב בדיוק אחר פורמט הסמנים שהוגדר.', messages:[{role:'user',content:ddPrompt}] })
-        });
-        if (!ddFetchResp.ok) { const e = await ddFetchResp.text(); return `שגיאת API בניסוח: ${ddFetchResp.status}: ${e}`; }
-        const ddData = await ddFetchResp.json();
+        const ddData = await Platform.callAI({ model:'claude-sonnet-4-6', max_tokens:4000, system:'אתה עורך דין מומחה בישראל. נסח מסמכים משפטיים בעברית בלבד. עקוב בדיוק אחר פורמט הסמנים שהוגדר.', messages:[{role:'user',content:ddPrompt}] });
+        if (ddData.error) return `שגיאת API בניסוח: ${ddData.error}`;
         const ddText = (ddData.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n').trim();
         if (!ddText) return 'לא התקבל תוכן מהסוכן';
 
@@ -2410,8 +2420,6 @@ async function agentExecTool(name, input) {
 }
 
 async function agentUploadFile() {
-  const apiKey = (db.settings||{}).claudeApiKey;
-  if (!apiKey) { agentAddBubble('assistant','⚠️ נא להגדיר מפתח Claude API תחילה'); return; }
   const result = await Platform.pickFile();
   if (!result) return;
   const { buffer, filename } = result;
@@ -2434,13 +2442,8 @@ async function agentUploadFile() {
       agentAddBubble('assistant', `⚠️ פורמט .${ext} אינו נתמך לחילוץ אוטומטי. תומך: PDF, JPG, PNG, GIF, WEBP.`);
       return;
     }
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method:'POST',
-      headers:{ 'content-type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true' },
-      body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:2048, messages:[{ role:'user', content:userContent }] })
-    });
-    if (!resp.ok) throw new Error(`API ${resp.status}`);
-    const data = await resp.json();
+    const data = await Platform.callAI({ model:'claude-sonnet-4-6', max_tokens:2048, messages:[{ role:'user', content:userContent }] });
+    if (data.error) throw new Error(data.error);
     const extracted = (data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n').trim();
     statusEl.remove();
     const reply = `📄 חולץ מ"${filename}":\n\n${extracted}\n\n──────────\nהאם ליצור תיק עם הנתונים האלה? אם כן – כתב "כן, צור תיק" ואוסיף את הפרטים אוטומטית.`;
@@ -2456,8 +2459,27 @@ async function agentUploadFile() {
 // ===== INIT =====
 // Called by auth.js once a Supabase session is confirmed (fresh login or restored session) —
 // everything here needs Platform.loadDB() to succeed, which needs a signed-in user.
-function bootApp() {
+let currentRole = null; // 'owner' | 'lawyer' | 'secretary' — set in bootApp(), used for UI-level gating
+let officeVatRate = 18; // updated in bootApp() from the office's actual configured rate
+async function bootApp() {
   const tmNav = document.getElementById('nav-templates-item');
   if (tmNav) tmNav.style.display = '';
   loadDB();
+  try {
+    const office = await Platform.getOfficeInfo();
+    officeVatRate = office.vat_rate ?? 18;
+    const vatOption = document.getElementById('case-fee-vat-yes-option');
+    if (vatOption) vatOption.textContent = `כן (+${officeVatRate}%)`;
+  } catch (e) { /* keep the 18% default if this fails to load */ }
+  try {
+    currentRole = await Platform.getRole();
+    // UI-level only (see supabase-schema-phase1.sql plan notes): a secretary's
+    // finance nav entry is hidden, not database-blocked — RLS can't enforce this
+    // under the current single-JSON-blob-per-office data model.
+    if (currentRole === 'secretary') {
+      document.querySelectorAll('.nav-item').forEach(n => {
+        if (n.getAttribute('onclick') === "nav('finance',this)") n.style.display = 'none';
+      });
+    }
+  } catch (e) { /* role lookup failing shouldn't block the rest of the app */ }
 }

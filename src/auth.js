@@ -3,6 +3,12 @@
 // which platform.web.js sets up.
 
 let appBooted = false;
+// Guards against a real race: supabase.auth.signUp() establishes the session (which
+// fires onAuthStateChange -> showApp() -> bootApp() -> loadDB()) BEFORE Platform.signUp()
+// has finished creating the office/office_members rows that loadDB() needs. While this
+// flag is set, the auth-state listener stands down; authSignUp() calls showApp() itself
+// once office creation is fully done.
+let suppressAuthListener = false;
 
 function authShowError(msg) {
   const el = document.getElementById('auth-error');
@@ -42,13 +48,16 @@ async function authSignUp() {
   if (!email || !password) { authShowError('נא למלא אימייל וסיסמה'); return; }
   if (password.length < 6) { authShowError('הסיסמה חייבת להכיל לפחות 6 תווים'); return; }
   authShowStatus('נרשם...');
+  suppressAuthListener = true;
   try {
     await Platform.signUp(email, password);
     authShowStatus('');
-    // No alert here on purpose: signup logs the user straight in (email confirmation is
-    // disabled — see project settings), so onAuthStateChange fires SIGNED_IN and showApp()
-    // takes over immediately. A blocking alert() would just be an extra click for no reason.
+    // Only now — after office creation (inside Platform.signUp) has actually finished —
+    // do we transition to the app. See the race-condition comment on suppressAuthListener.
+    suppressAuthListener = false;
+    showApp();
   } catch (e) {
+    suppressAuthListener = false;
     authShowStatus('');
     authShowError(authFriendlyError(e));
   }
@@ -60,10 +69,26 @@ async function authSignOut() {
   location.reload();
 }
 
-function showApp() {
+async function showApp() {
   document.getElementById('auth-gate').style.display = 'none';
   document.getElementById('app-root').style.display = 'flex';
-  if (!appBooted) { appBooted = true; bootApp(); }
+  if (!appBooted) {
+    appBooted = true;
+    const inviteToken = new URLSearchParams(location.search).get('invite');
+    if (inviteToken) {
+      try {
+        await Platform.redeemInvite(inviteToken);
+        notify('הצטרפת למשרד בהצלחה!');
+      } catch (e) {
+        alert('שגיאה בהצטרפות למשרד: ' + e.message);
+      }
+      // Clean the token out of the URL either way — redeeming twice is a harmless
+      // no-op (fails the "not already a member" check with a clear error), but
+      // there's no reason to keep offering it after the first attempt.
+      history.replaceState(null, '', location.pathname);
+    }
+    bootApp();
+  }
 }
 function showAuthGate() {
   document.getElementById('auth-gate').style.display = 'flex';
@@ -71,5 +96,6 @@ function showAuthGate() {
 }
 
 window.supabaseClient.auth.onAuthStateChange((_event, session) => {
+  if (suppressAuthListener) return;
   if (session) showApp(); else showAuthGate();
 });

@@ -1,8 +1,8 @@
-// Web/cloud implementation of the Platform abstraction — replaces platform.electron.js and
-// platform.capacitor.js from Phase 1. Bundled by build.mjs (esbuild) because it needs
-// @supabase/supabase-js, buffer, and docxtemplater resolved.
-// Same idea as before: this is the ONLY file that knows about the actual storage backend;
-// app.js and template-manager.js only ever call the Platform façade.
+// Web/cloud implementation of the Platform abstraction. Bundled by build.mjs (esbuild)
+// because it needs @supabase/supabase-js, buffer, and docxtemplater resolved.
+// Phase 1: office-scoped multi-tenancy — every stored thing is keyed by office_id
+// (an office = one law firm; see supabase-schema-phase1.sql), not by the raw user_id
+// like Phase 2 did. app.js and template-manager.js still only ever call this façade.
 import { Buffer } from 'buffer';
 import Docxtemplater from 'docxtemplater';
 import { createClient } from '@supabase/supabase-js';
@@ -15,7 +15,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 window.supabaseClient = supabase; // used by auth.js for sign in/up/out + session state
 
 // docx and pizzip are loaded separately as plain <script> tags (prebuilt UMD bundles,
-// vendor/docx.umd.js and vendor/pizzip.min.js) — same vendor files used in Phase 1.
+// vendor/docx.umd.js and vendor/pizzip.min.js).
 window.__req = function (name) {
   if (name === 'docx') return window.docx;
   if (name === 'pizzip') return window.PizZip;
@@ -25,11 +25,25 @@ window.__req = function (name) {
 
 const BUCKET = 'documents';
 
-async function currentUserId() {
+// Resolved once per session and cached — a user belongs to exactly one office (see
+// schema comments on why v1 doesn't support multi-office membership/switching).
+let _officeCache = null; // { officeId, role }
+
+async function currentOffice() {
+  if (_officeCache) return _officeCache;
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('לא מחובר');
-  return user.id;
+  const { data, error } = await supabase
+    .from('office_members')
+    .select('office_id, role')
+    .eq('user_id', user.id)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error('לא נמצא משרד מקושר למשתמש הזה');
+  _officeCache = { officeId: data.office_id, role: data.role };
+  return _officeCache;
 }
+function clearOfficeCache() { _officeCache = null; }
 
 function bytesToBlob(buffer) {
   return new Blob([buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)]);
@@ -40,44 +54,127 @@ async function blobToByteArray(blob) {
 }
 
 window.Platform = {
-  isMobile: false, // "mobile" in the Phase-1 sense (device-local storage) no longer applies
+  isMobile: false,
 
   // ---- auth ----
   async signUp(email, password) {
-    const { error } = await supabase.auth.signUp({ email, password });
+    const { data, error } = await supabase.auth.signUp({ email, password });
     if (error) throw error;
+    // New account = new solo office, owned by them — UNLESS they arrived via an
+    // invite link (?invite=token), in which case auth.js redeems that invite right
+    // after this resolves, which creates their membership in the INVITING office
+    // instead. Auto-creating a solo office here too would both give them a stray
+    // extra office AND make the invite redemption fail (a user may only ever
+    // belong to one office in v1 — see supabase-schema-phase1.sql).
+    const hasInvite = new URLSearchParams(location.search).has('invite');
+    if (data.session && data.user && !hasInvite) {
+      // Generate the office's id client-side and insert with return=minimal (no
+      // automatic select-back) — right after creating the office, the user isn't a
+      // member of it YET (that's the next statement), so the follow-up select an
+      // .insert().select() would normally do fails the offices_select_member RLS
+      // policy and Postgres reports it as "new row violates row-level security
+      // policy" even though the insert itself succeeded. Knowing the id upfront
+      // sidesteps the read entirely.
+      const officeId = crypto.randomUUID();
+      const { error: officeErr } = await supabase
+        .from('offices').insert({ id: officeId, name: 'המשרד שלי' });
+      if (officeErr) throw officeErr;
+      const { error: memberErr } = await supabase
+        .from('office_members').insert({ office_id: officeId, user_id: data.user.id, role: 'owner' });
+      if (memberErr) throw memberErr;
+    }
   },
   async signIn(email, password) {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw error;
+    clearOfficeCache();
   },
   async signOut() {
     await supabase.auth.signOut();
+    clearOfficeCache();
   },
   async getUser() {
     const { data: { user } } = await supabase.auth.getUser();
     return user;
   },
+  async getRole() {
+    const { role } = await currentOffice();
+    return role;
+  },
+  async getOfficeInfo() {
+    const { officeId } = await currentOffice();
+    const { data, error } = await supabase.from('offices').select('name, vat_rate').eq('id', officeId).single();
+    if (error) throw error;
+    return data;
+  },
+  async updateOfficeInfo({ name, vatRate }) {
+    const { officeId, role } = await currentOffice();
+    if (role !== 'owner') throw new Error('רק בעל המשרד יכול לערוך הגדרות אלה');
+    const { error } = await supabase.from('offices').update({ name, vat_rate: vatRate }).eq('id', officeId);
+    if (error) throw error;
+  },
 
-  // ---- db (whole-object blob per user, see supabase-schema.sql) ----
+  // ---- team / invites ----
+  async listTeam() {
+    const { officeId } = await currentOffice();
+    const { data, error } = await supabase.from('office_members').select('user_id, role, joined_at').eq('office_id', officeId);
+    if (error) throw error;
+    return data;
+  },
+  async createInvite(email, role) {
+    const { officeId, role: myRole } = await currentOffice();
+    if (myRole !== 'owner') throw new Error('רק בעל המשרד יכול להזמין משתמשים');
+    const { data, error } = await supabase.from('office_invites')
+      .insert({ office_id: officeId, email, role }).select('token').single();
+    if (error) throw error;
+    return `${location.origin}${location.pathname}?invite=${data.token}`;
+  },
+  async redeemInvite(token) {
+    const { data: invite, error: findErr } = await supabase.from('office_invites').select('*').eq('token', token).maybeSingle();
+    if (findErr) throw findErr;
+    if (!invite) throw new Error('קישור ההזמנה לא תקין או שפג תוקפו');
+    const { error: joinErr } = await supabase.from('office_members')
+      .insert({ office_id: invite.office_id, user_id: (await supabase.auth.getUser()).data.user.id, role: invite.role });
+    if (joinErr) throw joinErr;
+    await supabase.from('office_invites').update({ redeemed_at: new Date().toISOString() }).eq('token', token);
+    clearOfficeCache();
+  },
+
+  // ---- AI (server-side proxy — see supabase/functions/ai-proxy) ----
+  async callAI(payload) {
+    const { data, error } = await supabase.functions.invoke('ai-proxy', { body: payload });
+    if (error) throw error;
+    return data;
+  },
+  async getAIUsageThisMonth() {
+    const { officeId } = await currentOffice();
+    const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
+    const { count, error } = await supabase
+      .from('ai_usage').select('id', { count: 'exact', head: true })
+      .eq('office_id', officeId).gte('created_at', monthStart.toISOString());
+    if (error) throw error;
+    return count || 0;
+  },
+
+  // ---- db (whole-object blob per OFFICE, see supabase-schema-phase1.sql) ----
   async loadDB() {
-    const uid = await currentUserId();
-    const { data, error } = await supabase.from('app_data').select('data').eq('user_id', uid).maybeSingle();
+    const { officeId } = await currentOffice();
+    const { data, error } = await supabase.from('app_data').select('data').eq('office_id', officeId).maybeSingle();
     if (error) throw error;
     return data ? data.data : null;
   },
 
   async saveDB(dbObj) {
-    const uid = await currentUserId();
-    const { error } = await supabase.from('app_data').upsert({ user_id: uid, data: dbObj });
+    const { officeId } = await currentOffice();
+    const { error } = await supabase.from('app_data').upsert({ office_id: officeId, data: dbObj }, { onConflict: 'office_id' });
     if (error) throw error;
     return true;
   },
 
-  // ---- files (Supabase Storage, private bucket, path-scoped to the user) ----
+  // ---- files (Supabase Storage, private bucket, path-scoped to the OFFICE) ----
   async saveFile({ buffer, filename }) {
-    const uid = await currentUserId();
-    const path = `${uid}/documents/${filename}`;
+    const { officeId } = await currentOffice();
+    const path = `${officeId}/documents/${filename}`;
     const { error } = await supabase.storage.from(BUCKET).upload(path, bytesToBlob(buffer), { upsert: true });
     if (error) throw error;
     return path;
@@ -124,8 +221,8 @@ window.Platform = {
 
   async readTemplate(templateName) {
     try {
-      const uid = await currentUserId();
-      const path = `${uid}/templates/תבניות/${templateName}`;
+      const { officeId } = await currentOffice();
+      const path = `${officeId}/templates/תבניות/${templateName}`;
       const { data, error } = await supabase.storage.from(BUCKET).download(path);
       if (error) throw error;
       return { buffer: await blobToByteArray(data) };
@@ -136,17 +233,17 @@ window.Platform = {
 
   async listLibraryFolders() {
     try {
-      const uid = await currentUserId();
-      const { data, error } = await supabase.storage.from(BUCKET).list(`${uid}/templates`);
+      const { officeId } = await currentOffice();
+      const { data, error } = await supabase.storage.from(BUCKET).list(`${officeId}/templates`);
       if (error) throw error;
-      return (data || []).filter(f => f.id === null).map(f => f.name); // folders have id === null in Supabase Storage listings
+      return (data || []).filter(f => f.id === null).map(f => f.name);
     } catch (e) { return { error: e.message }; }
   },
 
   async listFolderDocs({ folderName }) {
     try {
-      const uid = await currentUserId();
-      const { data, error } = await supabase.storage.from(BUCKET).list(`${uid}/templates/${folderName}`);
+      const { officeId } = await currentOffice();
+      const { data, error } = await supabase.storage.from(BUCKET).list(`${officeId}/templates/${folderName}`);
       if (error) throw error;
       return (data || []).filter(f => f.id !== null && /\.(docx|pdf)$/i.test(f.name)).map(f => f.name);
     } catch (e) { return { error: e.message }; }
@@ -154,8 +251,8 @@ window.Platform = {
 
   async readLibraryDoc({ folderName, fileName }) {
     try {
-      const uid = await currentUserId();
-      const path = `${uid}/templates/${folderName}/${fileName}`;
+      const { officeId } = await currentOffice();
+      const path = `${officeId}/templates/${folderName}/${fileName}`;
       const { data, error } = await supabase.storage.from(BUCKET).download(path);
       if (error) throw error;
       const ext = (fileName.split('.').pop() || '').toLowerCase();
@@ -170,12 +267,12 @@ window.Platform = {
 
   // ---- helpers used only by the "template manager" screen ----
   async tmListTree() {
-    const uid = await currentUserId();
-    const { data: folders, error } = await supabase.storage.from(BUCKET).list(`${uid}/templates`);
+    const { officeId } = await currentOffice();
+    const { data: folders, error } = await supabase.storage.from(BUCKET).list(`${officeId}/templates`);
     if (error) throw error;
     const result = [];
     for (const f of (folders || []).filter(x => x.id === null)) {
-      const { data: files } = await supabase.storage.from(BUCKET).list(`${uid}/templates/${f.name}`);
+      const { data: files } = await supabase.storage.from(BUCKET).list(`${officeId}/templates/${f.name}`);
       result.push({ name: f.name, files: (files || []).filter(x => x.id !== null).map(x => x.name) });
     }
     return result;
@@ -187,15 +284,15 @@ window.Platform = {
   },
 
   async tmImportFile(folderName, filename, buffer) {
-    const uid = await currentUserId();
-    const path = `${uid}/templates/${folderName}/${filename}`;
+    const { officeId } = await currentOffice();
+    const path = `${officeId}/templates/${folderName}/${filename}`;
     const { error } = await supabase.storage.from(BUCKET).upload(path, bytesToBlob(buffer), { upsert: true });
     if (error) throw error;
   },
 
   async tmDeleteFile(folderName, filename) {
-    const uid = await currentUserId();
-    const path = `${uid}/templates/${folderName}/${filename}`;
+    const { officeId } = await currentOffice();
+    const path = `${officeId}/templates/${folderName}/${filename}`;
     const { error } = await supabase.storage.from(BUCKET).remove([path]);
     if (error) throw error;
   },
