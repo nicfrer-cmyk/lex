@@ -1,6 +1,6 @@
 # LexTrack — pending decisions / next steps
 
-Last updated 2026-07-04. Payment processor: Meshulam/Grow (existing account).
+Last updated 2026-07-05. Payment processor: Meshulam/Grow (existing account). Plan: ₪97/month, 20GB storage.
 
 ## Status
 
@@ -8,12 +8,22 @@ Last updated 2026-07-04. Payment processor: Meshulam/Grow (existing account).
 - [x] Google Cloud OAuth app — configured (per you)
 - [x] `fix10.sql` — run. Fixed the "infinite recursion" error (office_members'
       own RLS policies were self-referencing — a classic Postgres trap).
-- [ ] **`supabase-schema-phase1-fix11.sql` — run this now.** Fixes a second error
-      that showed up right after ("permission denied for table users"). This one
-      is on me: there was already a `fix3.sql` in this repo from earlier that had
-      fixed this exact problem once; `fix6.sql` (written this session, without
-      checking for it) reintroduced the broken pattern it had already solved.
-      fix11 restores fix3's approach. Google sign-in should work end-to-end after this.
+- [x] `fix11.sql` — run. Fixed "permission denied for table users" (a regression
+      I introduced in fix6.sql — see git log for the full story).
+- [x] Google sign-in in the **installed Android app**: given up on, by decision —
+      Google blocks OAuth inside an embedded WebView (which the installed app's
+      "remote URL" shell is), forcing it out to the system browser with no way
+      back into the native app without native deep-link work. The Google button
+      is now hidden automatically when running inside the installed app;
+      email/password still works there, and Google sign-in still works fine for
+      anyone using the site in a normal mobile/desktop browser.
+- [x] Pricing decided: **₪97/month, up to 20GB storage per office.** Now shown on
+      the signup screen and in Settings (with live storage usage), enforced on
+      every document/template upload (rejects with a clear message once an office
+      would exceed 20GB), and set as the real charge amount in create-payment-page.
+- [ ] **`supabase-schema-phase1-fix12.sql` — run this now** (adds
+      `subscriptions.storage_limit_gb`, default 20 — supporting column for the
+      quota enforcement above).
 - [ ] Grow payment — code rewritten with real field names, needs your credentials + a sandbox test
 - [ ] Email (Resend, temporary) — next up
 - [ ] `service_role` key — next up

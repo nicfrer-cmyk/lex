@@ -90,7 +90,7 @@ Deno.serve(async (req) => {
   const { createClient } = await import('https://esm.sh/@supabase/supabase-js@2');
   const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
   const { error } = await supabase.from('subscriptions')
-    .update({ status: 'active', grow_customer_id: transactionId, updated_at: new Date().toISOString() })
+    .update({ status: 'active', plan: 'בסיסי — עד 20GB אחסון', grow_customer_id: transactionId, updated_at: new Date().toISOString() })
     .eq('office_id', officeId);
   if (error) return new Response(error.message, { status: 500 });
 

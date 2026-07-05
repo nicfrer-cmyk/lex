@@ -35,7 +35,11 @@ const GROW_PAGE_CODE = Deno.env.get('GROW_PAGE_CODE')!;
 const GROW_WEBHOOK_SECRET = Deno.env.get('GROW_WEBHOOK_SECRET')!;
 const GROW_API_BASE = 'https://sandbox.meshulam.co.il'; // switch to https://api.meshulam.co.il for real charges
 const SITE_URL = Deno.env.get('SITE_URL') || 'https://zesty-marigold-0edcb2.netlify.app';
-const MONTHLY_PRICE_ILS = 99; // TODO: your real monthly price
+// The one plan LexTrack currently sells: ₪97/month, up to 20GB of document storage
+// (see PLAN_STORAGE_LIMIT_GB in platform.web.js, which is what's actually enforced
+// on upload — keep the two in sync if this ever changes).
+const MONTHLY_PRICE_ILS = 97;
+const PLAN_NAME = 'בסיסי — עד 20GB אחסון';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -79,7 +83,7 @@ Deno.serve(async (req) => {
     fullName: office?.name || userData.user.email || 'לקוח LexTrack',
     phone: '0000000000', // TODO: Grow requires this — collect a real phone number before charging, or confirm a placeholder is accepted
     email: userData.user.email || '',
-    description: 'מנוי LexTrack חודשי',
+    description: `מנוי LexTrack חודשי — ${PLAN_NAME}`,
     paymentType: '1', // Grow-managed recurring (not token-managed) — see comment above
     paymentNum: '999', // TODO: confirm how Grow expects "ongoing until canceled" vs a fixed count
     notifyUrl: `${SUPABASE_URL}/functions/v1/grow-webhook`,

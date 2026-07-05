@@ -1463,7 +1463,9 @@ async function saveDoc(){
   const name=document.getElementById('doc-name').value.trim();
   if(!name){notify('נא להזין שם מסמך');return;}
   let filePath=null;
-  if(selectedFile) filePath=await Platform.saveFile({buffer:selectedFile.buffer,filename:selectedFile.filename});
+  try {
+    if(selectedFile) filePath=await Platform.saveFile({buffer:selectedFile.buffer,filename:selectedFile.filename});
+  } catch(e) { notify('שגיאה: ' + e.message); return; }
   db.docs.unshift({id:uid(),name,cat:document.getElementById('doc-cat').value,caseId:document.getElementById('doc-case').value,notes:document.getElementById('doc-notes').value.trim(),date:new Date().toLocaleDateString('he-IL'),ext:selectedFile?getExt(selectedFile.filename):'doc',filePath,origName:selectedFile?selectedFile.filename:null});
   saveDB();closeModal('modal-doc');notify('מסמך נשמר! ✓');renderDocs();selectedFile=null;
 }
@@ -1712,14 +1714,22 @@ function saveSettings() {
 async function renderSubscriptionSection() {
   const el = document.getElementById('settings-subscription-status');
   if (!el) return;
-  el.textContent = 'טוען...';
+  el.innerHTML = 'טוען...';
+  let statusLine = 'לא ניתן לטעון את סטטוס המנוי';
+  let storageLine = '';
   try {
     const sub = await Platform.getSubscriptionStatus();
     const statusLabel = { trial:'תקופת ניסיון', active:'פעיל', past_due:'תשלום מאחר', canceled:'בוטל' };
     const trialTxt = sub?.status === 'trial' && sub.trial_ends_at
       ? ` (מסתיימת ${new Date(sub.trial_ends_at).toLocaleDateString('he-IL')})` : '';
-    el.textContent = 'סטטוס: ' + (statusLabel[sub?.status] || sub?.status || '—') + trialTxt;
-  } catch (e) { el.textContent = 'לא ניתן לטעון את סטטוס המנוי'; }
+    statusLine = 'מנוי: ₪97/חודש · ' + (statusLabel[sub?.status] || sub?.status || '—') + trialTxt;
+  } catch (e) { /* keep default statusLine */ }
+  try {
+    const { usedBytes, limitGb } = await Platform.getStorageUsage();
+    const usedMb = Math.round(usedBytes / (1024 * 1024));
+    storageLine = `<div style="margin-top:4px">אחסון: ${usedMb.toLocaleString()}MB מתוך ${limitGb}GB</div>`;
+  } catch (e) { /* storage line is best-effort */ }
+  el.innerHTML = statusLine + storageLine;
 }
 async function upgradeSubscription() {
   try {

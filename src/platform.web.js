@@ -30,10 +30,38 @@ window.__req = function (name) {
 };
 
 const BUCKET = 'documents';
+// The one plan LexTrack sells: ₪97/month, up to this much storage per office (see
+// MONTHLY_PRICE_ILS / PLAN_NAME in supabase/functions/create-payment-page — keep in
+// sync if this ever changes). Also stored in subscriptions.storage_limit_gb
+// (fix12.sql) for future per-office overrides; this constant is what's actually
+// enforced today.
+const PLAN_STORAGE_LIMIT_GB = 20;
 
 // Resolved once per session and cached — a user belongs to exactly one office (see
 // schema comments on why v1 doesn't support multi-office membership/switching).
 let _officeCache = null; // { officeId, role }
+
+// Sums file sizes under an office's storage folder. Supabase Storage's list() isn't
+// recursive, so this walks the two known shapes by hand: documents/ (flat) and
+// templates/<folder>/ (one level of subfolders) — mirrors tmListTree()'s traversal.
+async function officeStorageUsageBytes(officeId) {
+  let total = 0;
+  const { data: docs } = await supabase.storage.from(BUCKET).list(`${officeId}/documents`, { limit: 1000 });
+  (docs || []).forEach(f => { if (f.id !== null) total += (f.metadata?.size || 0); });
+  const { data: folders } = await supabase.storage.from(BUCKET).list(`${officeId}/templates`, { limit: 1000 });
+  for (const folder of (folders || []).filter(f => f.id === null)) {
+    const { data: files } = await supabase.storage.from(BUCKET).list(`${officeId}/templates/${folder.name}`, { limit: 1000 });
+    (files || []).forEach(f => { if (f.id !== null) total += (f.metadata?.size || 0); });
+  }
+  return total;
+}
+async function enforceStorageQuota(officeId, incomingBytes) {
+  const used = await officeStorageUsageBytes(officeId);
+  const limitBytes = PLAN_STORAGE_LIMIT_GB * 1024 * 1024 * 1024;
+  if (used + incomingBytes > limitBytes) {
+    throw new Error(`חריגה ממכסת האחסון (${PLAN_STORAGE_LIMIT_GB}GB). מחק/י מסמכים ישנים או שדרג/י את המנוי.`);
+  }
+}
 
 async function currentOffice() {
   if (_officeCache) return _officeCache;
@@ -244,10 +272,16 @@ window.Platform = {
   // ---- files (Supabase Storage, private bucket, path-scoped to the OFFICE) ----
   async saveFile({ buffer, filename }) {
     const { officeId } = await currentOffice();
+    await enforceStorageQuota(officeId, buffer.length);
     const path = `${officeId}/documents/${toSafeKey(filename)}`;
     const { error } = await supabase.storage.from(BUCKET).upload(path, bytesToBlob(buffer), { upsert: true });
     if (error) throw error;
     return path;
+  },
+  async getStorageUsage() {
+    const { officeId } = await currentOffice();
+    const usedBytes = await officeStorageUsageBytes(officeId);
+    return { usedBytes, limitGb: PLAN_STORAGE_LIMIT_GB };
   },
 
   async openFile(filePath, displayName) {
@@ -354,6 +388,7 @@ window.Platform = {
 
   async tmImportFile(folderName, filename, buffer) {
     const { officeId } = await currentOffice();
+    await enforceStorageQuota(officeId, buffer.length);
     const path = `${officeId}/templates/${toSafeKey(folderName)}/${toSafeKey(filename)}`;
     const { error } = await supabase.storage.from(BUCKET).upload(path, bytesToBlob(buffer), { upsert: true });
     if (error) throw error;

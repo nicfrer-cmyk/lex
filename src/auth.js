@@ -16,6 +16,17 @@ let suppressAuthListener = false;
 // session Supabase establishes when the page loads with a recovery link's URL hash.
 let inPasswordRecovery = false;
 
+// Google's OAuth policy blocks sign-in from an embedded WebView (exactly what the
+// installed Android app's "remote URL" shell is) — it forces the flow out to the
+// system browser instead, and there's no way back into the native app from there
+// without native deep-link plumbing this project doesn't have yet. Hiding the button
+// here avoids offering something that visibly fails; email/password still works fine
+// in the installed app, and Google sign-in still works fine in a normal browser tab.
+if (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) {
+  const el = document.getElementById('auth-google-wrap');
+  if (el) el.style.display = 'none';
+}
+
 function authShowError(msg) {
   const el = document.getElementById('auth-error');
   el.textContent = msg;
