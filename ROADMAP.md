@@ -27,12 +27,12 @@ Last updated 2026-07-05. Payment processor: Meshulam/Grow (existing account). Pl
       login screen every returning user sees. Name/phone are saved to the user's
       profile (shown read-only in Settings) and the office is created with the
       real name typed in, not the old hardcoded "המשרד שלי" default.
-- [ ] **`supabase-schema-phase1-fix12.sql` and `fix13.sql` — run these now**
-      (fix12 adds `subscriptions.storage_limit_gb`, default 20; fix13 adds the
-      missing `ON DELETE CASCADE` on `app_data.office_id`, needed for account
-      deletion below to actually work — I didn't run these two myself since
-      direct schema/constraint changes on the live DB felt like they warranted
-      asking first, unlike code deploys/secrets which you already approved).
+- [x] `fix12.sql`/`fix13.sql` — run.
+- [ ] **`supabase-schema-phase1-fix14.sql` — run this now** (trivial cleanup:
+      drops one unused function found during a security review, zero
+      behavior change; same reasoning as fix12/13 for why I asked instead of
+      running it myself — direct schema changes on the live DB, even
+      harmless ones, felt worth a separate confirmation from code/secrets).
 - [x] Legal: drafted Terms of Service + Privacy Policy (`src/legal-content.js`)
       describing LexTrack's actual data flows (Supabase/Anthropic/Grow) —
       **first draft, needs your own review as the actual attorney before real
@@ -120,6 +120,36 @@ something's off, and I'll fix it from the actual error.
 ## Longer-term / not urgent
 
 - Template import still requires exact Hebrew filenames — a real upload + field-mapping UI would remove that friction for a new customer who doesn't know the convention.
+
+## 2026-07-05 full-project bug audit
+
+Dispatched 4 parallel review agents (frontend logic, HTML/UX structure, database
+security/RLS, edge-functions+platform layer) to go over the entire project. Verified
+every finding myself before fixing (2 were false positives from incomplete
+briefing on my part — noted, not hidden). Real bugs found and fixed, most severe first:
+
+- **Documents could silently overwrite unrelated documents from other cases** if two
+  happened to share a filename (very plausible — "תביעה.docx" — in any law firm).
+  Opening one could return the other's content. Fixed.
+- **The AI agent's "what's stuck/neglected" detection was silently broken** for any
+  case with diary history (a date-parsing bug) — it could never flag a stale case
+  that had any diary entries at all, which is most of them. Fixed, with a test.
+- **Fee-type display (percent/fixed/both/hourly) was duplicated in 3 places** with
+  different bugs each time — 'both' cases and 'hourly' cases showed wrong numbers on
+  the finance screen and to the AI agent. Consolidated into one function.
+- The AI agent's financial answers used a cached running total instead of computing
+  fresh like every human-facing screen already does — currently correct, but one
+  missed update away from silently disagreeing with what you see on screen. Fixed.
+- Two mobile bugs from this session's own earlier work: the "⋮ עוד" menu on case
+  detail was rendering off the edge of the screen (3 buttons unreachable on phone),
+  and the AI agent's floating button overlapped its own open chat panel. Both fixed.
+- Storage-usage counting (the 20GB quota) and account deletion both had no
+  pagination past 1000 files, and account deletion silently discarded any cleanup
+  errors — hardened both.
+- Independent security pass confirmed: no live RLS recursion, no `auth.users`
+  permission-denied risk, and no cross-tenant data leak anywhere in the current
+  schema (both historical regressions from earlier this session are fully resolved).
+  One genuinely unused function found and removed (`fix14.sql`, above).
 
 ## Already done (see git log for full detail)
 
