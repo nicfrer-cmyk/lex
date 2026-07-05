@@ -27,12 +27,7 @@ Last updated 2026-07-05. Payment processor: Meshulam/Grow (existing account). Pl
       login screen every returning user sees. Name/phone are saved to the user's
       profile (shown read-only in Settings) and the office is created with the
       real name typed in, not the old hardcoded "המשרד שלי" default.
-- [x] `fix12.sql`/`fix13.sql` — run.
-- [ ] **`supabase-schema-phase1-fix14.sql` — run this now** (trivial cleanup:
-      drops one unused function found during a security review, zero
-      behavior change; same reasoning as fix12/13 for why I asked instead of
-      running it myself — direct schema changes on the live DB, even
-      harmless ones, felt worth a separate confirmation from code/secrets).
+- [x] `fix12.sql`/`fix13.sql`/`fix14.sql` — all run. All SQL migrations to date are applied.
 - [x] Legal: drafted Terms of Service + Privacy Policy (`src/legal-content.js`)
       describing LexTrack's actual data flows (Supabase/Anthropic/Grow) —
       **first draft, needs your own review as the actual attorney before real
