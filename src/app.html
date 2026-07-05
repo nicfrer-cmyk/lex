@@ -86,11 +86,13 @@ body{font-family:'Heebo',sans-serif;background:var(--bg);color:var(--text);heigh
 .form-input:focus{outline:none;border-color:var(--accent)}
 select.form-input option{background:var(--bg3)}
 textarea.form-input{resize:vertical;min-height:80px}
-/* z-index 250: must sit above bottom-nav/agent-fab/agent-panel (149-150) and the
-   notif toast (200) — otherwise, on mobile, the bottom nav bar and the floating AI
-   button render ON TOP of an open modal's own backdrop instead of being covered by
-   it, which looks exactly like "the AI agent button is stuck floating over my form". */
-.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.75);display:none;align-items:center;justify-content:center;z-index:250}
+/* z-index 550: must sit above bottom-nav/agent-fab/agent-panel (149-150) — otherwise,
+   on mobile, the bottom nav bar and the floating AI button render ON TOP of an open
+   modal's own backdrop instead of being covered by it — AND above #auth-gate (500),
+   since the signup screen's "תנאי שימוש/מדיניות פרטיות" links open modal-legal-doc
+   while the auth gate itself is still showing (a modal opened from within a lower
+   layer must still end up on top of it, not trapped behind it). */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.75);display:none;align-items:center;justify-content:center;z-index:550}
 .modal-overlay.open{display:flex}
 .modal{background:var(--bg2);border:1px solid var(--border2);border-radius:var(--radius-lg);padding:24px;width:560px;max-width:92vw;max-height:88vh;overflow-y:auto;box-shadow:0 20px 60px rgba(15,23,41,0.25)}
 .modal-wide{width:720px}
@@ -127,7 +129,7 @@ textarea.form-input{resize:vertical;min-height:80px}
    Settings' phone field), and since .notif and .form-input share near-identical
    styling (same bg/border/radius), an error toast looked exactly like garbled text
    INSIDE that field instead of a separate floating message. */
-.notif{position:fixed;top:16px;left:20px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius);padding:12px 18px;font-size:13px;display:none;z-index:260;animation:slideDown 0.2s ease;max-width:280px}
+.notif{position:fixed;top:16px;left:20px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius);padding:12px 18px;font-size:13px;display:none;z-index:560;animation:slideDown 0.2s ease;max-width:280px}
 @keyframes slideDown{from{transform:translateY(-8px);opacity:0}to{transform:translateY(0);opacity:1}}
 .file-drop{border:2px dashed var(--border2);border-radius:var(--radius);padding:24px;text-align:center;cursor:pointer;color:var(--text3);font-size:13px;transition:all 0.15s}
 .file-drop:hover{border-color:var(--accent);background:var(--accent-dim);color:var(--accent2)}
@@ -354,6 +356,14 @@ textarea.form-input{resize:vertical;min-height:80px}
         </div>
         <div style="font-size:12px;color:var(--text2)">עד 20GB אחסון מסמכים · ניהול תיקים, לקוחות ומשימות ללא הגבלה · סוכן AI מובנה</div>
         <div style="font-size:12px;color:var(--success);font-weight:600;margin-top:8px">✓ 14 יום ניסיון חינם — לא יחויב עד תום תקופת הניסיון</div>
+      </div>
+
+      <div style="display:flex;align-items:flex-start;gap:8px;margin-top:14px">
+        <input type="checkbox" id="signup-accept-terms" style="width:auto;margin-top:3px">
+        <label for="signup-accept-terms" style="font-size:12px;color:var(--text2);line-height:1.5">
+          קראתי ואני מסכים/ה ל<a href="#" onclick="openModal('modal-legal-doc');renderLegalDoc('terms');return false" style="color:var(--accent2)">תנאי השימוש</a>
+          ול<a href="#" onclick="openModal('modal-legal-doc');renderLegalDoc('privacy');return false" style="color:var(--accent2)">מדיניות הפרטיות</a>
+        </label>
       </div>
 
       <div class="modal-footer" style="flex-direction:column;gap:8px">
@@ -1005,6 +1015,10 @@ textarea.form-input{resize:vertical;min-height:80px}
       <div style="font-size:11px;color:var(--text3);line-height:1.6">
         LexTrack הינה מערכת ניהול תיקים למשרדי עורכי דין. השימוש במערכת, לרבות כל תוכן שנוצר על ידי סוכן ה-AI (טיוטות מסמכים, המלצות, ניתוחי תיקים), הינו כלי עזר בלבד ואינו מהווה ייעוץ משפטי או תחליף לשיקול דעת מקצועי של עורך/ת דין. באחריות המשתמש/ת לבדוק ולאמת כל מסמך ותוכן לפני שימוש.
       </div>
+      <div style="margin-top:10px;display:flex;gap:14px">
+        <a href="#" onclick="openModal('modal-legal-doc');renderLegalDoc('terms');return false" style="font-size:12px;color:var(--accent2)">תנאי שימוש</a>
+        <a href="#" onclick="openModal('modal-legal-doc');renderLegalDoc('privacy');return false" style="font-size:12px;color:var(--accent2)">מדיניות פרטיות</a>
+      </div>
     </div>
     <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:14px">
       <div style="font-size:12px;font-weight:700;color:var(--accent2);margin-bottom:10px">סוכן AI</div>
@@ -1026,9 +1040,41 @@ textarea.form-input{resize:vertical;min-height:80px}
       <div style="font-size:12px;font-weight:700;color:var(--accent2);margin-bottom:10px">יומן שגיאות (20 אחרונות)</div>
       <div id="settings-errors-list" style="font-size:11px;color:var(--text3);max-height:160px;overflow-y:auto"></div>
     </div>
+    <div id="settings-danger-zone" style="border-top:1px solid var(--danger);margin-top:14px;padding-top:14px;display:none">
+      <div style="font-size:12px;font-weight:700;color:var(--danger);margin-bottom:8px">⚠ מחיקת חשבון</div>
+      <div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.6">
+        פעולה זו מוחקת לצמיתות את המשרד, כל התיקים, הלקוחות, המסמכים והנתונים — ואת חשבון ההתחברות שלך. אין דרך לשחזר. באחריותך לוודא עמידה בכל חובת שימור מסמכים החלה עליך כעו"ד לפני מחיקה.
+      </div>
+      <button class="btn btn-sm btn-danger" onclick="openDeleteAccountConfirm()">מחיקת החשבון לצמיתות</button>
+    </div>
     <div class="modal-footer">
       <button class="btn btn-primary" onclick="saveSettings()">שמור הגדרות</button>
       <button class="btn" onclick="closeModal('modal-settings')">ביטול</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Terms of Service / Privacy Policy viewer (also usable during signup) -->
+<div class="modal-overlay" id="modal-legal-doc">
+  <div class="modal modal-wide">
+    <div class="modal-header"><div class="modal-title" id="legal-doc-title">מסמך</div><button class="modal-close" onclick="closeModal('modal-legal-doc')">×</button></div>
+    <div id="legal-doc-body" style="font-size:13px;line-height:1.8;max-height:60vh;overflow-y:auto"></div>
+    <div class="modal-footer"><button class="btn" onclick="closeModal('modal-legal-doc')">סגור</button></div>
+  </div>
+</div>
+
+<!-- MODAL: delete-account confirmation (type-to-confirm, not a plain OK/Cancel) -->
+<div class="modal-overlay" id="modal-delete-account">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title" style="color:var(--danger)">מחיקת חשבון לצמיתות</div><button class="modal-close" onclick="closeModal('modal-delete-account')">×</button></div>
+    <div class="alert alert-warning">פעולה זו בלתי הפיכה. כל נתוני המשרד יימחקו לצמיתות, כולל חשבון ההתחברות שלך.</div>
+    <div class="form-group">
+      <label class="form-label">הקלד/י את שם המשרד <strong id="delete-confirm-office-name"></strong> לאישור</label>
+      <input class="form-input" id="delete-confirm-input" autocomplete="off">
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger" onclick="confirmDeleteAccount()">מחק לצמיתות</button>
+      <button class="btn" onclick="closeModal('modal-delete-account')">ביטול</button>
     </div>
   </div>
 </div>

@@ -38,6 +38,7 @@ const html = appHtml.replace(
     'vendor/docx.umd.js',
     'vendor/pizzip.min.js',
     'vendor/mammoth.browser.min.js',
+    'legal-content.js',
     'app.js',
     'auth.js',
     'template-manager.js',
@@ -47,6 +48,7 @@ fs.writeFileSync(path.join(outDir, 'index.html'), html, 'utf8');
 
 // Plain, unbundled files — must stay plain scripts so top-level function declarations
 // (nav(), saveCase(), etc.) stay reachable from the HTML's onclick="..." attributes.
+fs.copyFileSync(path.join(src, 'legal-content.js'), path.join(outDir, 'legal-content.js'));
 fs.copyFileSync(path.join(src, 'app.js'), path.join(outDir, 'app.js'));
 fs.copyFileSync(path.join(src, 'auth.js'), path.join(outDir, 'auth.js'));
 fs.copyFileSync(path.join(src, 'template-manager.js'), path.join(outDir, 'template-manager.js'));

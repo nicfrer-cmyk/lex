@@ -250,6 +250,15 @@ window.Platform = {
     return data;
   },
 
+  // ---- account deletion (see supabase/functions/delete-account) ----
+  // Irreversible — permanently deletes the office, all its data/documents, and the
+  // owner's own login. See that function for exactly what gets removed.
+  async deleteAccount() {
+    const { data, error } = await supabase.functions.invoke('delete-account', { body: {} });
+    if (error) throw error;
+    return data;
+  },
+
   // ---- AI (server-side proxy — see supabase/functions/ai-proxy) ----
   async callAI(payload) {
     const { data, error } = await supabase.functions.invoke('ai-proxy', { body: payload });

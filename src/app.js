@@ -23,6 +23,9 @@ let currentClientId = null;
 // the case modal instead of the normal clients-grid flow, whether the user saves or
 // cancels out of the client modal.
 let quickAddClientForCase = false;
+// Cached from openSettingsModal() — used by the delete-account confirm dialog to
+// show/check against the real office name without a redundant extra fetch.
+let _currentOfficeName = '';
 
 // ===== DB =====
 async function loadDB() {
@@ -1679,6 +1682,8 @@ async function openSettingsModal() {
     document.getElementById('settings-team-section').style.display = isOwner ? '' : 'none';
     document.getElementById('settings-errors-section').style.display = isOwner ? '' : 'none';
     document.getElementById('settings-subscription-section').style.display = isOwner ? '' : 'none';
+    document.getElementById('settings-danger-zone').style.display = isOwner ? '' : 'none';
+    _currentOfficeName = office.name || '';
     if (isOwner) { renderTeamSection(); renderErrorsSection(); renderSubscriptionSection(); }
   } catch (e) { /* office info is best-effort in this modal */ }
   try {
@@ -1709,6 +1714,36 @@ function saveSettings() {
     Platform.updateOfficeInfo({ name: officeName.value.trim(), vatRate }).catch(e => notify('שגיאה בשמירת פרטי משרד: ' + e.message));
   }
   closeModal('modal-settings'); notify('הגדרות נשמרו ✓');
+}
+
+// ===== LEGAL DOCS (terms of service / privacy policy — see src/legal-content.js) =====
+function renderLegalDoc(type) {
+  const titles = { terms: 'תנאי שימוש', privacy: 'מדיניות פרטיות' };
+  const bodies = { terms: TERMS_OF_SERVICE_HTML, privacy: PRIVACY_POLICY_HTML };
+  document.getElementById('legal-doc-title').textContent = titles[type] || 'מסמך';
+  document.getElementById('legal-doc-body').innerHTML = bodies[type] || '';
+}
+
+// ===== ACCOUNT DELETION (irreversible — see supabase/functions/delete-account) =====
+function openDeleteAccountConfirm() {
+  document.getElementById('delete-confirm-office-name').textContent = _currentOfficeName;
+  document.getElementById('delete-confirm-input').value = '';
+  closeModal('modal-settings');
+  document.getElementById('modal-delete-account').classList.add('open');
+}
+async function confirmDeleteAccount() {
+  const typed = document.getElementById('delete-confirm-input').value.trim();
+  if (typed !== _currentOfficeName) {
+    notify('השם שהוקלד אינו תואם את שם המשרד — המחיקה בוטלה');
+    return;
+  }
+  try {
+    await Platform.deleteAccount();
+    alert('החשבון נמחק לצמיתות. תודה שהשתמשת ב-LexTrack.');
+    location.reload();
+  } catch (e) {
+    notify('שגיאה במחיקת החשבון: ' + e.message);
+  }
 }
 
 // See supabase-schema-phase1-fix9.sql / supabase/functions/create-payment-page —

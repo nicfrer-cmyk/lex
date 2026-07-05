@@ -74,6 +74,10 @@ async function authFullSignUp() {
     return;
   }
   if (password.length < 6) { authShowError('הסיסמה חייבת להכיל לפחות 6 תווים'); return; }
+  if (!document.getElementById('signup-accept-terms').checked) {
+    authShowError('יש לאשר את תנאי השימוש ומדיניות הפרטיות כדי להמשיך');
+    return;
+  }
   authShowStatus('נרשם ומתחיל תקופת ניסיון...');
   suppressAuthListener = true;
   try {
