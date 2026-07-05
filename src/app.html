@@ -203,7 +203,13 @@ textarea.form-input{resize:vertical;min-height:80px}
 /* Overflow menu ("⋮ עוד") — for topbars with too many secondary actions to show as
    separate buttons on a phone screen (see case-detail: was 4 buttons in a row). */
 .overflow-menu-wrap{position:relative;display:inline-block}
-.overflow-menu{position:absolute;top:calc(100% + 4px);left:0;background:var(--bg2);border:1px solid var(--border2);border-radius:var(--radius);box-shadow:var(--shadow-md);display:none;flex-direction:column;min-width:170px;z-index:120;overflow:hidden}
+/* right:0 (not left:0) — its trigger button is the first child in an RTL flex row
+   (topbar-actions), which packs it flush against the right edge of the screen on
+   mobile. Anchoring the dropdown's LEFT edge there made it grow 170px further
+   RIGHT, off the edge of the viewport, where body{overflow:hidden} clipped most of
+   it — the 3 menu items were there but visually unreachable. Anchoring the RIGHT
+   edge instead grows it leftward, into the screen, where there's actually room. */
+.overflow-menu{position:absolute;top:calc(100% + 4px);right:0;background:var(--bg2);border:1px solid var(--border2);border-radius:var(--radius);box-shadow:var(--shadow-md);display:none;flex-direction:column;min-width:170px;z-index:120;overflow:hidden}
 .overflow-menu.open{display:flex}
 .overflow-menu button{background:none;border:none;text-align:right;padding:10px 14px;font-size:13px;cursor:pointer;font-family:'Heebo',sans-serif;color:var(--text);white-space:nowrap}
 .overflow-menu button:hover{background:var(--bg3)}
@@ -722,7 +728,7 @@ textarea.form-input{resize:vertical;min-height:80px}
     <button class="agent-btn-send" onclick="agentSend()">שלח</button>
   </div>
 </div>
-<button class="agent-fab" onclick="toggleAgent()">🤖 סוכן AI</button>
+<button class="agent-fab" id="agent-fab-btn" onclick="toggleAgent()">🤖 סוכן AI</button>
 
 <!-- ============ MODALS ============ -->
 

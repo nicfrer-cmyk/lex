@@ -44,14 +44,31 @@ let _officeCache = null; // { officeId, role }
 // Sums file sizes under an office's storage folder. Supabase Storage's list() isn't
 // recursive, so this walks the two known shapes by hand: documents/ (flat) and
 // templates/<folder>/ (one level of subfolders) — mirrors tmListTree()'s traversal.
+// Supabase Storage's list() caps at 1000 entries per call with no indication a
+// truncated page was truncated — a plain single call silently undercounts (and, for
+// officeStorageUsageBytes, lets an office quietly blow past its 20GB cap) once a
+// folder holds more than 1000 objects. Loops with offset until a page comes back
+// shorter than the page size, which is the actual "no more results" signal.
+async function listAllStorageEntries(path) {
+  const pageSize = 1000;
+  let offset = 0;
+  let all = [];
+  while (true) {
+    const { data } = await supabase.storage.from(BUCKET).list(path, { limit: pageSize, offset });
+    all = all.concat(data || []);
+    if (!data || data.length < pageSize) break;
+    offset += pageSize;
+  }
+  return all;
+}
 async function officeStorageUsageBytes(officeId) {
   let total = 0;
-  const { data: docs } = await supabase.storage.from(BUCKET).list(`${officeId}/documents`, { limit: 1000 });
-  (docs || []).forEach(f => { if (f.id !== null) total += (f.metadata?.size || 0); });
-  const { data: folders } = await supabase.storage.from(BUCKET).list(`${officeId}/templates`, { limit: 1000 });
-  for (const folder of (folders || []).filter(f => f.id === null)) {
-    const { data: files } = await supabase.storage.from(BUCKET).list(`${officeId}/templates/${folder.name}`, { limit: 1000 });
-    (files || []).forEach(f => { if (f.id !== null) total += (f.metadata?.size || 0); });
+  const docs = await listAllStorageEntries(`${officeId}/documents`);
+  docs.forEach(f => { if (f.id !== null) total += (f.metadata?.size || 0); });
+  const folders = await listAllStorageEntries(`${officeId}/templates`);
+  for (const folder of folders.filter(f => f.id === null)) {
+    const files = await listAllStorageEntries(`${officeId}/templates/${folder.name}`);
+    files.forEach(f => { if (f.id !== null) total += (f.metadata?.size || 0); });
   }
   return total;
 }
@@ -294,7 +311,15 @@ window.Platform = {
   async saveFile({ buffer, filename }) {
     const { officeId } = await currentOffice();
     await enforceStorageQuota(officeId, buffer.length);
-    const path = `${officeId}/documents/${toSafeKey(filename)}`;
+    // Keyed by filename alone before this, with upsert:true — two DIFFERENT documents
+    // from different cases/clients that happen to share a common name (very plausible
+    // in a law firm: "תביעה.docx", "כתב הגנה.docx") would silently overwrite each
+    // other's bytes in Storage, even though db.docs kept separate metadata rows for
+    // each — opening the first would return the second's content. A random prefix
+    // guarantees no two uploads ever collide; the real filename is preserved
+    // separately (origName in db.docs) and still shown to the user via openFile()'s
+    // displayName param, so this is invisible to anyone except at the storage layer.
+    const path = `${officeId}/documents/${crypto.randomUUID()}-${toSafeKey(filename)}`;
     const { error } = await supabase.storage.from(BUCKET).upload(path, bytesToBlob(buffer), { upsert: true });
     if (error) throw error;
     return path;

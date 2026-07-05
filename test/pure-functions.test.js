@@ -51,6 +51,18 @@ test('localDateISO uses local Y/M/D, not a UTC conversion', () => {
   assert.equal(localDateISO(new Date(2026, 11, 31)), '2026-12-31');
 });
 
+test('daysSinceHE handles both date-only (toLocaleDateString) and datetime (toLocaleString) he-IL formats', () => {
+  const { daysSinceHE } = loadApp();
+  const tenDaysAgo = new Date(Date.now() - 10 * 86400000);
+  // Regression: a diary entry's date is stamped via toLocaleString('he-IL'), which
+  // appends ", HH:MM:SS" — splitting the whole string on "." (not just the date
+  // portion) used to make the year parse as NaN, silently returning null for every
+  // case with any diary history at all (see the comment on daysSinceHE itself).
+  assert.equal(daysSinceHE(tenDaysAgo.toLocaleDateString('he-IL')), 10);
+  assert.equal(daysSinceHE(tenDaysAgo.toLocaleString('he-IL')), 10);
+  assert.equal(daysSinceHE(''), null);
+});
+
 test('localMonthKey uses local Y/M', () => {
   const { localMonthKey } = loadApp();
   assert.equal(localMonthKey(new Date(2026, 6, 4)), '2026-07');

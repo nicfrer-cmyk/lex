@@ -346,9 +346,17 @@ function saveCase() {
   else renderDashboard();
 }
 
+// Diary entries are stamped with toLocaleString('he-IL') ("5.7.2026, 14:23:10"),
+// while c.opened etc. use toLocaleDateString('he-IL') ("5.7.2026") — splitting the
+// whole string on "." used to only handle the date-only shape correctly; for a
+// datetime string, the 3rd "."-separated part came out as "2026, 14:23:10", making
+// +p[2] === NaN and silently returning null for every case with ANY diary history.
+// That broke analyzeCaseload's/getRecommendations' entire "stuck/neglected" (14+/30+
+// day) detection for exactly the cases most likely to have diary entries.
 function daysSinceHE(dateStr){
   if(!dateStr) return null;
-  const p=dateStr.split('.');
+  const datePart=dateStr.split(',')[0];
+  const p=datePart.split('.');
   const d=p.length===3?new Date(+p[2],+p[1]-1,+p[0]):new Date(dateStr);
   if(isNaN(d)) return null;
   return Math.floor((Date.now()-d)/86400000);
@@ -410,6 +418,24 @@ function calcCollectedFee(c){
   else if (c.feeType==='both') base=fixedEarned+cPay*((c.feePct||0)/100);
   return base*vatMult;
 }
+// Was a local const duplicated inline (differently, and wrong for 'both'/'hourly')
+// in renderFinance — single source of truth now, matching calcExpectedFee/
+// calcCollectedFee's existing "don't repeat the 4-fee-type branching" precedent.
+function feeTypeLabel(c){
+  if(c.feeType==='percent') return `${c.feePct||15}%`;
+  if(c.feeType==='fixed') return `₪${(c.feeFixed||0).toLocaleString()}`;
+  if(c.feeType==='both') return `${c.feePct||15}% + ₪${(c.feeFixed||0).toLocaleString()}`;
+  return 'שעתי';
+}
+// c.collected is a running total kept in sync by every payment add/edit/delete path
+// (saveCase/savePayment/delPayment/the AI agent's addPayment) — correctly maintained
+// today, but it's a second source of truth for the same number db.payments already
+// holds, one missed update site away from silently diverging (e.g. the AI agent's
+// tools all read c.collected while every human-facing screen recomputes fresh from
+// db.payments). Computing it live instead removes that risk entirely.
+function caseCollectedTotal(c){
+  return db.payments.filter(p=>p.caseId===c.id&&p.type==='debt').reduce((s,p)=>s+(p.amount||0),0);
+}
 
 function toggleCasesView(){
   casesView=casesView==='table'?'board':'table';
@@ -452,12 +478,7 @@ function renderCasesTable(cases){
   if(!cases.length){tbody.innerHTML='';empty.style.display='block';return;}
   empty.style.display='none';
   const smap={active:'פעיל',urgent:'דחוף',pending:'ממתין',closed:'סגור'};
-  const feeLabel=(c)=>{
-    if(c.feeType==='percent') return `${c.feePct||15}%`;
-    if(c.feeType==='fixed') return `₪${(c.feeFixed||0).toLocaleString()}`;
-    if(c.feeType==='both') return `${c.feePct||15}% + ₪${(c.feeFixed||0).toLocaleString()}`;
-    return 'שעתי';
-  };
+  const feeLabel=feeTypeLabel;
   tbody.innerHTML=cases.map(c=>{
     const cl=db.clients.find(x=>x.id===c.client);
     const hasAtf=c.legalDocs&&c.legalDocs.atf;
@@ -1356,7 +1377,7 @@ function renderFinance(){
     const pct=c.amount?Math.round(cPay/c.amount*100):0;
     return `<div class="fin-row" onclick="openCaseDetail('${c.id}')" style="cursor:pointer">
       <div><div style="font-weight:500;color:var(--navy);font-size:13px">${c.name}</div>
-        <div style="font-size:11px;color:var(--text3)">חוב: ₪${(c.amount||0).toLocaleString()} | שכ"ט: ${c.feeType==='percent'?(c.feePct||15)+'%':'₪'+(c.feeFixed||0).toLocaleString()}</div>
+        <div style="font-size:11px;color:var(--text3)">חוב: ₪${(c.amount||0).toLocaleString()} | שכ"ט: ${feeTypeLabel(c)}</div>
         <div class="progress-wrap" style="margin-top:4px;width:120px"><div class="progress-fill" style="width:${Math.min(pct,100)}%"></div></div>
       </div>
       <div style="text-align:left">
@@ -1393,7 +1414,7 @@ function renderFinance(){
     return `<div class="fin-row" onclick="openCaseDetail('${c.id}')" style="cursor:pointer">
       <div style="flex:2;min-width:0">
         <div style="font-weight:500;color:var(--navy);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.name}</div>
-        <div style="font-size:11px;color:var(--text3)">${smap[c.status]||c.status} | ${c.feeType==='percent'?(c.feePct||15)+'% מגבייה':'₪'+(c.feeFixed||0).toLocaleString()+' קבוע'}</div>
+        <div style="font-size:11px;color:var(--text3)">${smap[c.status]||c.status} | ${feeTypeLabel(c)}</div>
       </div>
       <div style="flex:1;text-align:left">
         <div style="font-size:10px;color:var(--text3)">שכ"ט צפוי</div>
@@ -2039,8 +2060,14 @@ function agentAddCostLabel(cost, model) {
 function toggleAgent() {
   agentOpen = !agentOpen;
   const panel = document.getElementById('agent-panel');
-  if (agentOpen) { panel.classList.add('open'); setTimeout(()=>document.getElementById('agent-input').focus(),100); updateSessionCost(); }
-  else panel.classList.remove('open');
+  const fab = document.getElementById('agent-fab-btn');
+  // On mobile, the FAB and the open panel share the exact same bottom-right anchor
+  // point (both re-positioned to bottom:76px;right:12px in that media query) — with
+  // the FAB's higher z-index, it was painting directly on top of the panel's own
+  // chat-input row (send/upload buttons) the whole time the panel was open. A
+  // floating "open chat" button is redundant anyway once the chat is already open.
+  if (agentOpen) { panel.classList.add('open'); fab.style.display='none'; setTimeout(()=>document.getElementById('agent-input').focus(),100); updateSessionCost(); }
+  else { panel.classList.remove('open'); fab.style.display=''; }
 }
 
 function clearAgentChat() {
@@ -2280,8 +2307,8 @@ async function agentExecTool(name, input) {
           `שם: ${gc.debtorName||'—'} | ת.ז/ח.פ: ${gc.debtorId||'—'} | כתובת: ${gc.debtorAddress||'—'}`,
           `תיאור חוב: ${gc.debtDesc||'—'}`,
           '',`--- כספים ---`,
-          `סכום תביעה: ₪${(gc.amount||0).toLocaleString()} | גבוי: ₪${(gc.collected||0).toLocaleString()} | יתרה: ₪${((gc.amount||0)-(gc.collected||0)).toLocaleString()}`,
-          `שכ"ט: ${gc.feeType==='percent'?gc.feePct+'%':gc.feeType==='fixed'?'₪'+(gc.feeFixed||0).toLocaleString():gc.feeType}`,
+          `סכום תביעה: ₪${(gc.amount||0).toLocaleString()} | גבוי: ₪${caseCollectedTotal(gc).toLocaleString()} | יתרה: ₪${((gc.amount||0)-caseCollectedTotal(gc)).toLocaleString()}`,
+          `שכ"ט: ${feeTypeLabel(gc)}`,
           '',`--- תשלומים (${gcp.length}) ---`,
           ...gcp.map(p=>`${p.date} | ${p.type} | ₪${p.amount.toLocaleString()} | ${p.method||''}${p.note?' | '+p.note:''}`),
           '',`--- משימות (${gct.length}) ---`,
@@ -2306,7 +2333,7 @@ async function agentExecTool(name, input) {
         if (!gcl2) return 'לקוח לא נמצא.';
         const gcc=db.cases.filter(c=>c.client===gcl2.id);
         const gctd=gcc.reduce((s,c)=>s+(c.amount||0),0);
-        const gctc=gcc.reduce((s,c)=>s+(c.collected||0),0);
+        const gctc=gcc.reduce((s,c)=>s+caseCollectedTotal(c),0);
         const gcp2=db.payments.filter(p=>gcc.some(c=>c.id===p.caseId));
         const todayGCL=localDateISO(new Date());
         const gcev=db.events.filter(e=>gcc.some(c=>c.id===e.caseId)&&e.date>=todayGCL).sort((a,b)=>a.date>b.date?1:-1);
@@ -2317,7 +2344,7 @@ async function agentExecTool(name, input) {
           '',`--- סיכום כספי ---`,
           `סה"כ חוב: ₪${gctd.toLocaleString()} | גבוי: ₪${gctc.toLocaleString()} | יתרה: ₪${(gctd-gctc).toLocaleString()}`,
           '',`--- תיקים (${gcc.length}) ---`,
-          ...gcc.map(c=>`[${c.id}] ${c.name} | ${c.stage} | ${c.status} | ₪${(c.amount||0).toLocaleString()} | גבוי ₪${(c.collected||0).toLocaleString()}`),
+          ...gcc.map(c=>`[${c.id}] ${c.name} | ${c.stage} | ${c.status} | ₪${(c.amount||0).toLocaleString()} | גבוי ₪${caseCollectedTotal(c).toLocaleString()}`),
           '',`--- תשלומים אחרונים ---`,
           ...gcp2.slice(-10).reverse().map(p=>{const c2=db.cases.find(x=>x.id===p.caseId)||{};return `${p.date} | ${c2.name||'—'} | ${p.type} | ₪${p.amount.toLocaleString()} | ${p.method||''}`;}),
           '',`--- אירועים קרובים ---`,
@@ -2334,7 +2361,7 @@ async function agentExecTool(name, input) {
           const dO=daysSinceHE(c.opened); const dL=ld?daysSinceHE(ld):null;
           lines2.push(`[${c.id}] ${c.name}`);
           lines2.push(`  לקוח: ${cl2.name||'—'} | חייב: ${c.debtorName||'—'}`);
-          lines2.push(`  ₪${(c.amount||0).toLocaleString()} | גבוי: ₪${(c.collected||0).toLocaleString()} | שלב: ${c.stage} | ${c.status}`);
+          lines2.push(`  ₪${(c.amount||0).toLocaleString()} | גבוי: ₪${caseCollectedTotal(c).toLocaleString()} | שלב: ${c.stage} | ${c.status}`);
           lines2.push(`  ימים מפתיחה: ${dO!==null?dO:'—'} | ימים מעדכון יומן: ${dL!==null?dL:'—'}`);
           lines2.push('');
         });
@@ -2406,11 +2433,11 @@ async function agentExecTool(name, input) {
         const frLabel=frPeriod==='all'?'כל הזמנים':frPeriod;
         const frActive=db.cases.filter(c=>c.status!=='closed');
         const frDebt=frActive.reduce((s,c)=>s+(c.amount||0),0);
-        const frColl=db.cases.reduce((s,c)=>s+(c.collected||0),0);
+        const frColl=db.cases.reduce((s,c)=>s+caseCollectedTotal(c),0);
         const frDP=frPay.filter(p=>p.type==='debt'), frRP=frPay.filter(p=>p.type==='retainer'), frEP=frPay.filter(p=>p.type==='expense');
         const frSum=arr=>arr.reduce((s,p)=>s+(p.amount||0),0);
         const frFee=frActive.reduce((s,c)=>s+calcExpectedFee(c),0);
-        const frCB=db.clients.map(cl=>{const cc=db.cases.filter(c=>c.client===cl.id);const d=cc.reduce((s,c)=>s+(c.amount||0),0);const co=cc.reduce((s,c)=>s+(c.collected||0),0);const cp=frPay.filter(p=>cc.some(c=>c.id===p.caseId));return {name:cl.name,debt:d,collected:co,cases:cc.length};}).filter(x=>x.debt>0).sort((a,b)=>b.debt-a.debt);
+        const frCB=db.clients.map(cl=>{const cc=db.cases.filter(c=>c.client===cl.id);const d=cc.reduce((s,c)=>s+(c.amount||0),0);const co=cc.reduce((s,c)=>s+caseCollectedTotal(c),0);const cp=frPay.filter(p=>cc.some(c=>c.id===p.caseId));return {name:cl.name,debt:d,collected:co,cases:cc.length};}).filter(x=>x.debt>0).sort((a,b)=>b.debt-a.debt);
         return [
           `=== דוח כספי – ${frLabel} ===`,'',
           `--- סיכום ---`,
