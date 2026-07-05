@@ -1,9 +1,27 @@
 # LexTrack — pending decisions / next steps
 
-Last updated 2026-07-05. Payment processor: Meshulam/Grow (existing account). Plan: ₪97/month, 20GB storage, 14-day free trial, no card required at signup — payment only required once the trial actually ends (product decision, 2026-07-05).
+Last updated 2026-07-06. Payment processor: Meshulam/Grow (existing account). Plan: ₪97/month, 20GB storage, 14-day free trial, no card required at signup — payment only required once the trial actually ends (product decision, 2026-07-05).
 
 ## Status
 
+- [ ] **`supabase-schema-phase1-fix15.sql` and `fix16.sql` — run these to finish
+      push notifications.** fix15 adds the tables (push_subscriptions,
+      sent_reminders); fix16 enables `pg_cron`/`pg_net` and schedules the daily
+      check at 06:00 UTC (~09:00 Israel in summer) — I wrote this one for you to
+      run rather than doing it myself, since enabling extensions is a
+      project-wide change, unlike a table/policy addition.
+- [x] **Push notifications — hearing reminders (day before), tasks due today,
+      stuck-case alerts (14+ days no diary activity).** Works in the browser and
+      as an installed PWA (Add to Home Screen); does NOT work in the currently
+      installed Android APK (same root cause as Google sign-in — it's a bare
+      WebView, not a real browser context). Toggle is in Settings, visible to
+      every user (reminders are personal). The actual send function
+      (`check-and-send-reminders`) is deployed and smoke-tested live — it runs
+      correctly end to end, just has nobody subscribed yet since fix15 hasn't
+      run. Uses a Deno-native Web Push library (`@negrel/webpush`) I couldn't
+      test an actual delivery with (no subscribed device to test against yet) —
+      if the very first real reminder fails, that library's own README is the
+      first place to check.
 - [x] SQL migrations fix6–fix9 — run
 - [x] Google Cloud OAuth app — configured (per you)
 - [x] `fix10.sql` — run. Fixed the "infinite recursion" error (office_members'
