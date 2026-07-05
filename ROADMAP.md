@@ -30,73 +30,58 @@ Last updated 2026-07-05. Payment processor: Meshulam/Grow (existing account). Pl
 - [ ] **`supabase-schema-phase1-fix12.sql` — run this now** (adds
       `subscriptions.storage_limit_gb`, default 20 — supporting column for the
       quota enforcement above).
-- [ ] Grow payment — code rewritten with real field names, needs your credentials + a sandbox test
-- [ ] Email (Resend, temporary) — next up
-- [ ] `service_role` key — next up
+- [x] **Discovered this machine has an authenticated Supabase CLI session already
+      linked to the real project** ("yarin-law"). You confirmed (2026-07-05) I can
+      use it to deploy code AND manage secrets directly — no more manual
+      dashboard copy-pasting for these. Used it to:
+  - Deploy `create-payment-page`, `grow-webhook` (`--no-verify-jwt`), and
+    `send-invite-email` — all three are now live (`supabase functions list`
+    confirms `ACTIVE`), alongside the already-deployed `ai-proxy`.
+  - Confirmed `SUPABASE_SERVICE_ROLE_KEY` (and `SUPABASE_URL`/`SUPABASE_ANON_KEY`)
+    are **already set automatically** by Supabase's platform for every Edge
+    Function — the "go find and paste this yourself" step from the old
+    instructions below is no longer needed at all.
+  - Generated and set `GROW_WEBHOOK_SECRET` myself (a random string — proves a
+    payment notification really came from Grow, since Grow doesn't sign its
+    callbacks) — no need for you to invent/paste one either.
+- [ ] **Only real blocker left for payment: `GROW_USER_ID` and `GROW_PAGE_CODE`**
+      from your Grow/Meshulam dashboard (Settings/API, or their onboarding email).
+      Once you have them, tell me and I'll set them as secrets myself — no
+      dashboard work needed on your end at all anymore.
+- [ ] Email (Resend) — still needs you to create the account (see below);
+      I can't sign up for a third-party service on your behalf.
 
-## How to set secrets (no command line needed)
-
-Every item below needs one or more "secrets" (API keys) set so the server-side code
-can use them. All of them go in the same place — **no terminal/CLI required**:
-
-**Supabase Dashboard → your project → Edge Functions → Secrets** (or **Manage secrets** —
-the exact label may vary slightly). Add each one as a Name/Value pair and save.
-
-## 1. Email — Resend (fast, temporary — per your choice)
+## Email — Resend (fast, works without your own domain)
 
 1. Go to https://resend.com → sign up (free tier).
 2. Dashboard → **API Keys** → create one → copy it.
 3. You do NOT need your own domain for now — Resend lets you send from their shared
    `onboarding@resend.dev` address to start.
-4. Supabase Dashboard → **Authentication → Emails → SMTP Settings** (may be named
-   "Custom SMTP") → turn it on, and enter:
-   - Host: `smtp.resend.com`
-   - Port: `465` (or `587` — either works)
-   - Username: `resend`
-   - Password: *the API key you copied*
-   - Sender email: `onboarding@resend.dev`
-   - Sender name: `LexTrack`
-5. Supabase Dashboard → **Authentication → Providers → Email** → turn ON "Confirm email".
-6. Already drafted for you: see **EMAIL_TEMPLATES.md** — ready-to-paste HTML for the
-   3 emails LexTrack actually sends (confirm signup, invite user, reset password).
-   Paste each into **Authentication → Email Templates**, per the instructions there.
+4. Tell me the API key (or set it yourself — see below) and I'll configure Supabase's
+   SMTP settings and turn on email confirmation via the CLI, no dashboard steps
+   needed from you beyond creating the Resend account itself.
+5. Already drafted: see **EMAIL_TEMPLATES.md** — ready-to-paste HTML for the 3 emails
+   LexTrack actually sends (confirm signup, invite user, reset password). These still
+   go through the Dashboard's Email Templates screen specifically (not something the
+   CLI manages) — Authentication → Email Templates, paste each in.
 
-## 2. `service_role` key (needed for auto-sent team invites)
+## Grow (Meshulam) payment — code deployed, needs your account details
 
-1. Supabase Dashboard → **Settings → API** → find `service_role` → click **Reveal**.
-2. Copy it, then go set it as a secret (see "How to set secrets" above):
-   Name: `SUPABASE_SERVICE_ROLE_KEY`, Value: *the key you copied*.
-3. **Do not paste this key to me in chat** — it's a master password to your whole
-   database (bypasses every access rule in the project). The secrets screen is the
-   only place it should go.
-4. Also deploy `send-invite-email` — this one step does need the CLI (`supabase functions
-   deploy send-invite-email`); if you don't have the Supabase CLI installed, tell me and
-   I'll walk you through installing it, or we can hold this specific step until then.
+Found Grow's actual field names (their docs site only shows them through search, not
+a normal browsable page) and rewrote both functions correctly — form-encoded requests
+(not JSON, which I had wrong at first), the real recurring-payment fields, and the
+real webhook payload shape. **Both functions are now deployed and live.**
 
-## 3. Grow (Meshulam) payment — real field names found, needs your account details
-
-Good news: I found Grow's actual field names (their docs site only shows them through
-search, not a normal browsable page, so it took a few tries) and rewrote both functions
-correctly — form-encoded requests (not JSON, which I had wrong at first), the real
-recurring-payment fields, and the real webhook payload shape.
-
-**What I still need from you** (all from your Grow/Meshulam dashboard, under
-Settings/API or from their onboarding email):
+**What I still need from you** (from your Grow/Meshulam dashboard, Settings/API, or
+their onboarding email):
 - Your `userId`
 - Your `pageCode`
 - Confirm: does your account use just `pageCode`, or `userId`+`pageCode` together?
   (Grow's docs weren't fully clear on this — a quick look at their API settings page,
   or asking their support, would settle it.)
 
-Then, as secrets: `GROW_USER_ID`, `GROW_PAGE_CODE`, and `GROW_WEBHOOK_SECRET` (this
-last one you invent yourself — any random long string, e.g. generate one at
-https://1password.com/password-generator/ — it's how the webhook proves a payment
-notification really came from Grow, since Grow doesn't sign its callbacks).
-
-Once those are set, deploying both functions needs the CLI too
-(`supabase functions deploy create-payment-page` and
-`supabase functions deploy grow-webhook --no-verify-jwt`) — same note as above if you
-don't have it installed yet.
+Send me these and I'll set them as secrets myself immediately — nothing further for
+you to configure.
 
 **Before charging anyone for real**: test with a sandbox transaction first (the code
 currently points at `sandbox.meshulam.co.il`) and confirm in Settings that the
