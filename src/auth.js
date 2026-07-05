@@ -43,25 +43,29 @@ function authFriendlyError(e) {
   return msg;
 }
 
-async function authSignIn() {
+async function authSignIn(btn) {
   authShowError('');
   const email = document.getElementById('auth-email').value.trim();
   const password = document.getElementById('auth-password').value;
   if (!email || !password) { authShowError('נא למלא אימייל וסיסמה'); return; }
   authShowStatus('מתחבר...');
+  if (btn) btn.disabled = true;
   try {
     await Platform.signIn(email, password);
     authShowStatus('');
+    // Left disabled on success — the auth-gate is about to be hidden by showApp()
+    // anyway, and re-enabling would just flash the button an instant before that.
   } catch (e) {
     authShowStatus('');
     authShowError(authFriendlyError(e));
+    if (btn) btn.disabled = false;
   }
 }
 
 // Full registration — separate from the simple login form's email+password (see
 // #auth-signup-form in app.html): collects real contact/business details and shows
 // the plan up front, closer to a real SaaS signup than the original bare form.
-async function authFullSignUp() {
+async function authFullSignUp(btn) {
   authShowError('');
   const fullName = document.getElementById('signup-fullname').value.trim();
   const officeName = document.getElementById('signup-office-name').value.trim();
@@ -79,6 +83,7 @@ async function authFullSignUp() {
     return;
   }
   authShowStatus('נרשם ומתחיל תקופת ניסיון...');
+  if (btn) btn.disabled = true;
   suppressAuthListener = true;
   try {
     await Platform.signUp(email, password, { fullName, officeName, phone, address });
@@ -94,12 +99,14 @@ async function authFullSignUp() {
     suppressAuthListener = false;
     authShowStatus('');
     authShowError(authFriendlyError(e));
+    if (btn) btn.disabled = false;
   }
 }
 
-async function authSignInWithGoogle() {
+async function authSignInWithGoogle(btn) {
   authShowError('');
   authShowStatus('מפנה ל-Google...');
+  if (btn) btn.disabled = true;
   try {
     await Platform.signInWithGoogle();
     // No showApp() call here: signInWithOAuth() navigates the browser away to
@@ -109,6 +116,7 @@ async function authSignInWithGoogle() {
   } catch (e) {
     authShowStatus('');
     authShowError(authFriendlyError(e));
+    if (btn) btn.disabled = false;
   }
 }
 

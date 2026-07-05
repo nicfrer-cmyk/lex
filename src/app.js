@@ -2002,6 +2002,10 @@ const AGENT_TOOLS = [
 
 let agentMessages = [];
 let agentOpen = false;
+// Guards against sending a 2nd message while one is still being answered — nothing
+// previously stopped a fast double-tap on "שלח" from starting two overlapping
+// agentRunLoop() calls, both mutating the same shared agentMessages array.
+let agentBusy = false;
 
 // Model routing: Haiku for simple ops, Sonnet for drafting/analysis. Internal only —
 // Phase 1 removed the manual Haiku/Sonnet picker from Settings (developer-facing UX).
@@ -2109,9 +2113,14 @@ function agentToolLabel(n) {
 }
 
 async function agentSend() {
+  if (agentBusy) return;
   const input = document.getElementById('agent-input');
   const text = input.value.trim();
   if (!text) return;
+  agentBusy = true;
+  const sendBtn = document.getElementById('agent-send-btn');
+  sendBtn.disabled = true;
+  input.disabled = true;
   input.value = ''; input.style.height = 'auto';
   agentAddBubble('user', text);
   agentMessages.push({ role:'user', content:text });
@@ -2124,6 +2133,11 @@ async function agentSend() {
     statusEl.remove();
     agentAddBubble('assistant', 'שגיאה: ' + (e.message||String(e)));
     console.error('Agent error:', e);
+  } finally {
+    agentBusy = false;
+    sendBtn.disabled = false;
+    input.disabled = false;
+    input.focus();
   }
 }
 

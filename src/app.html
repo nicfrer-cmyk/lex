@@ -48,6 +48,8 @@ body{font-family:'Heebo',sans-serif;background:var(--bg);color:var(--text);heigh
 .topbar-back{display:flex;flex-shrink:0}
 .btn{padding:7px 16px;border-radius:var(--radius);border:1px solid var(--border2);background:var(--bg2);color:var(--text);cursor:pointer;font-size:13px;font-family:'Heebo',sans-serif;transition:all 0.15s}
 .btn:hover{background:rgba(15,23,41,0.04);border-color:var(--text3)}
+.btn:active{transform:scale(0.98)}
+.btn:disabled{opacity:0.55;cursor:not-allowed;transform:none;pointer-events:none}
 .btn-primary{background:var(--accent);border-color:var(--accent);color:#fff}
 .btn-primary:hover{background:var(--accent2)}
 .btn-sm{padding:5px 12px;font-size:12px}
@@ -93,8 +95,11 @@ textarea.form-input{resize:vertical;min-height:80px}
    while the auth gate itself is still showing (a modal opened from within a lower
    layer must still end up on top of it, not trapped behind it). */
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.75);display:none;align-items:center;justify-content:center;z-index:550}
-.modal-overlay.open{display:flex}
-.modal{background:var(--bg2);border:1px solid var(--border2);border-radius:var(--radius-lg);padding:24px;width:560px;max-width:92vw;max-height:88vh;overflow-y:auto;box-shadow:0 20px 60px rgba(15,23,41,0.25)}
+.modal-overlay.open{display:flex;animation:modalFadeIn 0.15s ease}
+.modal{background:var(--bg2);border:1px solid var(--border2);border-radius:var(--radius-lg);padding:24px;width:560px;max-width:92vw;max-height:88vh;overflow-y:auto;box-shadow:0 20px 60px rgba(15,23,41,0.25);animation:modalScaleIn 0.18s cubic-bezier(0.2,0.9,0.3,1.1)}
+@keyframes modalFadeIn{from{opacity:0}to{opacity:1}}
+@keyframes modalScaleIn{from{opacity:0;transform:scale(0.96) translateY(6px)}to{opacity:1;transform:scale(1) translateY(0)}}
+@media (prefers-reduced-motion: reduce){.modal-overlay.open,.modal{animation:none}}
 .modal-wide{width:720px}
 .modal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
 .modal-title{font-size:17px;font-weight:700;color:var(--navy)}
@@ -124,6 +129,15 @@ textarea.form-input{resize:vertical;min-height:80px}
 .search-input{width:100%;padding:8px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:13px;font-family:'Heebo',sans-serif}
 .search-input:focus{outline:none;border-color:var(--accent)}
 .empty{text-align:center;padding:40px;color:var(--text3);font-size:13px}
+/* A friendlier, larger treatment for the top-level "you have nothing here yet"
+   screens (cases/clients/docs) — this is a brand-new customer's first impression of
+   the product, so it gets an icon + a real call to action, not just "אין X" like
+   every smaller nested empty state (case's own payments/documents list etc., where
+   bare and terse is the right register). */
+.empty-main{text-align:center;padding:60px 20px;color:var(--text3)}
+.empty-main-icon{font-size:36px;margin-bottom:12px;opacity:0.6}
+.empty-main-title{font-size:14px;font-weight:600;color:var(--text2);margin-bottom:6px}
+.empty-main-sub{font-size:12px;color:var(--text3)}
 /* Anchored to the top, not the bottom — a bottom-anchored toast landed at the exact
    fixed screen position where an open modal's lower form fields often sit (e.g.
    Settings' phone field), and since .notif and .form-input share near-identical
@@ -328,14 +342,14 @@ textarea.form-input{resize:vertical;min-height:80px}
       <div class="form-group"><label class="form-label">אימייל</label><input class="form-input" id="auth-email" type="email" autocomplete="username"></div>
       <div class="form-group"><label class="form-label">סיסמה</label><input class="form-input" id="auth-password" type="password" autocomplete="current-password"></div>
       <div class="modal-footer" style="flex-direction:column;gap:8px">
-        <button class="btn btn-primary" style="width:100%" onclick="authSignIn()">התחבר</button>
+        <button class="btn btn-primary" style="width:100%" onclick="authSignIn(this)">התחבר</button>
         <button class="btn" style="width:100%" onclick="showSignupForm()">משתמש חדש? הרשמה</button>
       </div>
       <div id="auth-google-wrap">
         <div style="display:flex;align-items:center;gap:8px;margin:12px 0;color:var(--text3);font-size:11px">
           <div style="flex:1;height:1px;background:var(--border)"></div>או<div style="flex:1;height:1px;background:var(--border)"></div>
         </div>
-        <button class="btn" style="width:100%" onclick="authSignInWithGoogle()">🔵 המשך עם Google</button>
+        <button class="btn" style="width:100%" onclick="authSignInWithGoogle(this)">🔵 המשך עם Google</button>
       </div>
       <div style="text-align:center;margin-top:8px"><a href="#" onclick="authForgotPassword();return false" style="font-size:12px;color:var(--accent2)">שכחת סיסמה?</a></div>
     </div>
@@ -373,7 +387,7 @@ textarea.form-input{resize:vertical;min-height:80px}
       </div>
 
       <div class="modal-footer" style="flex-direction:column;gap:8px">
-        <button class="btn btn-primary" style="width:100%" onclick="authFullSignUp()">התחלת תקופת ניסיון + יצירת חשבון</button>
+        <button class="btn btn-primary" style="width:100%" onclick="authFullSignUp(this)">התחלת תקופת ניסיון + יצירת חשבון</button>
         <button class="btn" style="width:100%" onclick="showLoginForm()">כבר יש לך חשבון? התחברות</button>
       </div>
     </div>
@@ -514,7 +528,11 @@ textarea.form-input{resize:vertical;min-height:80px}
           <thead><tr><th>שם תיק / מס׳</th><th>לקוח / חייב</th><th>סכום חוב</th><th>שלב</th><th>נפתח</th><th>שכ"ט</th><th>סטטוס</th><th></th></tr></thead>
           <tbody id="cases-tbody"></tbody>
         </table>
-        <div id="cases-empty" class="empty" style="display:none">אין תיקים. לחץ "תיק חדש"</div>
+        <div id="cases-empty" class="empty-main" style="display:none">
+          <div class="empty-main-icon">📁</div>
+          <div class="empty-main-title">עדיין אין תיקים</div>
+          <div class="empty-main-sub">לחץ/י על "תיק חדש" למעלה כדי לפתוח את התיק הראשון</div>
+        </div>
       </div>
       <div id="cases-board-wrap" class="content" style="padding:0;display:none">
         <div class="kanban-wrap" id="cases-board"></div>
@@ -553,7 +571,13 @@ textarea.form-input{resize:vertical;min-height:80px}
       <div class="search-wrap">
         <input class="search-input" placeholder="חיפוש לקוח..." oninput="renderClients(this.value)">
       </div>
-      <div class="content"><div class="client-grid" id="clients-grid"></div><div id="clients-empty" class="empty" style="display:none">אין לקוחות</div></div>
+      <div class="content"><div class="client-grid" id="clients-grid"></div>
+        <div id="clients-empty" class="empty-main" style="display:none">
+          <div class="empty-main-icon">👥</div>
+          <div class="empty-main-title">עדיין אין לקוחות</div>
+          <div class="empty-main-sub">לחץ/י על "לקוח חדש" למעלה כדי להוסיף את הלקוח הראשון</div>
+        </div>
+      </div>
     </div>
 
     <!-- CLIENT DETAIL -->
@@ -660,7 +684,13 @@ textarea.form-input{resize:vertical;min-height:80px}
       <div class="search-wrap">
         <input class="search-input" placeholder="חיפוש מסמכים..." oninput="renderDocs(this.value)">
       </div>
-      <div class="content"><div id="docs-list"></div><div id="docs-empty" class="empty" style="display:none">אין מסמכים</div></div>
+      <div class="content"><div id="docs-list"></div>
+        <div id="docs-empty" class="empty-main" style="display:none">
+          <div class="empty-main-icon">📄</div>
+          <div class="empty-main-title">עדיין אין מסמכים</div>
+          <div class="empty-main-sub">לחץ/י על "הוסף מסמך" למעלה כדי להעלות את המסמך הראשון</div>
+        </div>
+      </div>
     </div>
 
     <!-- TEMPLATES (mobile-only: internal storage doesn't have a "browse to a Windows folder" option, so templates/reference docs are imported once here) -->
@@ -742,7 +772,7 @@ textarea.form-input{resize:vertical;min-height:80px}
   <div class="agent-input-row">
     <button class="agent-btn-upload" onclick="agentUploadFile()" title="העלאת מסמך לניתוח">📎</button>
 <textarea class="agent-textarea" id="agent-input" placeholder="הקלד פקודה בעברית..." rows="1" onkeydown="agentKeydown(event)" oninput="agentGrow(this)"></textarea>
-    <button class="agent-btn-send" onclick="agentSend()">שלח</button>
+    <button class="agent-btn-send" id="agent-send-btn" onclick="agentSend()">שלח</button>
   </div>
 </div>
 <button class="agent-fab" id="agent-fab-btn" onclick="toggleAgent()">🤖 סוכן AI</button>
