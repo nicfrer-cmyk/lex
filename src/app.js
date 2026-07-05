@@ -2775,4 +2775,29 @@ async function bootApp() {
       });
     }
   } catch (e) { /* role lookup failing shouldn't block the rest of the app */ }
+  checkSubscriptionGate();
+}
+
+// Product decision (2026-07-05): no payment info collected at signup — the office
+// gets a free 14-day trial, and is only asked to pay once that runs out. Until this
+// existed, nothing actually enforced that at all: trial_ends_at was tracked and
+// SHOWN in Settings, but the app kept working forever whether or not anyone ever
+// paid. This is the actual gate. Runs as a best-effort check (never blocks the rest
+// of bootApp if it fails) — a real failure here should fail OPEN (let the office
+// keep working), not lock someone out over a network blip.
+async function checkSubscriptionGate() {
+  try {
+    const sub = await Platform.getSubscriptionStatus();
+    const trialExpired = sub?.status === 'trial' && sub.trial_ends_at && new Date(sub.trial_ends_at) < new Date();
+    const blocked = trialExpired || sub?.status === 'past_due' || sub?.status === 'canceled';
+    if (!blocked) return;
+    document.getElementById('paywall-title').textContent =
+      sub.status === 'canceled' ? 'המנוי בוטל' : sub.status === 'past_due' ? 'התשלום נכשל' : 'תקופת הניסיון הסתיימה';
+    const isOwner = currentRole === 'owner';
+    document.getElementById('paywall-message').textContent = isOwner
+      ? 'כדי להמשיך להשתמש ב-LexTrack יש לשדרג את המנוי (₪97/חודש).'
+      : 'המנוי של המשרד פג תוקף. יש לפנות לבעל/ת המשרד לחידוש המנוי כדי להמשיך.';
+    document.getElementById('paywall-upgrade-btn').style.display = isOwner ? '' : 'none';
+    document.getElementById('paywall-gate').style.display = 'flex';
+  } catch (e) { /* fail open — a failed status check shouldn't lock anyone out */ }
 }

@@ -388,6 +388,23 @@ textarea.form-input{resize:vertical;min-height:80px}
   </div>
 </div>
 
+<!-- PAYWALL: shown instead of the app when the office's trial has ended (or the
+     subscription lapsed) and no active payment covers it — see checkSubscriptionGate()
+     in app.js, called from bootApp(). Blocks the app, not the login itself (the user
+     IS signed in; they just can't use the product until the office pays). -->
+<div id="paywall-gate" style="position:fixed;inset:0;background:var(--bg);display:none;align-items:center;justify-content:center;z-index:480">
+  <div class="modal" style="width:380px;text-align:center">
+    <div class="modal-header" style="justify-content:center"><div class="modal-title">⚖ LexTrack</div></div>
+    <div style="font-size:40px;margin-bottom:10px">⏰</div>
+    <div id="paywall-title" style="font-size:16px;font-weight:700;color:var(--navy);margin-bottom:8px">תקופת הניסיון הסתיימה</div>
+    <div id="paywall-message" style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:18px"></div>
+    <div class="modal-footer" style="flex-direction:column;gap:8px">
+      <button id="paywall-upgrade-btn" class="btn btn-primary" style="width:100%" onclick="upgradeSubscription()">שדרג מנוי כדי להמשיך</button>
+      <button class="btn" style="width:100%" onclick="authSignOut()">🚪 התנתקות</button>
+    </div>
+  </div>
+</div>
+
 <div class="app" id="app-root" style="display:none">
   <div class="drawer-backdrop" id="drawer-backdrop" onclick="closeMobileDrawer()"></div>
   <div class="sidebar" id="sidebar">
