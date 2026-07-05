@@ -1739,7 +1739,16 @@ async function upgradeSubscription() {
   try {
     const { url } = await Platform.createPaymentPage();
     if (url) window.open(url, '_blank');
-  } catch (e) { notify('שגיאה: ' + e.message); }
+  } catch (e) {
+    // "Failed to send a request to the Edge Function" is supabase-js's generic
+    // network-level error for an endpoint that doesn't exist yet — expected right
+    // now (create-payment-page isn't deployed/configured), not a bug to alarm
+    // over. Anything else is a real error worth showing as-is.
+    const msg = /Failed to send a request to the Edge Function/i.test(e.message)
+      ? 'שדרוג מנוי בתשלום עדיין לא זמין — בינתיים נהנה/ית מתקופת הניסיון החינמית.'
+      : 'שגיאה: ' + e.message;
+    notify(msg);
+  }
 }
 
 async function renderErrorsSection() {

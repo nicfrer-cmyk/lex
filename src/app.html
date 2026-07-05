@@ -122,8 +122,13 @@ textarea.form-input{resize:vertical;min-height:80px}
 .search-input{width:100%;padding:8px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:13px;font-family:'Heebo',sans-serif}
 .search-input:focus{outline:none;border-color:var(--accent)}
 .empty{text-align:center;padding:40px;color:var(--text3);font-size:13px}
-.notif{position:fixed;bottom:74px;left:20px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius);padding:12px 18px;font-size:13px;display:none;z-index:260;animation:slideUp 0.2s ease;max-width:280px}
-@keyframes slideUp{from{transform:translateY(8px);opacity:0}to{transform:translateY(0);opacity:1}}
+/* Anchored to the top, not the bottom — a bottom-anchored toast landed at the exact
+   fixed screen position where an open modal's lower form fields often sit (e.g.
+   Settings' phone field), and since .notif and .form-input share near-identical
+   styling (same bg/border/radius), an error toast looked exactly like garbled text
+   INSIDE that field instead of a separate floating message. */
+.notif{position:fixed;top:16px;left:20px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius);padding:12px 18px;font-size:13px;display:none;z-index:260;animation:slideDown 0.2s ease;max-width:280px}
+@keyframes slideDown{from{transform:translateY(-8px);opacity:0}to{transform:translateY(0);opacity:1}}
 .file-drop{border:2px dashed var(--border2);border-radius:var(--radius);padding:24px;text-align:center;cursor:pointer;color:var(--text3);font-size:13px;transition:all 0.15s}
 .file-drop:hover{border-color:var(--accent);background:var(--accent-dim);color:var(--accent2)}
 .progress-wrap{height:4px;background:var(--bg4);border-radius:2px;margin-top:8px}
@@ -289,7 +294,7 @@ textarea.form-input{resize:vertical;min-height:80px}
   /* AI agent panel: fit the viewport instead of a fixed 390px box, and clear the bottom nav */
   .agent-panel{width:calc(100vw - 24px);right:12px;left:12px;height:min(70vh,560px);bottom:76px}
   .agent-fab{bottom:76px;right:12px}
-  .notif{bottom:130px;left:12px;right:12px;max-width:none}
+  .notif{top:16px;left:12px;right:12px;max-width:none}
 
   /* Kanban stays horizontally scrollable but with slightly narrower columns */
   .kanban-col{width:220px;min-width:220px;max-height:calc(100vh - 190px)}
