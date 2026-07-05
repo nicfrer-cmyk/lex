@@ -27,9 +27,22 @@ Last updated 2026-07-05. Payment processor: Meshulam/Grow (existing account). Pl
       login screen every returning user sees. Name/phone are saved to the user's
       profile (shown read-only in Settings) and the office is created with the
       real name typed in, not the old hardcoded "המשרד שלי" default.
-- [ ] **`supabase-schema-phase1-fix12.sql` — run this now** (adds
-      `subscriptions.storage_limit_gb`, default 20 — supporting column for the
-      quota enforcement above).
+- [ ] **`supabase-schema-phase1-fix12.sql` and `fix13.sql` — run these now**
+      (fix12 adds `subscriptions.storage_limit_gb`, default 20; fix13 adds the
+      missing `ON DELETE CASCADE` on `app_data.office_id`, needed for account
+      deletion below to actually work — I didn't run these two myself since
+      direct schema/constraint changes on the live DB felt like they warranted
+      asking first, unlike code deploys/secrets which you already approved).
+- [x] Legal: drafted Terms of Service + Privacy Policy (`src/legal-content.js`)
+      describing LexTrack's actual data flows (Supabase/Anthropic/Grow) —
+      **first draft, needs your own review as the actual attorney before real
+      customers rely on it**, especially the liability clauses. Viewable from
+      the signup screen and Settings; signup now requires checking "קראתי
+      ואני מסכים/ה..." before an account is created.
+- [x] Account deletion: real self-service "מחיקת חשבון" in Settings (owner
+      only, requires typing the exact office name) — deletes all Storage
+      files, all data, and the owner's login, permanently. New `delete-account`
+      Edge Function, already deployed. Needs fix13.sql (above) to not error.
 - [x] **Discovered this machine has an authenticated Supabase CLI session already
       linked to the real project** ("yarin-law"). You confirmed (2026-07-05) I can
       use it to deploy code AND manage secrets directly — no more manual
