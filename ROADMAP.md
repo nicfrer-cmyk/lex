@@ -1,6 +1,6 @@
 # LexTrack — pending decisions / next steps
 
-Last updated 2026-07-05. Payment processor: Meshulam/Grow (existing account). Plan: ₪97/month, 20GB storage.
+Last updated 2026-07-05. Payment processor: Meshulam/Grow (existing account). Plan: ₪97/month, 20GB storage, 14-day free trial, no card required at signup — payment only required once the trial actually ends (product decision, 2026-07-05).
 
 ## Status
 
@@ -28,6 +28,14 @@ Last updated 2026-07-05. Payment processor: Meshulam/Grow (existing account). Pl
       profile (shown read-only in Settings) and the office is created with the
       real name typed in, not the old hardcoded "המשרד שלי" default.
 - [x] `fix12.sql`/`fix13.sql`/`fix14.sql` — all run. All SQL migrations to date are applied.
+- [x] **Trial-expiry enforcement.** You asked "what actually happens after the 14
+      days?" — good catch, the honest answer was "nothing." Fixed: the app now
+      shows a paywall (blocks the app, not the login) once a trial has genuinely
+      expired or the subscription is past_due/canceled. Owners see the upgrade
+      button; team members see a message to contact their office owner. Still
+      needs real Grow credentials (below) before "שדרג מנוי" actually does
+      anything — until then, an expired trial has no way to actually be paid off,
+      which only matters once someone's own 14 days are close to running out.
 - [x] Legal: drafted Terms of Service + Privacy Policy (`src/legal-content.js`)
       describing LexTrack's actual data flows (Supabase/Anthropic/Grow) —
       **first draft, needs your own review as the actual attorney before real
