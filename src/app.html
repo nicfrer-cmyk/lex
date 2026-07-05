@@ -1116,6 +1116,20 @@ textarea.form-input{resize:vertical;min-height:80px}
   </div>
 </div>
 
+<!-- MODAL: generic confirm/alert — replaces native confirm()/alert(), which can't be
+     styled at all and look jarring next to the rest of the app. See
+     customConfirm()/customAlert() in app.js. -->
+<div class="modal-overlay" id="modal-confirm">
+  <div class="modal" style="width:360px">
+    <div class="modal-header"><div class="modal-title" id="confirm-title">אישור</div></div>
+    <div id="confirm-message" style="font-size:14px;color:var(--text2);line-height:1.6;margin-bottom:20px"></div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" id="confirm-ok-btn" onclick="resolveConfirmModal(true)">אישור</button>
+      <button class="btn" id="confirm-cancel-btn" onclick="resolveConfirmModal(false)">ביטול</button>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL: delete-account confirmation (type-to-confirm, not a plain OK/Cancel) -->
 <div class="modal-overlay" id="modal-delete-account">
   <div class="modal">

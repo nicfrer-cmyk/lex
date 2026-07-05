@@ -121,7 +121,7 @@ async function authSignInWithGoogle(btn) {
 }
 
 async function authSignOut() {
-  if (!confirm('להתנתק?')) return;
+  if (!await customConfirm('להתנתק?', { title: 'התנתקות' })) return;
   await Platform.signOut();
   location.reload();
 }
@@ -134,7 +134,7 @@ async function authForgotPassword() {
   try {
     await Platform.resetPasswordForEmail(email);
     authShowStatus('');
-    alert('נשלח אימייל עם קישור לאיפוס סיסמה. בדוק/י את תיבת הדואר.');
+    await customAlert('נשלח אימייל עם קישור לאיפוס סיסמה. בדוק/י את תיבת הדואר.');
   } catch (e) {
     authShowStatus('');
     authShowError(authFriendlyError(e));
@@ -150,7 +150,7 @@ async function authSetNewPassword() {
     await Platform.updatePassword(pw);
     authShowStatus('');
     inPasswordRecovery = false;
-    alert('הסיסמה עודכנה בהצלחה!');
+    await customAlert('הסיסמה עודכנה בהצלחה!');
     showApp();
   } catch (e) {
     authShowStatus('');
@@ -196,7 +196,7 @@ async function showApp() {
         const msg = /row-level security/i.test(e.message)
           ? 'לא ניתן להצטרף עם קישור זה — ייתכן שההזמנה כבר נוצלה/פגה, שאתה כבר חבר במשרד אחר, או שנרשמת עם כתובת אימייל שונה מזו שהוזמנה.'
           : e.message;
-        alert('שגיאה בהצטרפות למשרד: ' + msg);
+        await customAlert('שגיאה בהצטרפות למשרד: ' + msg);
       }
       // Clean the token out of the URL either way — redeeming twice is a harmless
       // no-op (fails the "not already a member" check with a clear error), but
@@ -210,7 +210,7 @@ async function showApp() {
       try {
         await Platform.ensureSoloOffice();
       } catch (e) {
-        alert('שגיאה ביצירת משרד: ' + e.message);
+        await customAlert('שגיאה ביצירת משרד: ' + e.message);
       }
     }
     bootApp();

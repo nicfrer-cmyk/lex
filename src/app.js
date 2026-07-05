@@ -198,6 +198,10 @@ function closeModal(id) {
     }
   }
   if(id==='modal-payment') { document.getElementById('pay-edit-id').value=''; document.getElementById('pay-modal-title').textContent='רישום תשלום'; }
+  // Dismissing via backdrop click / Escape (routed here, see the listener below)
+  // must still resolve the pending Promise — otherwise customConfirm()/
+  // customAlert()'s caller would hang forever waiting on a dialog no longer on screen.
+  if(id==='modal-confirm' && _confirmResolve) { const r=_confirmResolve; _confirmResolve=null; r(false); }
 }
 
 // Routed through closeModal(), not a bare classList.remove('open') — otherwise
@@ -205,6 +209,41 @@ function closeModal(id) {
 // (stale case/client edit-id sticking around for the next "new" open, or the
 // quick-add-from-case flow never returning to the case form).
 document.querySelectorAll('.modal-overlay').forEach(m=>m.addEventListener('click',function(e){if(e.target===this)closeModal(this.id);}));
+
+// ===== CUSTOM CONFIRM/ALERT (replaces native confirm()/alert(), unstyleable and
+// jarring next to the rest of the app) =====
+let _confirmResolve = null;
+function customConfirm(message, opts){
+  opts = opts || {};
+  return new Promise(resolve => {
+    _confirmResolve = resolve;
+    document.getElementById('confirm-title').textContent = opts.title || 'אישור';
+    document.getElementById('confirm-message').textContent = message;
+    const okBtn = document.getElementById('confirm-ok-btn');
+    okBtn.textContent = opts.okText || 'אישור';
+    okBtn.className = opts.danger ? 'btn btn-danger' : 'btn btn-primary';
+    document.getElementById('confirm-cancel-btn').style.display = '';
+    document.getElementById('modal-confirm').classList.add('open');
+  });
+}
+function customAlert(message, title){
+  return new Promise(resolve => {
+    _confirmResolve = resolve;
+    document.getElementById('confirm-title').textContent = title || 'LexTrack';
+    document.getElementById('confirm-message').textContent = message;
+    const okBtn = document.getElementById('confirm-ok-btn');
+    okBtn.textContent = 'הבנתי';
+    okBtn.className = 'btn btn-primary';
+    document.getElementById('confirm-cancel-btn').style.display = 'none';
+    document.getElementById('modal-confirm').classList.add('open');
+  });
+}
+function resolveConfirmModal(result){
+  const resolve = _confirmResolve;
+  _confirmResolve = null;
+  closeModal('modal-confirm');
+  if (resolve) resolve(result);
+}
 
 // ===== OVERFLOW MENU ("⋮ עוד") =====
 function toggleOverflowMenu(btn){
@@ -760,8 +799,8 @@ function addDiary(caseId) {
   saveDB(); openCaseDetail(caseId);
 }
 
-function deleteCase() {
-  if(!confirm('למחוק תיק זה? הפעולה בלתי הפיכה.')) return;
+async function deleteCase() {
+  if(!await customConfirm('למחוק תיק זה? הפעולה בלתי הפיכה.', {danger:true, okText:'מחק תיק', title:'מחיקת תיק'})) return;
   const id=currentCaseId;
   db.cases=db.cases.filter(c=>c.id!==id);
   db.tasks=db.tasks.filter(t=>t.caseId!==id);
@@ -855,7 +894,7 @@ async function downloadLegalDoc() {
       matter:     document.getElementById('lg-matter').value,
       feePct:     document.getElementById('lg-fee-pct').value,
     };
-    if (!fields.clientName.trim() && !confirm('שם הלקוח ריק במסמך. ליצור בכל זאת?')) return;
+    if (!fields.clientName.trim() && !await customConfirm('שם הלקוח ריק במסמך. ליצור בכל זאת?')) return;
     await buildWithTemplate('atf', fields, c);
   } else if(currentLegalDocType==='poa') {
     const fields = {
@@ -863,7 +902,7 @@ async function downloadLegalDoc() {
       grantorId:   document.getElementById('poa-grantor-id').value,
       matter:      document.getElementById('poa-matter').value,
     };
-    if (!fields.grantorName.trim() && !confirm('שם מייפה הכוח ריק במסמך. ליצור בכל זאת?')) return;
+    if (!fields.grantorName.trim() && !await customConfirm('שם מייפה הכוח ריק במסמך. ליצור בכל זאת?')) return;
     await buildWithTemplate('poa', fields, c);
   }
 }
@@ -1029,8 +1068,8 @@ function editClient(id) {
   document.getElementById('modal-client').classList.add('open');
 }
 
-function deleteClient(id){
-  if(!confirm('למחוק לקוח זה?'))return;
+async function deleteClient(id){
+  if(!await customConfirm('למחוק לקוח זה?', {danger:true, okText:'מחק לקוח', title:'מחיקת לקוח'}))return;
   const linked=db.cases.filter(c=>c.client===id);
   if(linked.length){notify('לא ניתן למחוק — ללקוח '+linked.length+' תיקים');return;}
   db.clients=db.clients.filter(c=>c.id!==id);
@@ -1725,7 +1764,7 @@ async function settingsChangePassword() {
   if (!email) { notify('שגיאה: לא נמצא אימייל למשתמש הנוכחי'); return; }
   try {
     await Platform.resetPasswordForEmail(email);
-    alert('נשלח אימייל עם קישור לאיפוס סיסמה. בדוק/י את תיבת הדואר.');
+    await customAlert('נשלח אימייל עם קישור לאיפוס סיסמה. בדוק/י את תיבת הדואר.');
   } catch (e) { notify('שגיאה: ' + e.message); }
 }
 function saveSettings() {
@@ -1760,7 +1799,11 @@ async function confirmDeleteAccount() {
   }
   try {
     await Platform.deleteAccount();
-    alert('החשבון נמחק לצמיתות. תודה שהשתמשת ב-LexTrack.');
+    // Close first — both this and #modal-confirm are .modal-overlay at the same
+    // z-index, and #modal-delete-account comes later in the DOM, so it would paint
+    // ON TOP of (hide) the success alert otherwise.
+    document.getElementById('modal-delete-account').classList.remove('open');
+    await customAlert('החשבון נמחק לצמיתות. תודה שהשתמשת ב-LexTrack.');
     location.reload();
   } catch (e) {
     notify('שגיאה במחיקת החשבון: ' + e.message);
