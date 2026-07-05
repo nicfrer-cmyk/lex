@@ -1897,12 +1897,13 @@ async function upgradeSubscription() {
     if (url) window.open(url, '_blank');
   } catch (e) {
     // "Failed to send a request to the Edge Function" is supabase-js's generic
-    // network-level error for an endpoint that doesn't exist yet — expected right
-    // now (create-payment-page isn't deployed/configured), not a bug to alarm
-    // over. Anything else is a real error worth showing as-is.
+    // network-level error when the endpoint itself is unreachable (not deployed,
+    // no network) — distinct from a real error response, which unwrapFunctionError
+    // (platform.web.js) already turns into a clean Hebrew message from the function
+    // itself, so it's shown as-is rather than prefixed with a generic "שגיאה:".
     const msg = /Failed to send a request to the Edge Function/i.test(e.message)
       ? 'שדרוג מנוי בתשלום עדיין לא זמין — בינתיים נהנה/ית מתקופת הניסיון החינמית.'
-      : 'שגיאה: ' + e.message;
+      : e.message;
     notify(msg);
   }
 }

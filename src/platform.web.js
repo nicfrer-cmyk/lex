@@ -41,6 +41,22 @@ function urlB64ToUint8Array(base64String) {
   return Uint8Array.from([...rawData].map(c => c.charCodeAt(0)));
 }
 
+// supabase.functions.invoke()'s error for a non-2xx response is a generic
+// "Edge Function returned a non-2xx status code" wrapper — the actual {error:"..."}
+// body every function in this project returns is reachable via error.context (the
+// raw Response), but nothing was ever unwrapping it, so every real server-side
+// error message (e.g. "the payment provider isn't configured yet") got replaced
+// with that meaningless generic string by the time it reached notify()/customAlert().
+async function unwrapFunctionError(error) {
+  try {
+    if (error?.context?.json) {
+      const body = await error.context.json();
+      if (body?.error) return new Error(body.error);
+    }
+  } catch (e) { /* fall through to the original error if the body isn't JSON */ }
+  return error;
+}
+
 const BUCKET = 'documents';
 // The one plan LexTrack sells: ₪97/month, up to this much storage per office (see
 // MONTHLY_PRICE_ILS / PLAN_NAME in supabase/functions/create-payment-page — keep in
@@ -248,7 +264,7 @@ window.Platform = {
   // error here as "fall back to the copy-paste link", not a hard failure.
   async sendInviteEmail(inviteToken) {
     const { error } = await supabase.functions.invoke('send-invite-email', { body: { inviteToken } });
-    if (error) throw error;
+    if (error) throw await unwrapFunctionError(error);
   },
   async redeemInvite(token) {
     const { data: invite, error: findErr } = await supabase.from('office_invites').select('*').eq('token', token).maybeSingle();
@@ -275,7 +291,7 @@ window.Platform = {
   // catchable error until that's done, not crash the app.
   async createPaymentPage() {
     const { data, error } = await supabase.functions.invoke('create-payment-page', { body: {} });
-    if (error) throw error;
+    if (error) throw await unwrapFunctionError(error);
     return data;
   },
 
@@ -284,7 +300,7 @@ window.Platform = {
   // owner's own login. See that function for exactly what gets removed.
   async deleteAccount() {
     const { data, error } = await supabase.functions.invoke('delete-account', { body: {} });
-    if (error) throw error;
+    if (error) throw await unwrapFunctionError(error);
     return data;
   },
 
@@ -336,7 +352,7 @@ window.Platform = {
   // ---- AI (server-side proxy — see supabase/functions/ai-proxy) ----
   async callAI(payload) {
     const { data, error } = await supabase.functions.invoke('ai-proxy', { body: payload });
-    if (error) throw error;
+    if (error) throw await unwrapFunctionError(error);
     return data;
   },
   async getAIUsageThisMonth() {

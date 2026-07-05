@@ -70,6 +70,10 @@ Deno.serve(async (req) => {
   if (memberErr || !member) return json({ error: 'לא נמצא משרד מקושר למשתמש' }, 403);
   if (member.role !== 'owner') return json({ error: 'רק בעל המשרד יכול לשדרג את המנוי' }, 403);
 
+  if (!GROW_USER_ID || !GROW_PAGE_CODE) {
+    return json({ error: 'סליקה עדיין לא הוגדרה במערכת — פנה למפתח' }, 503);
+  }
+
   const { data: office } = await supabase.from('offices').select('name').eq('id', member.office_id).maybeSingle();
 
   // cField1 = office_id (so grow-webhook can match the payment back to an office
