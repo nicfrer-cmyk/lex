@@ -327,7 +327,12 @@ textarea.form-input{resize:vertical;min-height:80px}
 }
 
 @media (max-width: 420px){
-  .stats-grid{grid-template-columns:1fr}
+  /* Was 1fr (full-width stacking) — on most real phones (under 420px wide, which is
+     most of them in portrait) this turned the dashboard's 5 KPI cards into a long
+     scrolling list instead of a compact grid. repeat(2,1fr) keeps it a real grid;
+     stat-value/stat-label font sizes already shrink at this breakpoint (below) so
+     two cards per row still fit comfortably. */
+  .stats-grid{grid-template-columns:repeat(2,1fr)}
   .bottom-nav-item span{font-size:9px}
 }
 </style>
