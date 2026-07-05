@@ -23,6 +23,11 @@ android/captures/
 .env
 .env.local
 
+# VAPID private key (push notifications) — generated once locally, stored as the
+# VAPID_KEYS secret in Supabase, never meant to live in the repo
+vapid-keys.json
+vapid-public-key.txt
+
 # Supabase CLI's local link/session cache (contains this machine's project link info,
 # not something to share via the repo)
 supabase/.temp/

@@ -1754,6 +1754,48 @@ async function openSettingsModal() {
     document.getElementById('settings-user-fullname').value = me?.user_metadata?.full_name || '—';
     document.getElementById('settings-user-phone').value = me?.user_metadata?.phone || '—';
   } catch (e) { /* best-effort */ }
+  renderPushStatus();
+}
+
+async function renderPushStatus() {
+  const line = document.getElementById('push-status-line');
+  const btn = document.getElementById('push-toggle-btn');
+  if (!line || !btn) return;
+  if (!Platform.isPushSupported()) {
+    line.textContent = 'הדפדפן/האפליקציה הזו לא תומכים בהתראות פוש.';
+    btn.style.display = 'none';
+    return;
+  }
+  const status = await Platform.getPushSubscriptionStatus();
+  btn.style.display = '';
+  if (status === 'subscribed') {
+    line.textContent = 'התראות פעילות ✓';
+    btn.textContent = 'כיבוי התראות';
+    btn.className = 'btn btn-sm';
+  } else if (status === 'denied') {
+    line.textContent = 'ההרשאה נחסמה בדפדפן — יש לאשר התראות בהגדרות הדפדפן/האתר כדי להפעיל.';
+    btn.style.display = 'none';
+  } else {
+    line.textContent = 'התראות כבויות.';
+    btn.textContent = 'הפעלת התראות';
+    btn.className = 'btn btn-sm btn-primary';
+  }
+}
+
+async function togglePushNotifications() {
+  const status = await Platform.getPushSubscriptionStatus();
+  try {
+    if (status === 'subscribed') {
+      await Platform.unsubscribeFromPush();
+      notify('התראות כובו');
+    } else {
+      await Platform.subscribeToPush();
+      notify('התראות הופעלו ✓');
+    }
+  } catch (e) {
+    notify('שגיאה: ' + e.message);
+  }
+  renderPushStatus();
 }
 // Reuses the same "send recovery email" call the logged-out "שכחת סיסמה?" link uses
 // (Platform.resetPasswordForEmail), but for a user who's already signed in and whose

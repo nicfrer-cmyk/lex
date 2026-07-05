@@ -52,6 +52,10 @@ fs.copyFileSync(path.join(src, 'legal-content.js'), path.join(outDir, 'legal-con
 fs.copyFileSync(path.join(src, 'app.js'), path.join(outDir, 'app.js'));
 fs.copyFileSync(path.join(src, 'auth.js'), path.join(outDir, 'auth.js'));
 fs.copyFileSync(path.join(src, 'template-manager.js'), path.join(outDir, 'template-manager.js'));
+// sw.js is registered via navigator.serviceWorker.register('/sw.js'), not a <script>
+// tag — must stay at the site root (not versioned/cache-busted) so its scope covers
+// the whole origin; a service worker can only control paths at or below its own URL.
+fs.copyFileSync(path.join(src, 'sw.js'), path.join(outDir, 'sw.js'));
 
 // Prebuilt browser/UMD dist files straight from node_modules.
 fs.copyFileSync(path.join(root, 'node_modules/docx/dist/index.umd.cjs'), path.join(vendorDir, 'docx.umd.js'));

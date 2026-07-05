@@ -29,6 +29,18 @@ window.__req = function (name) {
   throw new Error('Unknown module: ' + name);
 };
 
+// Public VAPID key (safe to ship client-side — it's the whole point of a PUBLIC key)
+// for Web Push subscriptions. Must match the private half held server-side as the
+// VAPID_KEYS secret (see supabase/functions/send-push-notification) — if these ever
+// get out of sync, PushManager.subscribe() still succeeds but every send fails.
+const VAPID_PUBLIC_KEY = 'BEpMd3uKvKAmf46uz8pgYLLch5lN07HCgPA9aYFVqDcLGVginwex6nTmMBMde1T3X9Av8chSrPptQ8tE6BunvLA';
+function urlB64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  return Uint8Array.from([...rawData].map(c => c.charCodeAt(0)));
+}
+
 const BUCKET = 'documents';
 // The one plan LexTrack sells: ₪97/month, up to this much storage per office (see
 // MONTHLY_PRICE_ILS / PLAN_NAME in supabase/functions/create-payment-page — keep in
@@ -274,6 +286,51 @@ window.Platform = {
     const { data, error } = await supabase.functions.invoke('delete-account', { body: {} });
     if (error) throw error;
     return data;
+  },
+
+  // ---- push notifications (hearing/task/stuck-case reminders) ----
+  isPushSupported() {
+    return 'serviceWorker' in navigator && 'PushManager' in window;
+  },
+  async getPushSubscriptionStatus() {
+    if (!this.isPushSupported()) return 'unsupported';
+    if (Notification.permission === 'denied') return 'denied';
+    const reg = await navigator.serviceWorker.getRegistration();
+    const existing = reg && await reg.pushManager.getSubscription();
+    return existing ? 'subscribed' : 'unsubscribed';
+  },
+  async subscribeToPush() {
+    if (!this.isPushSupported()) throw new Error('הדפדפן הזה לא תומך בהתראות פוש');
+    const reg = await navigator.serviceWorker.register('/sw.js');
+    await navigator.serviceWorker.ready;
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') throw new Error('לא ניתנה הרשאה להתראות');
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlB64ToUint8Array(VAPID_PUBLIC_KEY),
+      });
+    }
+    const { officeId } = await currentOffice();
+    const { data: { user } } = await supabase.auth.getUser();
+    const json = sub.toJSON();
+    const { error } = await supabase.from('push_subscriptions').upsert({
+      user_id: user.id,
+      office_id: officeId,
+      endpoint: json.endpoint,
+      p256dh: json.keys.p256dh,
+      auth_key: json.keys.auth,
+    }, { onConflict: 'endpoint' });
+    if (error) throw error;
+  },
+  async unsubscribeFromPush() {
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = reg && await reg.pushManager.getSubscription();
+    if (sub) {
+      await supabase.from('push_subscriptions').delete().eq('endpoint', sub.endpoint);
+      await sub.unsubscribe();
+    }
   },
 
   // ---- AI (server-side proxy — see supabase/functions/ai-proxy) ----
