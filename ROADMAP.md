@@ -17,10 +17,16 @@ Last updated 2026-07-05. Payment processor: Meshulam/Grow (existing account). Pl
       is now hidden automatically when running inside the installed app;
       email/password still works there, and Google sign-in still works fine for
       anyone using the site in a normal mobile/desktop browser.
-- [x] Pricing decided: **₪97/month, up to 20GB storage per office.** Now shown on
-      the signup screen and in Settings (with live storage usage), enforced on
+- [x] Pricing decided: **₪97/month, up to 20GB storage per office.** Enforced on
       every document/template upload (rejects with a clear message once an office
       would exceed 20GB), and set as the real charge amount in create-payment-page.
+- [x] Real signup screen: clicking "משתמש חדש? הרשמה" on the login screen now opens
+      a full registration form (name, office name, phone, email, address, password)
+      — separate screen from login, not just the old bare email+password toggle.
+      The plan (₪97/month, 20GB, 14-day free trial) is shown there, not on the
+      login screen every returning user sees. Name/phone are saved to the user's
+      profile (shown read-only in Settings) and the office is created with the
+      real name typed in, not the old hardcoded "המשרד שלי" default.
 - [ ] **`supabase-schema-phase1-fix12.sql` — run this now** (adds
       `subscriptions.storage_limit_gb`, default 20 — supporting column for the
       quota enforcement above).

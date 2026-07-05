@@ -1684,6 +1684,10 @@ async function openSettingsModal() {
   try {
     const me = await Platform.getUser();
     document.getElementById('settings-user-email').value = me?.email || '';
+    // full_name/phone come from user_metadata, set at signup (see authFullSignUp())
+    // — empty for anyone who signed up via Google or before this existed.
+    document.getElementById('settings-user-fullname').value = me?.user_metadata?.full_name || '—';
+    document.getElementById('settings-user-phone').value = me?.user_metadata?.phone || '—';
   } catch (e) { /* best-effort */ }
 }
 // Reuses the same "send recovery email" call the logged-out "שכחת סיסמה?" link uses

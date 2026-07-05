@@ -307,19 +307,16 @@ textarea.form-input{resize:vertical;min-height:80px}
 </head>
 <body>
 <!-- AUTH GATE: shown until a Supabase session is confirmed (see auth.js) -->
-<div id="auth-gate" style="position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:500">
-  <div class="modal" style="width:380px">
+<div id="auth-gate" style="position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:500;overflow-y:auto;padding:20px 0">
+  <div class="modal" id="auth-modal" style="width:380px">
     <div class="modal-header"><div class="modal-title">⚖ LexTrack</div></div>
-    <div style="background:var(--accent-dim);border:1px solid rgba(37,99,235,0.25);border-radius:var(--radius);padding:10px 14px;margin-bottom:16px;font-size:12px;color:var(--text2);text-align:center">
-      מנוי חודשי <strong style="color:var(--accent2)">₪97</strong> · עד <strong style="color:var(--accent2)">20GB</strong> אחסון מסמכים
-    </div>
     <div id="auth-error" class="alert alert-warning" style="display:none"></div>
     <div id="auth-login-form">
       <div class="form-group"><label class="form-label">אימייל</label><input class="form-input" id="auth-email" type="email" autocomplete="username"></div>
       <div class="form-group"><label class="form-label">סיסמה</label><input class="form-input" id="auth-password" type="password" autocomplete="current-password"></div>
       <div class="modal-footer" style="flex-direction:column;gap:8px">
         <button class="btn btn-primary" style="width:100%" onclick="authSignIn()">התחבר</button>
-        <button class="btn" style="width:100%" onclick="authSignUp()">משתמש חדש? הרשמה</button>
+        <button class="btn" style="width:100%" onclick="showSignupForm()">משתמש חדש? הרשמה</button>
       </div>
       <div id="auth-google-wrap">
         <div style="display:flex;align-items:center;gap:8px;margin:12px 0;color:var(--text3);font-size:11px">
@@ -329,6 +326,37 @@ textarea.form-input{resize:vertical;min-height:80px}
       </div>
       <div style="text-align:center;margin-top:8px"><a href="#" onclick="authForgotPassword();return false" style="font-size:12px;color:var(--accent2)">שכחת סיסמה?</a></div>
     </div>
+
+    <!-- Full registration screen — separate from the login form on purpose: real
+         business/contact details up front (not just email+password), and the plan
+         itself shown here, not on the login screen every returning user sees. -->
+    <div id="auth-signup-form" style="display:none">
+      <div class="card-title" style="margin-bottom:12px">פרטי המשרד ואיש הקשר</div>
+      <div class="form-group"><label class="form-label">שם מלא *</label><input class="form-input" id="signup-fullname" placeholder="ישראל ישראלי"></div>
+      <div class="form-group"><label class="form-label">שם המשרד *</label><input class="form-input" id="signup-office-name" placeholder="משרד עורכי דין..."></div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">טלפון *</label><input class="form-input" id="signup-phone" type="tel" placeholder="05X-XXXXXXX"></div>
+        <div class="form-group"><label class="form-label">אימייל *</label><input class="form-input" id="signup-email" type="email" autocomplete="username"></div>
+      </div>
+      <div class="form-group"><label class="form-label">כתובת המשרד</label><input class="form-input" id="signup-address" placeholder="רחוב, עיר"></div>
+      <div class="form-group"><label class="form-label">סיסמה *</label><input class="form-input" id="signup-password" type="password" autocomplete="new-password"></div>
+
+      <div class="card-title" style="margin:18px 0 10px">המנוי</div>
+      <div style="background:var(--accent-dim);border:1px solid rgba(37,99,235,0.25);border-radius:var(--radius);padding:14px">
+        <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px">
+          <span style="font-weight:700;color:var(--navy)">תוכנית בסיסית</span>
+          <span><strong style="color:var(--accent2);font-size:18px">₪97</strong><span style="color:var(--text3);font-size:12px">/חודש</span></span>
+        </div>
+        <div style="font-size:12px;color:var(--text2)">עד 20GB אחסון מסמכים · ניהול תיקים, לקוחות ומשימות ללא הגבלה · סוכן AI מובנה</div>
+        <div style="font-size:12px;color:var(--success);font-weight:600;margin-top:8px">✓ 14 יום ניסיון חינם — לא יחויב עד תום תקופת הניסיון</div>
+      </div>
+
+      <div class="modal-footer" style="flex-direction:column;gap:8px">
+        <button class="btn btn-primary" style="width:100%" onclick="authFullSignUp()">התחלת תקופת ניסיון + יצירת חשבון</button>
+        <button class="btn" style="width:100%" onclick="showLoginForm()">כבר יש לך חשבון? התחברות</button>
+      </div>
+    </div>
+
     <div id="auth-recovery-form" style="display:none">
       <div class="form-group"><label class="form-label">סיסמה חדשה</label><input class="form-input" id="auth-new-password" type="password" autocomplete="new-password"></div>
       <div class="modal-footer" style="flex-direction:column;gap:8px">
@@ -961,6 +989,10 @@ textarea.form-input{resize:vertical;min-height:80px}
     </div>
     <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:14px">
       <div style="font-size:12px;font-weight:700;color:var(--accent2);margin-bottom:10px">פרופיל</div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">שם מלא</label><input class="form-input" id="settings-user-fullname" disabled></div>
+        <div class="form-group"><label class="form-label">טלפון</label><input class="form-input" id="settings-user-phone" disabled></div>
+      </div>
       <div class="form-group"><label class="form-label">אימייל</label><input class="form-input" id="settings-user-email" disabled></div>
       <button class="btn btn-sm" onclick="settingsChangePassword()">🔑 שלח קישור לאיפוס סיסמה</button>
     </div>

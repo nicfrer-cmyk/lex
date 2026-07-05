@@ -105,13 +105,25 @@ window.Platform = {
   isMobile: false,
 
   // ---- auth ----
-  async signUp(email, password) {
-    const { error } = await supabase.auth.signUp({ email, password });
+  // profile ({ fullName, officeName, phone, address }) comes from the full signup
+  // form (see auth.js's authFullSignUp()) — Google sign-in has no equivalent, so
+  // this is always called with it populated for the email/password path only.
+  async signUp(email, password, profile = {}) {
+    const { data, error } = await supabase.auth.signUp({
+      email, password,
+      options: { data: { full_name: profile.fullName || '', phone: profile.phone || '', address: profile.address || '' } },
+    });
     if (error) throw error;
-    // Office bootstrap (new solo office, unless arriving via an invite link) happens
-    // uniformly in auth.js's showApp() via ensureSoloOffice() — the same path a
-    // first-time Google sign-in goes through too, since OAuth has no separate
-    // "signUp" step of its own to hang this off of.
+    const hasInvite = new URLSearchParams(location.search).has('invite');
+    if (data.user && !hasInvite && profile.officeName) {
+      // We already have the real office name right here — create the office now
+      // instead of waiting for showApp()'s generic ensureSoloOffice() fallback
+      // (which only knows to default to "המשרד שלי", for the Google-sign-in case
+      // where no such form was ever filled in). Calling ensureSoloOffice() again
+      // from showApp() right after this is harmless — it no-ops once a membership
+      // already exists.
+      await this.ensureSoloOffice(profile.officeName);
+    }
   },
   async signIn(email, password) {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -132,7 +144,7 @@ window.Platform = {
   // (owned by them) if not — called from showApp() on every first-time-this-session
   // login that didn't arrive via an invite link, regardless of auth method. A no-op
   // for a returning user who already has a membership (one extra select, no writes).
-  async ensureSoloOffice() {
+  async ensureSoloOffice(officeName) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
     const { data: existing, error: existingErr } = await supabase
@@ -147,7 +159,7 @@ window.Platform = {
     // itself succeeded. Knowing the id upfront sidesteps the read entirely.
     const officeId = crypto.randomUUID();
     const { error: officeErr } = await supabase
-      .from('offices').insert({ id: officeId, name: 'המשרד שלי' });
+      .from('offices').insert({ id: officeId, name: officeName || 'המשרד שלי' });
     if (officeErr) throw officeErr;
     const { error: memberErr } = await supabase
       .from('office_members').insert({ office_id: officeId, user_id: user.id, role: 'owner', email: user.email });

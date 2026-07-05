@@ -58,16 +58,26 @@ async function authSignIn() {
   }
 }
 
-async function authSignUp() {
+// Full registration — separate from the simple login form's email+password (see
+// #auth-signup-form in app.html): collects real contact/business details and shows
+// the plan up front, closer to a real SaaS signup than the original bare form.
+async function authFullSignUp() {
   authShowError('');
-  const email = document.getElementById('auth-email').value.trim();
-  const password = document.getElementById('auth-password').value;
-  if (!email || !password) { authShowError('נא למלא אימייל וסיסמה'); return; }
+  const fullName = document.getElementById('signup-fullname').value.trim();
+  const officeName = document.getElementById('signup-office-name').value.trim();
+  const phone = document.getElementById('signup-phone').value.trim();
+  const email = document.getElementById('signup-email').value.trim();
+  const address = document.getElementById('signup-address').value.trim();
+  const password = document.getElementById('signup-password').value;
+  if (!fullName || !officeName || !phone || !email || !password) {
+    authShowError('נא למלא את כל השדות המסומנים בכוכבית (*)');
+    return;
+  }
   if (password.length < 6) { authShowError('הסיסמה חייבת להכיל לפחות 6 תווים'); return; }
-  authShowStatus('נרשם...');
+  authShowStatus('נרשם ומתחיל תקופת ניסיון...');
   suppressAuthListener = true;
   try {
-    await Platform.signUp(email, password);
+    await Platform.signUp(email, password, { fullName, officeName, phone, address });
     authShowStatus('');
     // showApp() itself now creates the solo office (via ensureSoloOffice(), so the
     // same bootstrap covers Google sign-in too) — calling it explicitly here, only
@@ -140,7 +150,19 @@ function showPasswordRecoveryForm() {
   document.getElementById('auth-gate').style.display = 'flex';
   document.getElementById('app-root').style.display = 'none';
   document.getElementById('auth-login-form').style.display = 'none';
+  document.getElementById('auth-signup-form').style.display = 'none';
   document.getElementById('auth-recovery-form').style.display = 'block';
+}
+
+function showSignupForm() {
+  authShowError('');
+  document.getElementById('auth-login-form').style.display = 'none';
+  document.getElementById('auth-signup-form').style.display = 'block';
+}
+function showLoginForm() {
+  authShowError('');
+  document.getElementById('auth-signup-form').style.display = 'none';
+  document.getElementById('auth-login-form').style.display = 'block';
 }
 
 async function showApp() {
@@ -186,6 +208,7 @@ function showAuthGate() {
   document.getElementById('auth-gate').style.display = 'flex';
   document.getElementById('app-root').style.display = 'none';
   document.getElementById('auth-login-form').style.display = 'block';
+  document.getElementById('auth-signup-form').style.display = 'none';
   document.getElementById('auth-recovery-form').style.display = 'none';
 }
 
