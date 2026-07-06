@@ -1,15 +1,13 @@
 # LexTrack — pending decisions / next steps
 
-Last updated 2026-07-06. Payment processor: Meshulam/Grow (existing account). Plan: ₪97/month, 20GB storage, 14-day free trial, no card required at signup — payment only required once the trial actually ends (product decision, 2026-07-05).
+Last updated 2026-07-06 (evening). Payment processor: Meshulam/Grow (existing account). Plan: ₪97/month, 20GB storage, 14-day free trial, no card required at signup — payment only required once the trial actually ends (product decision, 2026-07-05).
 
 ## Status
 
-- [ ] **`supabase-schema-phase1-fix15.sql` and `fix16.sql` — run these to finish
-      push notifications.** fix15 adds the tables (push_subscriptions,
-      sent_reminders); fix16 enables `pg_cron`/`pg_net` and schedules the daily
-      check at 06:00 UTC (~09:00 Israel in summer) — I wrote this one for you to
-      run rather than doing it myself, since enabling extensions is a
-      project-wide change, unlike a table/policy addition.
+- [x] `fix15.sql`/`fix16.sql` — run. Push notification tables exist and the
+      daily reminder check is scheduled via `pg_cron`/`pg_net` at 06:00 UTC
+      (~09:00 Israel in summer). Still genuinely untested against a real
+      subscribed device — see below.
 - [x] **Push notifications — hearing reminders (day before), tasks due today,
       stuck-case alerts (14+ days no diary activity).** Works in the browser and
       as an installed PWA (Add to Home Screen); does NOT work in the currently
@@ -17,11 +15,14 @@ Last updated 2026-07-06. Payment processor: Meshulam/Grow (existing account). Pl
       WebView, not a real browser context). Toggle is in Settings, visible to
       every user (reminders are personal). The actual send function
       (`check-and-send-reminders`) is deployed and smoke-tested live — it runs
-      correctly end to end, just has nobody subscribed yet since fix15 hasn't
-      run. Uses a Deno-native Web Push library (`@negrel/webpush`) I couldn't
-      test an actual delivery with (no subscribed device to test against yet) —
-      if the very first real reminder fails, that library's own README is the
-      first place to check.
+      correctly end to end. Uses a Deno-native Web Push library
+      (`@negrel/webpush`) I couldn't test an actual delivery with (no
+      subscribed device tested against yet, now that fix15/16 are run) — if the
+      very first real reminder fails, that library's own README is the first
+      place to check.
+- [x] Removed the temporary trial-expiry test button (`testExpireTrialNow`) and
+      its `temp-admin-set-trial` Edge Function after confirming the paywall
+      genuinely blocks the app once a trial expires.
 - [x] SQL migrations fix6–fix9 — run
 - [x] Google Cloud OAuth app — configured (per you)
 - [x] `fix10.sql` — run. Fixed the "infinite recursion" error (office_members'
@@ -82,6 +83,11 @@ Last updated 2026-07-06. Payment processor: Meshulam/Grow (existing account). Pl
       from your Grow/Meshulam dashboard (Settings/API, or their onboarding email).
       Once you have them, tell me and I'll set them as secrets myself — no
       dashboard work needed on your end at all anymore.
+- [x] Fixed "שדרג מנוי" showing a raw technical error instead of a real message
+      — `supabase.functions.invoke()` was never unwrapping the actual error body
+      the function returns. Now every Edge Function call shows the real Hebrew
+      message, and `create-payment-page` returns a specific "סליקה עדיין לא
+      הוגדרה" until the Grow credentials above are set.
 - [ ] Email (Resend) — still needs you to create the account (see below);
       I can't sign up for a third-party service on your behalf.
 
