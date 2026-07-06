@@ -1826,21 +1826,6 @@ function renderLegalDoc(type) {
   document.getElementById('legal-doc-body').innerHTML = bodies[type] || '';
 }
 
-// TEMPORARY — testing only. Calls temp-admin-set-trial (also temporary) to set the
-// CALLER'S OWN office's trial_ends_at to an hour ago, so checkSubscriptionGate()
-// shows the paywall on next reload instead of waiting 14 real days. Remove this
-// function, its button in app.html, and the Edge Function once verified.
-async function testExpireTrialNow() {
-  try {
-    const { data, error } = await window.supabaseClient.functions.invoke('temp-admin-set-trial', { body: {} });
-    if (error) throw error;
-    await customAlert('תקופת הניסיון הוגדרה כפגה. סוגר את ההגדרות ורענון...');
-    location.reload();
-  } catch (e) {
-    notify('שגיאה: ' + e.message);
-  }
-}
-
 // ===== ACCOUNT DELETION (irreversible — see supabase/functions/delete-account) =====
 function openDeleteAccountConfirm() {
   document.getElementById('delete-confirm-office-name').textContent = _currentOfficeName;
