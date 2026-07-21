@@ -841,20 +841,26 @@ function openCaseDetail(id) {
       <div id="ct-efiling" style="display:none">
         <div class="alert alert-info">סמן כל מסמך כ"מסמך ראשי" או כ"נספח", סדר את הנספחים לפי הסדר הרצוי, ולחץ "הכן להגשה" — ייווצרו שערי נספחים ממוספרים (ותוכן עניינים אם יש מעל 5 נספחים) בהתאם לתקנות סדר הדין האזרחי. כל נספח נשאר קובץ נפרד (לא מאוחדים לקובץ אחד), כנדרש להגשה בנט המשפט.</div>
         <div class="two-col" style="align-items:start">
-          <!-- Workspace: the bundle being assembled -->
-          <div class="card" style="margin-bottom:0">
+          <!-- Workspace: the bundle being assembled. min-width:0 on both cards below
+               is load-bearing, not decorative — a CSS grid item's default min-width
+               is "auto" (shrink no further than its content's own minimum size), so a
+               single unbroken long string (a long filename with no spaces to wrap on)
+               was forcing this column wider than its 1fr share, breaking the 50/50
+               split the whole layout depends on. min-width:0 lets it actually shrink
+               to the track width, so overflow/ellipsis on the title below can do its job. -->
+          <div class="card" style="margin-bottom:0;min-width:0">
             <div class="card-title" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
               <span>משטח עבודה — ההגשה${caseEfItems.length?' ('+caseEfItems.length+')':''}</span>
               <button class="btn btn-sm btn-primary" onclick="addEfilingFile('${id}')">+ קובץ חדש מהמחשב</button>
             </div>
-            <div style="display:flex;flex-direction:column;gap:6px">${efilingItemsHtml(id, caseEfItems)}</div>
+            <div style="display:flex;flex-direction:column;gap:6px;min-width:0">${efilingItemsHtml(id, caseEfItems)}</div>
             ${caseEfItems.length?`<button class="btn btn-primary" style="margin-top:12px;width:100%" onclick="prepareEfilingBundle('${id}')">📑 הכן להגשה</button>`:''}
             ${caseEfBundle.preparedAt?`<div class="alert alert-info" style="margin-top:10px">הוכן לאחרונה: ${new Date(caseEfBundle.preparedAt).toLocaleString('he-IL')}${caseEfBundle.tocFilePath?' · כולל תוכן עניינים':''}</div>`:''}
           </div>
           <!-- Source: documents already in this case, one click to pull into the workspace -->
-          <div class="card" style="margin-bottom:0">
+          <div class="card" style="margin-bottom:0;min-width:0">
             <div class="card-title">מסמכים קיימים בתיק</div>
-            <div style="display:flex;flex-direction:column;gap:6px">${efilingSourceDocsHtml(id, allCaseDocs, caseEfItems)}</div>
+            <div style="display:flex;flex-direction:column;gap:6px;min-width:0">${efilingSourceDocsHtml(id, allCaseDocs, caseEfItems)}</div>
           </div>
         </div>
       </div>
@@ -1019,11 +1025,11 @@ function efilingItemsHtml(caseId, items) {
     if (!isMain) nCount++;
     const badge = isMain ? 'ראשי' : ('#' + nCount);
     const title = it.title || it.origName || '';
-    return `<div class="doc-item" style="overflow-x:auto">
+    return `<div class="doc-item" style="min-width:0">
       <div style="width:38px;height:38px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;background:${isMain ? 'var(--accent-dim)' : 'var(--bg4)'};color:${isMain ? 'var(--accent2)' : 'var(--text2)'}">${badge}</div>
       <div class="doc-icon ${it.ext || 'doc'}">${(it.ext || '').toUpperCase()}</div>
-      <div style="flex:1;min-width:120px">
-        <div style="font-size:13px;font-weight:500;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${title}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:500;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${title.replace(/"/g,'&quot;')}">${title}</div>
         <div style="font-size:11px;color:var(--text3)">${isMain ? 'מסמך ראשי' : 'נספח ' + nCount}</div>
       </div>
       <div style="display:flex;gap:3px;flex-shrink:0">
@@ -1044,10 +1050,10 @@ function efilingSourceDocsHtml(caseId, allDocs, bundleItems) {
   const usedPaths = new Set(bundleItems.map(i => i.filePath));
   const available = allDocs.filter(d => d.cat !== 'הגשה לנט המשפט' && !usedPaths.has(d.filePath));
   if (!available.length) return '<div class="empty" style="padding:16px">אין מסמכים זמינים בתיק להוספה</div>';
-  return available.map(d => `<div class="doc-item">
+  return available.map(d => `<div class="doc-item" style="min-width:0">
     <div class="doc-icon ${d.ext || 'doc'}">${(d.ext || '').toUpperCase()}</div>
     <div style="flex:1;min-width:0">
-      <div style="font-size:13px;font-weight:500;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${d.name}</div>
+      <div style="font-size:13px;font-weight:500;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(d.name||'').replace(/"/g,'&quot;')}">${d.name}</div>
       <div style="font-size:11px;color:var(--text3)">${d.date || ''}</div>
     </div>
     <button class="btn btn-sm btn-primary" onclick="addExistingDocToEfiling('${caseId}','${d.id}')">+ הוסף</button>
