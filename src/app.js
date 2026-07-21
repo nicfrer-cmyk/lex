@@ -1950,6 +1950,7 @@ function docItemHtml(d, opts={}) {
         <button onclick="closeAllOverflowMenus();openDocCasePicker('${d.id}','move')">↔ העבר לתיק אחר</button>
         <button onclick="closeAllOverflowMenus();openDocCasePicker('${d.id}','copy')">📋 שכפל לתיק</button>
         ${d.filePath?`<button onclick="closeAllOverflowMenus();downloadDoc('${d.id}')">⬇ הורדה למחשב</button>`:''}
+        ${d.filePath&&/\.docx$/i.test(d.origName||d.name||'')?`<button onclick="closeAllOverflowMenus();openInWordLinked('${d.id}')">🔗 פתח ב-Word (מקושר לאתר)</button>`:''}
         <button onclick="closeAllOverflowMenus();uploadNewVersion('${d.id}')">🔄 עדכן גרסה (אחרי עריכה)</button>
         ${d.filePath?`<button onclick="closeAllOverflowMenus();shareDocVia('${d.id}','email')">📧 שלח בדוא"ל</button>`:''}
         ${d.filePath?`<button onclick="closeAllOverflowMenus();shareDocVia('${d.id}','whatsapp')">💬 שלח בוואטסאפ</button>`:''}
@@ -2126,6 +2127,37 @@ function confirmDocCasePicker() {
   closeModal('modal-doc-case-picker');
   if (currentPanel === 'docs') renderDocs();
   else if (currentPanel === 'case-detail') openCaseDetail(currentCaseId);
+}
+
+// "Open in Word, linked to the site" (real WebDAV, not the download-then-reupload
+// loop above) — hands off to ms-word:ofe, Word's own protocol for opening/editing/
+// saving a file straight against a server with no local download step at all. Only
+// offered for .docx (the webdav bridge is Word-document-specific).
+async function openInWordLinked(docId) {
+  const d = db.docs.find(x => x.id === docId);
+  if (!d) return;
+  try {
+    const url = await Platform.getWordEditUrl(docId, d.origName || d.name);
+    window.location.href = url;
+  } catch (e) {
+    notify('שגיאה בפתיחת Word מקושר: ' + e.message);
+  }
+}
+
+async function generateWebdavCredentials() {
+  try {
+    const tokenBytes = crypto.getRandomValues(new Uint8Array(32));
+    const token = Array.from(tokenBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+    const hashBuf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
+    const tokenHash = Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, '0')).join('');
+    const email = await Platform.saveWebdavCredential(tokenHash);
+    const box = document.getElementById('webdav-cred-result');
+    box.style.display = 'block';
+    box.innerHTML = `<div><b>שם משתמש:</b> ${email}</div><div style="margin-top:4px"><b>סיסמה:</b> <code style="user-select:all;word-break:break-all">${token}</code></div><div style="margin-top:6px;color:var(--danger);font-size:11px">שמור/י את זה עכשיו — לא יוצג שוב. אפשר תמיד ליצור פרטים חדשים מחדש אם הוא הלך לאיבוד.</div>`;
+    notify('פרטי גישה נוצרו ✓');
+  } catch (e) {
+    notify('שגיאה: ' + e.message);
+  }
 }
 
 async function shareDocVia(docId, channel) {

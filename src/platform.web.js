@@ -288,6 +288,31 @@ window.Platform = {
     const { role } = await currentOffice();
     return role;
   },
+  // "Open in Word, linked to the site" — builds the ms-word:ofe URL Word's own
+  // desktop client understands, pointed at the `webdav` Edge Function (see its
+  // header comment for the full design). The docId is enough for that function to
+  // resolve the actual Storage path itself — nothing here needs the raw path.
+  async getWordEditUrl(docId, filename) {
+    const { officeId } = await currentOffice();
+    const safe = (filename || 'document.docx').replace(/[\\/:*?"<>|]/g, '_');
+    const webdavUrl = `${SUPABASE_URL}/functions/v1/webdav/${officeId}/${docId}/${encodeURIComponent(safe)}`;
+    return 'ms-word:ofe|u|' + webdavUrl;
+  },
+
+  // Generates the credential Word's Basic-Auth prompt needs (see fix17.sql / the
+  // webdav function) — only the token's hash is sent/stored; the raw token is
+  // returned once here for the UI to show and never touches the server again.
+  async saveWebdavCredential(tokenHash) {
+    const { officeId } = await currentOffice();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('לא מחובר');
+    const email = (user.email || '').toLowerCase();
+    const { error } = await supabase.from('webdav_credentials')
+      .upsert({ user_id: user.id, office_id: officeId, email, token_hash: tokenHash }, { onConflict: 'user_id' });
+    if (error) throw error;
+    return email;
+  },
+
   async getOfficeInfo() {
     const { officeId } = await currentOffice();
     const { data, error } = await supabase.from('offices').select('name, vat_rate').eq('id', officeId).single();
