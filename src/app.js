@@ -36,6 +36,9 @@ let selectedFile = null;
 let docsTabSort = 'added';
 let docsTabFilterExt = '';
 let docsTabCaseId = null;
+// E-filing tab: null = showing the list of prepared filings for the open case;
+// otherwise the id of the specific filing currently being edited (see efilingTabHtml).
+let currentEfilingBundleId = null;
 let currentLegalDocType = null;
 let casesView = localStorage.getItem('lextrack-view') || 'table';
 let currentClientId = null;
@@ -60,6 +63,21 @@ async function loadDB() {
     if (!db.counters) db.counters = { nextClientNumber: 1, caseCounters: {} };
     if (!db.counters.caseCounters) db.counters.caseCounters = {};
     let dirty = false;
+    // db.efilingBundles[caseId] used to be a single {items:[...]} object (one filing
+    // per case) — now it's a list of named filings, since a real case can need several
+    // separate court submissions over its life. Wrap any old-shape entry into a
+    // one-item list rather than discarding it, so nothing already prepared is lost.
+    Object.keys(db.efilingBundles).forEach(cid => {
+      const v = db.efilingBundles[cid];
+      if (v && !Array.isArray(v)) {
+        db.efilingBundles[cid] = [{
+          id: uid(), name: 'הגשה', items: v.items || [],
+          createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+          preparedAt: v.preparedAt || null, tocFilePath: v.tocFilePath || null, tocFilename: v.tocFilename || null
+        }];
+        dirty = true;
+      }
+    });
     // Migrate legacy C-XXX → plain numbers
     db.clients.forEach(c => {
       if (c.clientNumber && /^C-\d+$/.test(c.clientNumber)) {
@@ -649,8 +667,7 @@ function openCaseDetail(id) {
   if(docsTabCaseId!==id){ docsTabSort='added'; docsTabFilterExt=''; docsTabCaseId=id; }
   const cl=db.clients.find(x=>x.id===c.client);
   const caseTasks=db.tasks.filter(t=>t.caseId===id);
-  const caseEfBundle=(db.efilingBundles&&db.efilingBundles[id])||{items:[]};
-  const caseEfItems=caseEfBundle.items||[];
+  const caseEfBundleCount=efilingBundlesFor(id).length;
   const allCaseDocs=db.docs.filter(d=>d.caseId===id); // unfiltered — the e-filing tab's "existing documents" source list must not be affected by the (unrelated) docs-tab sort/filter below
   let caseDocs=db.docs.filter(d=>d.caseId===id);
   if(docsTabFilterExt) caseDocs=caseDocs.filter(d=>d.ext===docsTabFilterExt);
@@ -741,7 +758,7 @@ function openCaseDetail(id) {
         <div class="tab" onclick="switchTab(this,'ct-payments')">תשלומים (${casePayments.length})</div>
         <div class="tab" onclick="switchTab(this,'ct-events')">דיונים (${caseEvents.length})</div>
         <div class="tab" onclick="switchTab(this,'ct-time')">שעות (${caseTime.length})</div>
-        <div class="tab" onclick="switchTab(this,'ct-efiling')">הגשה לנט המשפט${caseEfItems.length?' ('+caseEfItems.length+')':''}</div>
+        <div class="tab" onclick="switchTab(this,'ct-efiling')">הגשה לנט המשפט${caseEfBundleCount?' ('+caseEfBundleCount+')':''}</div>
       </div>
 
       <!-- Tasks -->
@@ -838,32 +855,7 @@ function openCaseDetail(id) {
       </div>
 
       <!-- E-filing (נט המשפט) -->
-      <div id="ct-efiling" style="display:none">
-        <div class="alert alert-info">סמן כל מסמך כ"מסמך ראשי" או כ"נספח", סדר את הנספחים לפי הסדר הרצוי, ולחץ "הכן להגשה" — ייווצרו שערי נספחים ממוספרים (ותוכן עניינים אם יש מעל 5 נספחים) בהתאם לתקנות סדר הדין האזרחי. כל נספח נשאר קובץ נפרד (לא מאוחדים לקובץ אחד), כנדרש להגשה בנט המשפט.</div>
-        <div class="two-col" style="align-items:start">
-          <!-- Workspace: the bundle being assembled. min-width:0 on both cards below
-               is load-bearing, not decorative — a CSS grid item's default min-width
-               is "auto" (shrink no further than its content's own minimum size), so a
-               single unbroken long string (a long filename with no spaces to wrap on)
-               was forcing this column wider than its 1fr share, breaking the 50/50
-               split the whole layout depends on. min-width:0 lets it actually shrink
-               to the track width, so overflow/ellipsis on the title below can do its job. -->
-          <div class="card" style="margin-bottom:0;min-width:0">
-            <div class="card-title" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
-              <span>משטח עבודה — ההגשה${caseEfItems.length?' ('+caseEfItems.length+')':''}</span>
-              <button class="btn btn-sm btn-primary" onclick="addEfilingFile('${id}')">+ קובץ חדש מהמחשב</button>
-            </div>
-            <div style="display:flex;flex-direction:column;gap:6px;min-width:0">${efilingItemsHtml(id, caseEfItems)}</div>
-            ${caseEfItems.length?`<button class="btn btn-primary" style="margin-top:12px;width:100%" onclick="prepareEfilingBundle('${id}')">📑 הכן להגשה</button>`:''}
-            ${caseEfBundle.preparedAt?`<div class="alert alert-info" style="margin-top:10px">הוכן לאחרונה: ${new Date(caseEfBundle.preparedAt).toLocaleString('he-IL')}${caseEfBundle.tocFilePath?' · כולל תוכן עניינים':''}</div>`:''}
-          </div>
-          <!-- Source: documents already in this case, one click to pull into the workspace -->
-          <div class="card" style="margin-bottom:0;min-width:0">
-            <div class="card-title">מסמכים קיימים בתיק</div>
-            <div style="display:flex;flex-direction:column;gap:6px;min-width:0">${efilingSourceDocsHtml(id, allCaseDocs, caseEfItems)}</div>
-          </div>
-        </div>
-      </div>
+      <div id="ct-efiling" style="display:none">${efilingTabHtml(id, allCaseDocs)}</div>
     </div>
   `;
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
@@ -924,17 +916,33 @@ async function delDiary(caseId, idx) {
 }
 
 // ===== E-FILING (הגשה לנט המשפט) =====
-// Per-case bundle of documents being organized for e-filing to נט המשפט: each item
-// is either the "מסמך ראשי" (main pleading) or a "נספח" (attachment). Attachment
-// numbering is NOT stored — it's always the item's 1-based position among role==='nispach'
-// items in bundle.items, so reordering can never desync numbers from what's displayed.
-// db.efilingBundles is a brand-new top-level key (see loadDB()'s defaulting), so it
-// can't affect any existing case/office data.
+// Modeled directly on how עודכנית (a comparable Israeli practice-management tool)
+// structures this, per the owner's explicit request: a case can have several
+// SEPARATE named filings prepared over its life (db.efilingBundles[caseId] is a
+// LIST, not one bundle) — "+ הכן מסמך חדש" starts one, opens the same two-pane
+// workspace as before (existing case docs on one side, the filing being built on
+// the other), and finishing offers three distinct actions: שמור (save the draft as
+// itself), שמור למסמכי התיק (commit — generates numbered cover pages + TOC and adds
+// them to the case's regular documents), and הורד PDF (a print-ready view, no local
+// download of the working files). Attachment numbering is still never stored — it's
+// always the item's 1-based position among role==='nispach' items, so reordering
+// can never desync numbers from what's displayed.
+// currentEfilingBundleId is declared with docsTabSort etc. near the top of the file.
+
 function efilingOpenFile(p, ext, name) { previewRawFile(p, ext, name); }
+
+function efilingBundlesFor(caseId) {
+  if (!db.efilingBundles) db.efilingBundles = {};
+  if (!Array.isArray(db.efilingBundles[caseId])) db.efilingBundles[caseId] = [];
+  return db.efilingBundles[caseId];
+}
+function findEfilingBundle(caseId, bundleId) {
+  return efilingBundlesFor(caseId).find(b => b.id === bundleId) || null;
+}
 
 // openCaseDetail() always redraws with the diary tab active (item 5's default) — a
 // plain re-render after every workspace action would silently kick the user back to
-// a different tab on every single click while building a bundle. Re-selects the
+// a different tab on every single click while building a filing. Re-selects the
 // e-filing tab right after so repeated actions (pulling in several docs, reordering)
 // stay in place.
 function refreshEfilingTab(caseId) {
@@ -943,81 +951,123 @@ function refreshEfilingTab(caseId) {
   if (tabBtn) switchTab(tabBtn, 'ct-efiling');
 }
 
-async function addEfilingFile(caseId) {
+function startNewEfiling(caseId) {
+  const name = prompt('שם ההגשה/הבקשה (לדוגמה: בקשה לעיכוב הליכים):');
+  if (name === null) return;
+  const bundle = {
+    id: uid(), name: name.trim() || 'הגשה ללא שם', items: [],
+    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    preparedAt: null, tocFilePath: null, tocFilename: null
+  };
+  efilingBundlesFor(caseId).push(bundle);
+  saveDB();
+  currentEfilingBundleId = bundle.id;
+  refreshEfilingTab(caseId);
+}
+
+function openEfilingEditor(caseId, bundleId) {
+  currentEfilingBundleId = bundleId;
+  refreshEfilingTab(caseId);
+}
+
+function closeEfilingEditor(caseId) {
+  currentEfilingBundleId = null;
+  refreshEfilingTab(caseId);
+}
+
+function renameEfilingBundle(caseId, bundleId, name) {
+  const b = findEfilingBundle(caseId, bundleId);
+  if (!b) return;
+  b.name = (name || '').trim() || b.name;
+  b.updatedAt = new Date().toISOString();
+  saveDB();
+}
+
+async function deleteEfilingBundle(caseId, bundleId) {
+  if (!await customConfirm('למחוק הגשה זו? הקבצים המקוריים שכבר שויכו לתיק (אם נשמרו למסמכים) לא יימחקו.', { danger: true, okText: 'מחק הגשה', title: 'מחיקת הגשה' })) return;
+  db.efilingBundles[caseId] = efilingBundlesFor(caseId).filter(b => b.id !== bundleId);
+  saveDB();
+  if (currentEfilingBundleId === bundleId) currentEfilingBundleId = null;
+  refreshEfilingTab(caseId);
+}
+
+async function addEfilingFile(caseId, bundleId) {
   const result = await Platform.pickFile();
   if (!result) return;
   let filePath;
   try { filePath = await Platform.saveFile({ buffer: result.buffer, filename: result.filename }); }
   catch (e) { notify('שגיאה: ' + e.message); return; }
-  if (!db.efilingBundles) db.efilingBundles = {};
-  if (!db.efilingBundles[caseId]) db.efilingBundles[caseId] = { items: [] };
-  const bundle = db.efilingBundles[caseId];
+  const bundle = findEfilingBundle(caseId, bundleId);
+  if (!bundle) return;
   const hasMain = bundle.items.some(i => i.role === 'main');
   bundle.items.push({
     id: uid(), role: hasMain ? 'nispach' : 'main',
     filePath, origName: result.filename, ext: getExt(result.filename),
     title: result.filename.replace(/\.[^.]+$/, '')
   });
+  bundle.updatedAt = new Date().toISOString();
   saveDB();
   if (currentPanel === 'case-detail') refreshEfilingTab(caseId);
 }
 
-// Pulls a document already sitting in the case's own docs list into the e-filing
-// workspace, instead of requiring it be picked from the computer again — points at
-// the SAME Storage object (no re-upload), matching how duplicateDoc()/e-filing items
-// already share files by reference elsewhere in this codebase.
-function addExistingDocToEfiling(caseId, docId) {
+// Pulls a document already sitting in the case's own docs list into the filing being
+// built, instead of requiring it be picked from the computer again — points at the
+// SAME Storage object (no re-upload), matching how duplicateDoc() shares files by
+// reference elsewhere in this codebase.
+function addExistingDocToEfiling(caseId, bundleId, docId) {
   const d = db.docs.find(x => x.id === docId);
   if (!d || !d.filePath) return;
-  if (!db.efilingBundles) db.efilingBundles = {};
-  if (!db.efilingBundles[caseId]) db.efilingBundles[caseId] = { items: [] };
-  const bundle = db.efilingBundles[caseId];
-  if (bundle.items.some(i => i.filePath === d.filePath)) { notify('המסמך כבר נמצא בהגשה'); return; }
+  const bundle = findEfilingBundle(caseId, bundleId);
+  if (!bundle) return;
+  if (bundle.items.some(i => i.filePath === d.filePath)) { notify('המסמך כבר נמצא בהגשה זו'); return; }
   const hasMain = bundle.items.some(i => i.role === 'main');
   bundle.items.push({
     id: uid(), role: hasMain ? 'nispach' : 'main',
     filePath: d.filePath, origName: d.origName || d.name, ext: d.ext,
     title: (d.origName || d.name || '').replace(/\.[^.]+$/, '') || d.name
   });
+  bundle.updatedAt = new Date().toISOString();
   saveDB();
   if (currentPanel === 'case-detail') refreshEfilingTab(currentCaseId);
 }
 
-function setEfilingRole(caseId, itemId, role) {
-  const bundle = db.efilingBundles && db.efilingBundles[caseId];
+function setEfilingRole(caseId, bundleId, itemId, role) {
+  const bundle = findEfilingBundle(caseId, bundleId);
   if (!bundle) return;
   const it = bundle.items.find(x => x.id === itemId);
   if (!it) return;
   it.role = role;
+  bundle.updatedAt = new Date().toISOString();
   saveDB();
   if (currentPanel === 'case-detail') refreshEfilingTab(caseId);
 }
 
-function moveEfilingItem(caseId, itemId, dir) {
-  const bundle = db.efilingBundles && db.efilingBundles[caseId];
+function moveEfilingItem(caseId, bundleId, itemId, dir) {
+  const bundle = findEfilingBundle(caseId, bundleId);
   if (!bundle) return;
   const i = bundle.items.findIndex(x => x.id === itemId);
   const j = i + dir;
   if (i < 0 || j < 0 || j >= bundle.items.length) return;
   [bundle.items[i], bundle.items[j]] = [bundle.items[j], bundle.items[i]];
+  bundle.updatedAt = new Date().toISOString();
   saveDB();
   if (currentPanel === 'case-detail') refreshEfilingTab(caseId);
 }
 
-async function deleteEfilingItem(caseId, itemId) {
+async function deleteEfilingItem(caseId, bundleId, itemId) {
   if (!await customConfirm('להסיר קובץ זה מההגשה?', { danger: true, okText: 'הסר', title: 'הסרת קובץ' })) return;
-  const bundle = db.efilingBundles && db.efilingBundles[caseId];
+  const bundle = findEfilingBundle(caseId, bundleId);
   if (!bundle) return;
   bundle.items = bundle.items.filter(x => x.id !== itemId);
+  bundle.updatedAt = new Date().toISOString();
   saveDB();
   if (currentPanel === 'case-detail') refreshEfilingTab(caseId);
 }
 
 // This is a work surface, not a compact list — the whole point is quick access to
 // every action (reorder, role, open, remove) without a menu in the way, per the
-// owner's explicit ask. Controls stay visible; on a narrow screen the row scrolls
-// horizontally (overflow-x) rather than wrapping awkwardly or hiding into a "⋮".
-function efilingItemsHtml(caseId, items) {
+// owner's explicit ask.
+function efilingItemsHtml(caseId, bundleId, items) {
   if (!items.length) return '<div class="empty" style="padding:16px">עדיין לא נוספו קבצים — הוסף מהמחשב או ממסמכים קיימים בתיק מהצד</div>';
   let nCount = 0;
   return items.map((it, i) => {
@@ -1033,20 +1083,20 @@ function efilingItemsHtml(caseId, items) {
         <div style="font-size:11px;color:var(--text3)">${isMain ? 'מסמך ראשי' : 'נספח ' + nCount}</div>
       </div>
       <div style="display:flex;gap:3px;flex-shrink:0">
-        <button class="btn btn-sm" title="${isMain ? 'סמן כנספח' : 'סמן כמסמך ראשי'}" onclick="setEfilingRole('${caseId}','${it.id}','${isMain ? 'nispach' : 'main'}')">🔀</button>
-        <button class="btn btn-sm" title="הזז למעלה" onclick="moveEfilingItem('${caseId}','${it.id}',-1)" ${i === 0 ? 'disabled' : ''}>↑</button>
-        <button class="btn btn-sm" title="הזז למטה" onclick="moveEfilingItem('${caseId}','${it.id}',1)" ${i === items.length - 1 ? 'disabled' : ''}>↓</button>
+        <button class="btn btn-sm" title="${isMain ? 'סמן כנספח' : 'סמן כמסמך ראשי'}" onclick="setEfilingRole('${caseId}','${bundleId}','${it.id}','${isMain ? 'nispach' : 'main'}')">🔀</button>
+        <button class="btn btn-sm" title="הזז למעלה" onclick="moveEfilingItem('${caseId}','${bundleId}','${it.id}',-1)" ${i === 0 ? 'disabled' : ''}>↑</button>
+        <button class="btn btn-sm" title="הזז למטה" onclick="moveEfilingItem('${caseId}','${bundleId}','${it.id}',1)" ${i === items.length - 1 ? 'disabled' : ''}>↓</button>
         ${it.filePath ? `<button class="btn btn-sm" title="פתח" onclick="efilingOpenFile('${(it.filePath || '').replace(/\\/g, '/')}','${it.ext || ''}','${(it.origName || it.title || '').replace(/\\/g, '')}')">👁</button>` : ''}
-        <button class="btn btn-sm" title="הסר" style="color:var(--danger)" onclick="deleteEfilingItem('${caseId}','${it.id}')">✕</button>
+        <button class="btn btn-sm" title="הסר" style="color:var(--danger)" onclick="deleteEfilingItem('${caseId}','${bundleId}','${it.id}')">✕</button>
       </div>
     </div>`;
   }).join('');
 }
 
 // Source panel: documents already uploaded to this case (excluding e-filing's own
-// previously-generated covers/TOC, and anything already pulled into the workspace)
-// — one click adds a reference to the SAME Storage file, no re-upload.
-function efilingSourceDocsHtml(caseId, allDocs, bundleItems) {
+// previously-generated covers/TOC, and anything already pulled into this filing) —
+// one click adds a reference to the SAME Storage file, no re-upload.
+function efilingSourceDocsHtml(caseId, bundleId, allDocs, bundleItems) {
   const usedPaths = new Set(bundleItems.map(i => i.filePath));
   const available = allDocs.filter(d => d.cat !== 'הגשה לנט המשפט' && !usedPaths.has(d.filePath));
   if (!available.length) return '<div class="empty" style="padding:16px">אין מסמכים זמינים בתיק להוספה</div>';
@@ -1056,8 +1106,67 @@ function efilingSourceDocsHtml(caseId, allDocs, bundleItems) {
       <div style="font-size:13px;font-weight:500;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(d.name||'').replace(/"/g,'&quot;')}">${d.name}</div>
       <div style="font-size:11px;color:var(--text3)">${d.date || ''}</div>
     </div>
-    <button class="btn btn-sm btn-primary" onclick="addExistingDocToEfiling('${caseId}','${d.id}')">+ הוסף</button>
+    <button class="btn btn-sm btn-primary" onclick="addExistingDocToEfiling('${caseId}','${bundleId}','${d.id}')">+ הוסף</button>
   </div>`).join('');
+}
+
+// Top-level render for the whole tab: list of prepared filings, or the editor for
+// whichever one is currently open. Called from openCaseDetail().
+function efilingTabHtml(caseId, allCaseDocs) {
+  const bundles = efilingBundlesFor(caseId);
+  const editing = currentEfilingBundleId ? findEfilingBundle(caseId, currentEfilingBundleId) : null;
+
+  if (!editing) {
+    const rows = bundles.slice().reverse().map(b => `
+      <div class="doc-item" style="cursor:pointer;min-width:0" onclick="openEfilingEditor('${caseId}','${b.id}')">
+        <div class="doc-icon doc">📑</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:500;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(b.name||'').replace(/</g,'&lt;')}</div>
+          <div style="font-size:11px;color:var(--text3)">${b.items.length} מסמכים ${b.preparedAt ? '· נשמר למסמכי התיק ב-' + new Date(b.preparedAt).toLocaleDateString('he-IL') : '· טיוטה, טרם נשמר למסמכי התיק'}</div>
+        </div>
+        <button class="btn btn-sm" style="color:var(--danger)" onclick="event.stopPropagation();deleteEfilingBundle('${caseId}','${b.id}')">🗑</button>
+      </div>`).join('');
+    return `
+      <div class="alert alert-info">כל הגשה/בקשה לבית המשפט היא רשימה נפרדת של מסמך ראשי + נספחים ממוספרים — אפשר להכין כמה הגשות שונות לאותו תיק (לדוגמה: כתב תביעה, ואחר כך בקשה נפרדת לעיכוב הליכים).</div>
+      <button class="btn btn-primary" style="margin-bottom:12px" onclick="startNewEfiling('${caseId}')">+ הכן מסמך חדש</button>
+      ${bundles.length ? `<div style="display:flex;flex-direction:column;gap:6px">${rows}</div>` : '<div class="empty" style="padding:16px">עדיין לא הוכנו הגשות לתיק זה</div>'}
+    `;
+  }
+
+  return `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      <button class="btn btn-sm" onclick="closeEfilingEditor('${caseId}')">→ חזרה לרשימת ההגשות</button>
+      <input class="form-input" style="flex:1;font-weight:600" value="${(editing.name||'').replace(/"/g,'&quot;')}" onchange="renameEfilingBundle('${caseId}','${editing.id}',this.value)" placeholder="שם ההגשה">
+    </div>
+    <div class="alert alert-info">סמן כל מסמך כ"מסמך ראשי" או כ"נספח" וסדר את הנספחים לפי הסדר הרצוי. כל נספח נשאר קובץ נפרד (לא מאוחדים לקובץ אחד), כנדרש להגשה בנט המשפט.</div>
+    <div class="two-col" style="align-items:start">
+      <div class="card" style="margin-bottom:0;min-width:0">
+        <div class="card-title" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+          <span>משטח עבודה${editing.items.length ? ' (' + editing.items.length + ')' : ''}</span>
+          <button class="btn btn-sm btn-primary" onclick="addEfilingFile('${caseId}','${editing.id}')">+ קובץ חדש מהמחשב</button>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;min-width:0">${efilingItemsHtml(caseId, editing.id, editing.items)}</div>
+      </div>
+      <div class="card" style="margin-bottom:0;min-width:0">
+        <div class="card-title">מסמכים קיימים בתיק</div>
+        <div style="display:flex;flex-direction:column;gap:6px;min-width:0">${efilingSourceDocsHtml(caseId, editing.id, allCaseDocs, editing.items)}</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
+      <button class="btn btn-primary" onclick="saveEfilingDraft('${caseId}','${editing.id}')">💾 שמור</button>
+      <button class="btn" onclick="commitEfilingToDocuments('${caseId}','${editing.id}')">📥 שמור למסמכי התיק</button>
+      <button class="btn" onclick="downloadEfilingPDF('${caseId}','${editing.id}')">⬇ הורד PDF למחשב</button>
+    </div>
+    <div id="efiling-status-msg" style="margin-top:10px">${editing.preparedAt ? `<div class="alert alert-info">נשמר למסמכי התיק לאחרונה: ${new Date(editing.preparedAt).toLocaleString('he-IL')}${editing.tocFilePath ? ' · כולל תוכן עניינים' : ''}</div>` : ''}</div>
+  `;
+}
+
+function saveEfilingDraft(caseId, bundleId) {
+  const bundle = findEfilingBundle(caseId, bundleId);
+  if (!bundle) return;
+  bundle.updatedAt = new Date().toISOString();
+  saveDB();
+  notify('ההגשה נשמרה ✓');
 }
 
 // Format constants per the Courts Administrator's directive on document form/structure
@@ -1084,24 +1193,35 @@ function efSection(children) {
     children
   };
 }
+function efilingSetStatus(html) {
+  const el = document.getElementById('efiling-status-msg');
+  if (el) el.innerHTML = html;
+}
 
-async function prepareEfilingBundle(caseId) {
-  const bundle = db.efilingBundles && db.efilingBundles[caseId];
-  if (!bundle || !bundle.items.length) { notify('אין קבצים בהגשה'); return; }
+// "שמור למסמכי התיק" — was previously the ONLY action ("הכן להגשה"), and its
+// validation (needs ≥1 main + ≥1 attachment) only ever showed a ~3-second toast,
+// easy to miss entirely if you weren't looking right at it — which is almost
+// certainly why it could look like clicking the button "did nothing." Validation
+// failures now also render as a persistent inline message that stays on screen.
+async function commitEfilingToDocuments(caseId, bundleId) {
+  const bundle = findEfilingBundle(caseId, bundleId);
+  if (!bundle) return;
   const caseObj = db.cases.find(x => x.id === caseId);
   if (!caseObj) return;
+  if (!bundle.items.length) { efilingSetStatus('<div class="alert alert-warning">⚠ אין עדיין קבצים בהגשה — הוסף לפחות מסמך ראשי אחד ונספח אחד.</div>'); return; }
   const mainItems = bundle.items.filter(i => i.role === 'main');
   const attachments = bundle.items.filter(i => i.role === 'nispach');
-  if (!mainItems.length) { notify('סמן מסמך ראשי אחד לפחות'); return; }
-  if (!attachments.length) { notify('הוסף נספח אחד לפחות'); return; }
-  notify('מכין הגשה...');
-  // Re-preparing (e.g. after adding one more attachment) previously left every earlier
-  // run's cover/TOC docx files sitting in the docs list alongside the new, correct
-  // ones — indistinguishable from each other, with real risk of the wrong cover page
-  // getting e-filed. Drop this case's old generated set before building the new one;
-  // the underlying Storage objects are simply orphaned, matching how this codebase
-  // already treats Storage as append-only elsewhere.
-  db.docs = db.docs.filter(d => !(d.caseId === caseId && d.cat === 'הגשה לנט המשפט'));
+  if (!mainItems.length) { efilingSetStatus('<div class="alert alert-warning">⚠ יש לסמן מסמך ראשי אחד לפחות (כפתור 🔀 ליד אחד המסמכים).</div>'); return; }
+  if (!attachments.length) { efilingSetStatus('<div class="alert alert-warning">⚠ יש להוסיף נספח אחד לפחות (כפתור 🔀 ליד אחד המסמכים).</div>'); return; }
+  efilingSetStatus('<div class="alert alert-info">שומר למסמכי התיק...</div>');
+  // Re-committing (e.g. after adding one more attachment) previously left every
+  // earlier run's cover/TOC docx files sitting in the docs list alongside the new,
+  // correct ones — indistinguishable from each other, with real risk of the wrong
+  // cover page getting e-filed. Drop THIS filing's previously-generated set (tagged
+  // by bundleId) before building the new one — other filings' generated docs for the
+  // same case are untouched. The underlying Storage objects are simply orphaned,
+  // matching how this codebase already treats Storage as append-only elsewhere.
+  db.docs = db.docs.filter(d => !(d.caseId === caseId && d.efilingBundleId === bundleId));
   try {
     for (let i = 0; i < attachments.length; i++) {
       const item = attachments[i];
@@ -1119,7 +1239,7 @@ async function prepareEfilingBundle(caseId) {
       const coverPath = await Platform.saveFile({ buffer: Array.from(coverBuf), filename: coverFilename });
       item.coverFilePath = coverPath;
       item.coverFilename = coverFilename;
-      db.docs.unshift({ id: uid(), name: coverFilename, cat: 'הגשה לנט המשפט', caseId, notes: '', date: new Date().toLocaleDateString('he-IL'), ext: 'doc', filePath: coverPath, origName: coverFilename });
+      db.docs.unshift({ id: uid(), name: coverFilename, cat: 'הגשה לנט המשפט', caseId, efilingBundleId: bundleId, notes: '', date: new Date().toLocaleDateString('he-IL'), ext: 'doc', filePath: coverPath, origName: coverFilename });
     }
     // Table of contents is only required once a submission has more than 5
     // attachments, per the directive.
@@ -1133,17 +1253,62 @@ async function prepareEfilingBundle(caseId) {
       const tocBuf = await Packer.toBuffer(tocDoc);
       tocFilename = `תוכן עניינים - ${caseObj.name}.docx`;
       tocFilePath = await Platform.saveFile({ buffer: Array.from(tocBuf), filename: tocFilename });
-      db.docs.unshift({ id: uid(), name: tocFilename, cat: 'הגשה לנט המשפט', caseId, notes: '', date: new Date().toLocaleDateString('he-IL'), ext: 'doc', filePath: tocFilePath, origName: tocFilename });
+      db.docs.unshift({ id: uid(), name: tocFilename, cat: 'הגשה לנט המשפט', caseId, efilingBundleId: bundleId, notes: '', date: new Date().toLocaleDateString('he-IL'), ext: 'doc', filePath: tocFilePath, origName: tocFilename });
     }
     bundle.tocFilePath = tocFilePath;
     bundle.tocFilename = tocFilename;
     bundle.preparedAt = new Date().toISOString();
     saveDB();
-    notify(`ההגשה מוכנה! ${attachments.length} נספחים${tocFilePath ? ' + תוכן עניינים' : ''} ✓`);
+    notify(`נשמר למסמכי התיק! ${attachments.length} נספחים${tocFilePath ? ' + תוכן עניינים' : ''} ✓`);
     if (currentPanel === 'case-detail') refreshEfilingTab(caseId);
   } catch (e) {
-    notify('שגיאה בהכנת ההגשה: ' + e.message);
+    efilingSetStatus(`<div class="alert alert-warning">שגיאה בשמירה למסמכי התיק: ${e.message}</div>`);
   }
+}
+
+function efilingEscapeHtml(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+// "הורד PDF למחשב" — no docx→PDF conversion is available client-side (the bundled
+// `docx` package only WRITES docx, and there's no headless renderer available in a
+// browser context), so this builds a print-ready HTML view of the same cover-page/
+// TOC content instead and hands off to the browser's own native print-to-PDF, which
+// every modern browser already has — no new dependency needed for it.
+function downloadEfilingPDF(caseId, bundleId) {
+  const bundle = findEfilingBundle(caseId, bundleId);
+  if (!bundle) return;
+  const caseObj = db.cases.find(x => x.id === caseId);
+  if (!caseObj) return;
+  const attachments = bundle.items.filter(i => i.role === 'nispach');
+  if (!attachments.length) { efilingSetStatus('<div class="alert alert-warning">⚠ יש להוסיף נספח אחד לפחות לפני הורדה.</div>'); return; }
+  const pages = attachments.map((a, i) => `
+    <div class="ef-page">
+      <div class="ef-page-title">${efilingEscapeHtml(caseObj.name)}</div>
+      <div class="ef-page-num">נספח ${i + 1}</div>
+      <div class="ef-page-name">${efilingEscapeHtml(a.title || a.origName || '')}</div>
+    </div>`).join('');
+  const toc = attachments.length > 5 ? `
+    <div class="ef-page">
+      <div class="ef-page-num" style="font-size:36pt">תוכן עניינים</div>
+      <div class="ef-page-title">${efilingEscapeHtml(caseObj.name)}</div>
+      ${attachments.map((a, i) => `<div class="ef-toc-row">${i + 1}. ${efilingEscapeHtml(a.title || a.origName || '')}</div>`).join('')}
+    </div>` : '';
+  const html = `<!doctype html><html dir="rtl" lang="he"><head><meta charset="utf-8"><title>${efilingEscapeHtml(bundle.name)}</title>
+    <style>
+      @page{size:A4;margin:2.5cm}
+      body{font-family:'David','Times New Roman',serif;color:#000;margin:0}
+      .ef-page{page-break-after:always;text-align:center;padding-top:35vh}
+      .ef-page:last-child{page-break-after:auto}
+      .ef-page-title{font-size:14pt;font-weight:bold;margin-bottom:24px}
+      .ef-page-num{font-size:36pt;font-weight:bold;margin-bottom:18px}
+      .ef-page-name{font-size:14pt}
+      .ef-toc-row{font-size:12pt;text-align:right;margin:8px 40px}
+    </style></head><body>${toc}${pages}</body></html>`;
+  const win = window.open('', '_blank');
+  if (!win) { efilingSetStatus('<div class="alert alert-warning">הדפדפן חסם את חלון ההדפסה — יש לאפשר חלונות קופצים לאתר ולנסות שוב.</div>'); return; }
+  win.document.write(html);
+  win.document.close();
+  win.focus();
+  setTimeout(() => { try { win.print(); } catch (e) {} }, 300);
 }
 
 async function deleteCase() {
