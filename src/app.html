@@ -1083,6 +1083,16 @@ textarea.form-input{resize:vertical;min-height:80px}
   </div>
 </div>
 
+<!-- MODAL DOC CASE PICKER: shared by "העבר" (move) and "שכפל" (copy to a case) — see
+     openDocCasePicker()/confirmDocCasePicker() in app.js. -->
+<div class="modal-overlay" id="modal-doc-case-picker">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title" id="doc-case-picker-title">העבר מסמך לתיק</div><button class="modal-close" onclick="closeModal('modal-doc-case-picker')">×</button></div>
+    <div class="form-group"><label class="form-label">תיק יעד</label><select class="form-input" id="doc-case-picker-select"></select></div>
+    <div class="modal-footer"><button class="btn btn-primary" id="doc-case-picker-confirm-btn" onclick="confirmDocCasePicker()">אישור</button><button class="btn" onclick="closeModal('modal-doc-case-picker')">ביטול</button></div>
+  </div>
+</div>
+
 <!-- MODAL PAYMENT -->
 <div class="modal-overlay" id="modal-payment">
   <div class="modal">

@@ -1947,7 +1947,8 @@ function docItemHtml(d, opts={}) {
       <div class="overflow-menu">
         ${d.filePath?`<button onclick="closeAllOverflowMenus();previewDoc('${d.id}')">👁 פתח / הצג</button>`:''}
         <button onclick="closeAllOverflowMenus();renameDoc('${d.id}')">✏ שנה שם</button>
-        <button onclick="closeAllOverflowMenus();duplicateDoc('${d.id}')">📋 שכפל</button>
+        <button onclick="closeAllOverflowMenus();openDocCasePicker('${d.id}','move')">↔ העבר לתיק אחר</button>
+        <button onclick="closeAllOverflowMenus();openDocCasePicker('${d.id}','copy')">📋 שכפל לתיק</button>
         ${d.filePath?`<button onclick="closeAllOverflowMenus();downloadDoc('${d.id}')">⬇ הורדה למחשב</button>`:''}
         <button onclick="closeAllOverflowMenus();uploadNewVersion('${d.id}')">🔄 עדכן גרסה (אחרי עריכה)</button>
         ${d.filePath?`<button onclick="closeAllOverflowMenus();shareDocVia('${d.id}','email')">📧 שלח בדוא"ל</button>`:''}
@@ -2089,14 +2090,40 @@ function renameDoc(docId) {
   else if (currentPanel === 'case-detail') openCaseDetail(currentCaseId);
 }
 
-function duplicateDoc(docId) {
+// Shared by "העבר" (move) and "שכפל" (copy) — both need the same "pick a destination
+// case" step, just differing in what happens once one's chosen. Copy no longer
+// auto-clones onto the document's own current case (the old behavior) — the target
+// is always an explicit choice, which may or may not be the same case it's already in.
+let docCasePickerDocId = null;
+let docCasePickerMode = null; // 'move' | 'copy'
+
+function openDocCasePicker(docId, mode) {
   const d = db.docs.find(x => x.id === docId);
   if (!d) return;
-  // Points at the same Storage object rather than re-uploading bytes — the file is
-  // immutable in Storage, so two db.docs rows sharing one filePath is safe.
-  db.docs.unshift({ ...d, id: uid(), name: d.name + ' (עותק)', date: new Date().toLocaleDateString('he-IL'), lastOpenedAt: undefined });
+  docCasePickerDocId = docId;
+  docCasePickerMode = mode;
+  document.getElementById('doc-case-picker-title').textContent = mode === 'move' ? 'העבר מסמך לתיק אחר' : 'שכפל מסמך לתיק';
+  document.getElementById('doc-case-picker-confirm-btn').textContent = mode === 'move' ? 'העבר' : 'שכפל';
+  const sel = document.getElementById('doc-case-picker-select');
+  sel.innerHTML = '<option value="">ללא תיק</option>' + db.cases.map(c => `<option value="${c.id}" ${c.id === (d.caseId || '') ? 'selected' : ''}>${c.name}</option>`).join('');
+  openModal('modal-doc-case-picker');
+}
+
+function confirmDocCasePicker() {
+  const targetCaseId = document.getElementById('doc-case-picker-select').value;
+  const d = db.docs.find(x => x.id === docCasePickerDocId);
+  if (!d) { closeModal('modal-doc-case-picker'); return; }
+  if (docCasePickerMode === 'move') {
+    d.caseId = targetCaseId;
+    notify('המסמך הועבר ✓');
+  } else {
+    // Points at the same Storage object rather than re-uploading bytes — the file is
+    // immutable in Storage, so two db.docs rows sharing one filePath is safe.
+    db.docs.unshift({ ...d, id: uid(), caseId: targetCaseId, date: new Date().toLocaleDateString('he-IL'), lastOpenedAt: undefined });
+    notify('המסמך שוכפל ✓');
+  }
   saveDB();
-  notify('המסמך שוכפל ✓');
+  closeModal('modal-doc-case-picker');
   if (currentPanel === 'docs') renderDocs();
   else if (currentPanel === 'case-detail') openCaseDetail(currentCaseId);
 }
