@@ -38,6 +38,8 @@ const html = appHtml.replace(
     'vendor/docx.umd.js',
     'vendor/pizzip.min.js',
     'vendor/mammoth.browser.min.js',
+    'vendor/pdf-lib.min.js',
+    'vendor/html2canvas.min.js',
     'legal-content.js',
     'app.js',
     'auth.js',
@@ -61,6 +63,15 @@ fs.copyFileSync(path.join(src, 'sw.js'), path.join(outDir, 'sw.js'));
 fs.copyFileSync(path.join(root, 'node_modules/docx/dist/index.umd.cjs'), path.join(vendorDir, 'docx.umd.js'));
 fs.copyFileSync(path.join(root, 'node_modules/pizzip/dist/pizzip.min.js'), path.join(vendorDir, 'pizzip.min.js'));
 fs.copyFileSync(path.join(root, 'node_modules/mammoth/mammoth.browser.min.js'), path.join(vendorDir, 'mammoth.browser.min.js'));
+// pdf-lib — builds the actual downloadable e-filing PDF (real page copying/embedding,
+// not just a print dialog); see downloadEfilingPDF() in app.js.
+fs.copyFileSync(path.join(root, 'node_modules/pdf-lib/dist/pdf-lib.min.js'), path.join(vendorDir, 'pdf-lib.min.js'));
+// html2canvas — rasterizes the cover/TOC/.docx-page HTML this feature generates
+// itself into images to embed as PDF pages. A hand-rolled SVG <foreignObject>
+// rasterizer was tried first to avoid this dependency, but it silently duplicated
+// content when the HTML contained a <table> (confirmed via a real Chromium
+// screenshot, not just a hunch) — not something to risk shipping on a legal document.
+fs.copyFileSync(path.join(root, 'node_modules/html2canvas/dist/html2canvas.min.js'), path.join(vendorDir, 'html2canvas.min.js'));
 
 // pdf.js — the "legacy" build (broader browser/webview compatibility, see the doc
 // preview's renderPdfPages()) ships as ES modules only, loaded via dynamic import(),

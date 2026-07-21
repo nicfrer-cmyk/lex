@@ -1279,74 +1279,94 @@ async function commitEfilingToDocuments(caseId, bundleId) {
 function efilingEscapeHtml(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
 // ---- "הורד PDF למחשב" ----
-// Builds ONE continuous print-ready document — main pleading, then a TOC of the
-// attachments, then per attachment a numbered cover page immediately followed by
-// that attachment's own content — matching the shape of a real bundle produced by
-// other Israeli practice-management tools (a sample of one was used as the spec).
-// This is a courtesy "read/print/keep a copy" document only: commitEfilingToDocuments()
-// above is what actually satisfies נט המשפט's own upload rules, which require every
-// attachment to stay a separate file — this download intentionally does the opposite,
-// merging everything into one file for the lawyer's own copy.
+// Builds an actual .pdf file (via pdf-lib, vendor/pdf-lib.min.js) — not a print
+// dialog — containing ONE continuous document: main pleading, then a table of
+// contents of the attachments, then per attachment a numbered cover (חוצץ) page
+// immediately followed by that attachment's own real content. Matches the shape
+// of a real bundle produced by other Israeli practice-management tools (a sample
+// of one was used as the spec). This is a courtesy "read/keep a copy" document
+// only: commitEfilingToDocuments() above is what actually satisfies נט המשפט's
+// own upload rules, which require every attachment to stay a separate file —
+// this download intentionally does the opposite, merging everything into one file.
 //
-// Every page — regardless of the source file's original type — ends up as one
-// fixed-size (A4) <div>, which is what makes the TOC's page numbers exact rather
-// than estimated: a PDF's page count comes straight from pdf.js, an image is one
-// page, and a .docx (which mammoth turns into plain flowing HTML with no page
-// concept at all) is paginated here by measuring real rendered height against an
-// A4 content box and greedily packing whole top-level nodes onto each page — a node
-// taller than a full page on its own (e.g. a huge table) is left overflowing that
-// one page rather than being split further, which is the one accepted imprecision.
-const EF2_MM = { pageW: 210, pageH: 297, margin: 25 };
-function ef2MmPx(mm) { return mm / 25.4 * 96; } // CSS reference px — DPI-independent by spec, not the OS/screen DPI
-const EF2_CONTENT_W = ef2MmPx(EF2_MM.pageW - EF2_MM.margin * 2);
-const EF2_CONTENT_H = ef2MmPx(EF2_MM.pageH - EF2_MM.margin * 2);
+// Every source document contributes real, countable pages, which is what makes
+// the TOC's page numbers exact rather than estimated:
+//  - PDF attachments: pages are copied directly from the source PDF (pdf-lib
+//    copyPages) — lossless, vector-quality, and the count comes straight from
+//    the file itself.
+//  - Images: embedded as one page each (embedPng/embedJpg; gif/webp/bmp are
+//    re-encoded to PNG via a canvas round-trip first, since pdf-lib only embeds
+//    PNG/JPEG natively).
+//  - Everything this feature generates itself (cover pages, the TOC, and a
+//    .docx's content, which mammoth turns into flowing HTML with no page concept
+//    at all) is rasterized into page images via the browser's own HTML/CSS
+//    engine — wrapping the HTML in an SVG <foreignObject> and drawing that onto
+//    a canvas — rather than adding a whole separate "HTML to canvas" dependency
+//    for a handful of self-contained pages (no external stylesheets/resources,
+//    since every image involved is already inlined as a data: URI by this point).
+//    A .docx is paginated first by measuring real rendered height against the
+//    same content box and greedily packing whole top-level nodes per page — a
+//    node taller than a full page on its own (e.g. a huge table) is left
+//    overflowing that one page rather than split further, the one accepted
+//    imprecision.
+const EF2_PT = { pageW: 595.28, pageH: 841.89, margin: 70.87 }; // A4 in PDF points, 25mm margin
+const EF2_CONTENT_W_PT = EF2_PT.pageW - EF2_PT.margin * 2;
+const EF2_CONTENT_H_PT = EF2_PT.pageH - EF2_PT.margin * 2;
+// Oversampling factor for the HTML→image rasterization path, in raster-px per PDF
+// point — keeps generated text crisp once placed onto the true point-sized page.
+// Any font-size/spacing written into that HTML must be expressed via ef2Px() (a
+// "points" value converted through this same factor), or text ends up illegibly
+// tiny relative to the oversized raster box it's actually laid out in.
+// Capped at 2.0 (not higher) on purpose: html2canvas was confirmed, via an actual
+// Chromium screenshot, to silently DUPLICATE rendered content once the output
+// canvas height crosses somewhere around 1700–1900px (reproduced consistently,
+// independent of how the size was specified — raw element size or html2canvas's
+// own `scale` option, and independent of viewport size or DOM complexity — so this
+// reads as a real html2canvas limit around tall canvases, not a misuse on our end).
+// 2.0 keeps the tallest page (a full A4 content box) at ~1400px, a safe margin
+// under that boundary, while still rendering sharp enough to read comfortably.
+const EF2_RASTER_SCALE = 2.0;
+const EF2_HTML_PX_W = Math.round(EF2_CONTENT_W_PT * EF2_RASTER_SCALE);
+const EF2_HTML_PX_H = Math.round(EF2_CONTENT_H_PT * EF2_RASTER_SCALE);
+function ef2Px(pt) { return Math.round(pt * EF2_RASTER_SCALE); }
 function ef2RealImageExt(filename) { return /\.(jpe?g|png|gif|webp|bmp)$/i.test(filename || ''); }
 
-function ef2BufferToDataUrl(buffer, filename) {
-  const mime = /\.png$/i.test(filename) ? 'image/png' : /\.gif$/i.test(filename) ? 'image/gif' : /\.webp$/i.test(filename) ? 'image/webp' : /\.bmp$/i.test(filename) ? 'image/bmp' : 'image/jpeg';
-  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
-  let binary = '';
-  const chunk = 0x8000; // avoids blowing the call-stack/argument limit on String.fromCharCode for large images
-  for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
-  return `data:${mime};base64,${btoa(binary)}`;
+function ef2DataUrlToBytes(dataUrl) {
+  const base64 = dataUrl.split(',')[1];
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
 }
 
-// Renders every page of a PDF to its own <img>, reusing the exact pdf.js setup
-// already proven for in-app document preview (loadPdfJs(), same cmaps/fonts).
-// Rendered above screen resolution (renderScale) so the print/PDF output stays
-// sharp, then displayed at the size it should actually take on an A4 page.
-async function ef2RenderPdfPages(buffer) {
-  const pdfjsLib = await loadPdfJs();
-  const pdf = await pdfjsLib.getDocument({
-    data: new Uint8Array(buffer),
-    cMapUrl: 'vendor/cmaps/', cMapPacked: true,
-    standardFontDataUrl: 'vendor/standard_fonts/',
-  }).promise;
-  const pages = [];
-  const renderScale = 2.5;
-  for (let n = 1; n <= pdf.numPages; n++) {
-    const page = await pdf.getPage(n);
-    const baseViewport = page.getViewport({ scale: 1 });
-    const fitScale = Math.min(EF2_CONTENT_W / baseViewport.width, EF2_CONTENT_H / baseViewport.height);
-    const viewport = page.getViewport({ scale: fitScale * renderScale });
-    const canvas = document.createElement('canvas');
-    canvas.width = viewport.width; canvas.height = viewport.height;
-    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-    const dispW = baseViewport.width * fitScale, dispH = baseViewport.height * fitScale;
-    pages.push({ html: `<div style="display:flex;align-items:center;justify-content:center;width:100%;height:100%"><img src="${canvas.toDataURL('image/png')}" style="width:${dispW}px;height:${dispH}px"></div>` });
+// Rasterizes a self-contained HTML fragment into a PNG data URL at an exact pixel
+// size, via html2canvas — a real DOM renderer (handles tables/RTL/flex layout
+// correctly), not a hand-rolled trick. An SVG <foreignObject>-based approach was
+// tried first specifically to avoid this dependency, but it silently DUPLICATED
+// content whenever the HTML contained a <table> (confirmed via an actual
+// Chromium screenshot) — not an acceptable risk on a legal document.
+async function ef2HtmlToPng(bodyHtml, pxW, pxH) {
+  const container = document.createElement('div');
+  container.style.cssText = `position:fixed;left:-99999px;top:0;width:${pxW}px;height:${pxH}px;box-sizing:border-box;background:#fff;direction:rtl;font-family:'David','Times New Roman',serif;color:#000;overflow:hidden`;
+  container.innerHTML = bodyHtml;
+  document.body.appendChild(container);
+  try {
+    const canvas = await window.html2canvas(container, { width: pxW, height: pxH, backgroundColor: '#ffffff', scale: 1, logging: false });
+    return canvas.toDataURL('image/png');
+  } finally {
+    document.body.removeChild(container);
   }
-  return pages;
 }
 
 // Greedy pagination for a .docx's mammoth-rendered HTML: appends its top-level
-// nodes one at a time into an offscreen A4-content-width box, and whenever the
-// next node would push scrollHeight past the page budget, that node starts a
-// fresh page instead — the only way to get a real, countable page count out of
-// content that has no page concept until it's actually laid out.
+// nodes one at a time into an offscreen box sized to EXACTLY the same pixel
+// dimensions later used to rasterize each resulting page (so wrapping decisions
+// made here match what actually gets drawn), and whenever the next node would
+// push scrollHeight past the page budget, that node starts a fresh page instead.
 async function ef2PaginateDocxHtml(buffer) {
   const result = await window.mammoth.convertToHtml({ arrayBuffer: new Uint8Array(buffer).buffer });
   const measure = document.createElement('div');
-  measure.style.cssText = `position:fixed;left:-9999px;top:0;width:${EF2_CONTENT_W}px;font-family:David,'Times New Roman',serif;font-size:13px;line-height:1.5;direction:rtl;text-align:right`;
+  measure.style.cssText = `position:fixed;left:-99999px;top:0;width:${EF2_HTML_PX_W}px;font-family:David,'Times New Roman',serif;font-size:${ef2Px(12)}px;line-height:1.5;direction:rtl;text-align:right`;
   document.body.appendChild(measure);
   measure.innerHTML = result.value || '<p><i>מסמך ריק</i></p>';
   const nodes = Array.from(measure.childNodes);
@@ -1356,7 +1376,7 @@ async function ef2PaginateDocxHtml(buffer) {
   const pageChunks = [];
   for (const node of nodes) {
     current.appendChild(node);
-    if (current.scrollHeight > EF2_CONTENT_H && current.childNodes.length > 1) {
+    if (current.scrollHeight > EF2_HTML_PX_H && current.childNodes.length > 1) {
       const overflowing = current.removeChild(current.lastChild);
       pageChunks.push(current.innerHTML);
       current = document.createElement('div');
@@ -1366,43 +1386,69 @@ async function ef2PaginateDocxHtml(buffer) {
   }
   if (current.childNodes.length) pageChunks.push(current.innerHTML);
   document.body.removeChild(measure);
-  return pageChunks.map(html => ({ html: `<div style="font-family:David,'Times New Roman',serif;font-size:13px;line-height:1.5;direction:rtl;text-align:right;width:100%;height:100%;overflow:hidden">${html}</div>` }));
+  return pageChunks.map(html => `<div style="font-family:David,'Times New Roman',serif;font-size:${ef2Px(12)}px;line-height:1.5;direction:rtl;text-align:right;width:100%;height:100%;overflow:hidden">${html}</div>`);
 }
 
-function ef2FallbackPage(title, message) {
-  return [{ html: `<div style="text-align:center;padding-top:30%">
-    <div style="font-size:14pt;font-weight:bold;margin-bottom:16px">${efilingEscapeHtml(message)}</div>
-    <div style="font-size:12pt">${efilingEscapeHtml(title)}</div>
-    <div style="font-size:10pt;color:#666;margin-top:16px">הקובץ המקורי עדיין קיים במסמכי התיק</div>
-  </div>` }];
+function ef2FallbackHtml(title, message) {
+  return `<div style="text-align:center;padding-top:30%">
+    <div style="font-size:${ef2Px(14)}px;font-weight:bold;margin-bottom:${ef2Px(12)}px">${efilingEscapeHtml(message)}</div>
+    <div style="font-size:${ef2Px(12)}px">${efilingEscapeHtml(title)}</div>
+    <div style="font-size:${ef2Px(10)}px;color:#666;margin-top:${ef2Px(12)}px">הקובץ המקורי עדיין קיים במסמכי התיק</div>
+  </div>`;
+}
+
+// pdf-lib only embeds PNG/JPEG directly — gif/webp/bmp are re-encoded to PNG via
+// a normal <img>/canvas round-trip first (the browser can decode any format it
+// natively supports; pdf-lib just can't ingest most of them itself).
+async function ef2EmbedImageForPdf(outDoc, buffer, filename) {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  if (/\.jpe?g$/i.test(filename)) return await outDoc.embedJpg(bytes);
+  if (/\.png$/i.test(filename)) return await outDoc.embedPng(bytes);
+  const blobUrl = URL.createObjectURL(new Blob([bytes]));
+  try {
+    const img = new Image();
+    await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = () => reject(new Error('פענוח התמונה נכשל')); img.src = blobUrl; });
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+    canvas.getContext('2d').drawImage(img, 0, 0);
+    return await outDoc.embedPng(ef2DataUrlToBytes(canvas.toDataURL('image/png')));
+  } finally {
+    URL.revokeObjectURL(blobUrl);
+  }
 }
 
 // Dispatches by real file type — mirrors renderPreviewBody()'s own dispatch logic
-// (pdf via pdf.js, .docx via mammoth, real image extensions as-is) so the same
-// files that preview correctly in-app also render correctly into this combined
-// document; anything else (legacy .doc, unrecognized types) gets an honest
-// "no preview" page instead of a broken image tag, since this output gets printed.
-async function ef2RenderItemPages(item) {
+// (pdf, .docx via mammoth, real image extensions) so the same files that preview
+// correctly in-app also render correctly into this document; anything else
+// (legacy .doc, unrecognized types) gets an honest "no preview" page instead of
+// a broken image, since this output is a real file the lawyer will hand someone.
+// Returns one of: {kind:'pdfcopy', doc, count} | {kind:'image', embedded} | {kind:'htmlpages', pages:[html,...]}
+async function ef2BuildItemDescriptor(outDoc, item) {
   const filename = item.origName || item.title || '';
   const title = item.title || filename || 'מסמך';
   try {
     if (item.ext === 'pdf') {
       const { buffer } = await Platform.downloadFileBytes(item.filePath);
-      return await ef2RenderPdfPages(buffer);
+      const srcDoc = await window.PDFLib.PDFDocument.load(buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer));
+      return { kind: 'pdfcopy', doc: srcDoc, count: srcDoc.getPageCount() };
     }
     if (/\.docx$/i.test(filename) && window.mammoth) {
       const { buffer } = await Platform.downloadFileBytes(item.filePath);
-      return await ef2PaginateDocxHtml(buffer);
+      return { kind: 'htmlpages', pages: await ef2PaginateDocxHtml(buffer) };
     }
     if (item.ext === 'img' && ef2RealImageExt(filename)) {
       const { buffer } = await Platform.downloadFileBytes(item.filePath);
-      const dataUrl = ef2BufferToDataUrl(buffer, filename);
-      return [{ html: `<div style="display:flex;align-items:center;justify-content:center;width:100%;height:100%"><img src="${dataUrl}" style="max-width:100%;max-height:100%;object-fit:contain"></div>` }];
+      return { kind: 'image', embedded: await ef2EmbedImageForPdf(outDoc, buffer, filename) };
     }
   } catch (e) {
-    return ef2FallbackPage(title, '⚠ שגיאה בטעינת הקובץ: ' + (e.message || ''));
+    return { kind: 'htmlpages', pages: [ef2FallbackHtml(title, '⚠ שגיאה בטעינת הקובץ: ' + (e.message || ''))] };
   }
-  return ef2FallbackPage(title, 'אין תצוגה מקדימה זמינה לסוג קובץ זה');
+  return { kind: 'htmlpages', pages: [ef2FallbackHtml(title, 'אין תצוגה מקדימה זמינה לסוג קובץ זה')] };
+}
+function ef2PageCountOf(descriptor) {
+  if (descriptor.kind === 'pdfcopy') return descriptor.count;
+  if (descriptor.kind === 'image') return 1;
+  return descriptor.pages.length;
 }
 
 async function downloadEfilingPDF(caseId, bundleId) {
@@ -1413,80 +1459,107 @@ async function downloadEfilingPDF(caseId, bundleId) {
   const mainItems = bundle.items.filter(i => i.role === 'main');
   const attachments = bundle.items.filter(i => i.role === 'nispach');
   if (!attachments.length) { efilingSetStatus('<div class="alert alert-warning">⚠ יש להוסיף נספח אחד לפחות לפני הורדה.</div>'); return; }
+  if (!window.PDFLib) { efilingSetStatus('<div class="alert alert-warning">שגיאה: ספריית ה-PDF לא נטענה. רענן/י את הדף ונסה/י שוב.</div>'); return; }
 
   const numberingOn = !!document.getElementById('ef-pagenum-enable')?.checked;
   const startPage = numberingOn ? (parseInt(document.getElementById('ef-pagenum-start')?.value, 10) || 1) : 1;
 
   efilingSetStatus('<div class="alert alert-info">מכין PDF להורדה — טוען ומעבד את כל הקבצים, זה עשוי לקחת מספר שניות...</div>');
   try {
-    let mainPages = [];
-    for (const item of mainItems) mainPages = mainPages.concat(await ef2RenderItemPages(item));
+    const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
+    const outDoc = await PDFDocument.create();
 
-    const attachmentPageSets = [];
-    for (const item of attachments) attachmentPageSets.push(await ef2RenderItemPages(item));
+    const mainDescriptors = [];
+    for (const item of mainItems) mainDescriptors.push(await ef2BuildItemDescriptor(outDoc, item));
+    const mainPageCount = mainDescriptors.reduce((n, d) => n + ef2PageCountOf(d), 0);
+
+    const attachmentDescriptors = [];
+    for (const item of attachments) attachmentDescriptors.push(await ef2BuildItemDescriptor(outDoc, item));
 
     // Running page counter across the whole document: main doc → TOC (1 page) →
     // per attachment (cover page + its own content) — every page increments it,
-    // exactly mirroring how the reference sample counts pages.
-    let counter = startPage + mainPages.length;
+    // exactly mirroring how the reference sample counts pages. Computed ahead of
+    // actually assembling the PDF so the TOC/cover text can state real ranges.
+    let counter = startPage + mainPageCount;
     counter += 1; // the TOC page itself
     const attachmentRanges = attachments.map((item, i) => {
-      const coverPage = counter;
-      counter += 1;
+      counter += 1; // cover page
       const contentStart = counter;
-      counter += attachmentPageSets[i].length;
-      return { item, coverPage, contentStart, contentEnd: counter - 1 };
+      counter += ef2PageCountOf(attachmentDescriptors[i]);
+      return { item, contentStart, contentEnd: counter - 1 };
     });
 
     const tocRows = attachmentRanges.map((r, i) => `
       <tr>
-        <td style="padding:6px 10px;text-align:center;border-bottom:1px solid #ccc;width:70px">${r.contentStart}</td>
-        <td style="padding:6px 10px;text-align:right;border-bottom:1px solid #ccc">נספח ${i + 1}: ${efilingEscapeHtml(r.item.title || r.item.origName || '')} (עמודים ${r.contentStart} עד ${r.contentEnd})</td>
+        <td style="padding:${ef2Px(5)}px ${ef2Px(8)}px;text-align:center;border-bottom:1px solid #ccc;width:${ef2Px(50)}px">${r.contentStart}</td>
+        <td style="padding:${ef2Px(5)}px ${ef2Px(8)}px;text-align:right;border-bottom:1px solid #ccc">נספח ${i + 1}: ${efilingEscapeHtml(r.item.title || r.item.origName || '')} (עמודים ${r.contentStart} עד ${r.contentEnd})</td>
       </tr>`).join('');
     const tocHtml = `
-      <div style="text-align:center;font-size:20pt;font-weight:bold;margin-bottom:24px">תוכן הנספחים</div>
-      <div style="text-align:center;font-size:13pt;margin-bottom:20px">${efilingEscapeHtml(caseObj.name)}</div>
-      <table style="width:100%;border-collapse:collapse;font-size:12pt">
-        <thead><tr><th style="padding:6px 10px;border-bottom:2px solid #000">עמוד</th><th style="padding:6px 10px;border-bottom:2px solid #000;text-align:right">שם המסמך</th></tr></thead>
+      <div style="text-align:center;font-size:${ef2Px(20)}px;font-weight:bold;margin-bottom:${ef2Px(20)}px">תוכן הנספחים</div>
+      <div style="text-align:center;font-size:${ef2Px(13)}px;margin-bottom:${ef2Px(16)}px">${efilingEscapeHtml(caseObj.name)}</div>
+      <table style="width:100%;border-collapse:collapse;font-size:${ef2Px(12)}px">
+        <thead><tr><th style="padding:${ef2Px(5)}px ${ef2Px(8)}px;border-bottom:2px solid #000">עמוד</th><th style="padding:${ef2Px(5)}px ${ef2Px(8)}px;border-bottom:2px solid #000;text-align:right">שם המסמך</th></tr></thead>
         <tbody>${tocRows}</tbody>
       </table>`;
 
-    const allPageHtml = [];
-    mainPages.forEach(p => allPageHtml.push(p.html));
-    allPageHtml.push(tocHtml);
-    attachmentRanges.forEach((r, i) => {
-      allPageHtml.push(`<div style="text-align:center;padding-top:30%">
-        <div style="font-size:14pt;font-weight:bold;margin-bottom:30px">${efilingEscapeHtml(caseObj.name)}</div>
-        <div style="font-size:30pt;font-weight:bold;margin-bottom:16px">נספח ${i + 1}</div>
-        <div style="font-size:14pt;margin-bottom:10px">${efilingEscapeHtml(r.item.title || r.item.origName || '')}</div>
-        <div style="font-size:11pt;color:#444">(עמודים ${r.contentStart} עד ${r.contentEnd})</div>
+    const helv = await outDoc.embedFont(StandardFonts.Helvetica);
+    let pageCounter = startPage;
+    function drawFooter(page) {
+      if (numberingOn) {
+        const text = String(pageCounter);
+        const textW = helv.widthOfTextAtSize(text, 10);
+        page.drawText(text, { x: (EF2_PT.pageW - textW) / 2, y: EF2_PT.margin / 2, size: 10, font: helv, color: rgb(0.2, 0.2, 0.2) });
+      }
+      pageCounter++;
+    }
+    async function appendHtmlPage(html) {
+      const pngDataUrl = await ef2HtmlToPng(html, EF2_HTML_PX_W, EF2_HTML_PX_H);
+      const embedded = await outDoc.embedPng(ef2DataUrlToBytes(pngDataUrl));
+      const page = outDoc.addPage([EF2_PT.pageW, EF2_PT.pageH]);
+      page.drawImage(embedded, { x: EF2_PT.margin, y: EF2_PT.margin, width: EF2_CONTENT_W_PT, height: EF2_CONTENT_H_PT });
+      drawFooter(page);
+    }
+    function appendImagePage(embedded) {
+      const page = outDoc.addPage([EF2_PT.pageW, EF2_PT.pageH]);
+      const scale = Math.min(EF2_CONTENT_W_PT / embedded.width, EF2_CONTENT_H_PT / embedded.height, 1);
+      const w = embedded.width * scale, h = embedded.height * scale;
+      page.drawImage(embedded, { x: EF2_PT.margin + (EF2_CONTENT_W_PT - w) / 2, y: EF2_PT.margin + (EF2_CONTENT_H_PT - h) / 2, width: w, height: h });
+      drawFooter(page);
+    }
+    async function appendPdfCopyPages(srcDoc) {
+      const copied = await outDoc.copyPages(srcDoc, srcDoc.getPageIndices());
+      for (const p of copied) { outDoc.addPage(p); drawFooter(p); }
+    }
+    async function appendDescriptor(desc) {
+      if (desc.kind === 'pdfcopy') return appendPdfCopyPages(desc.doc);
+      if (desc.kind === 'image') return appendImagePage(desc.embedded);
+      for (const html of desc.pages) await appendHtmlPage(html);
+    }
+
+    for (const d of mainDescriptors) await appendDescriptor(d);
+    await appendHtmlPage(tocHtml);
+    for (let i = 0; i < attachments.length; i++) {
+      const r = attachmentRanges[i];
+      await appendHtmlPage(`<div style="text-align:center;padding-top:30%">
+        <div style="font-size:${ef2Px(16)}px;font-weight:bold;margin-bottom:${ef2Px(30)}px">${efilingEscapeHtml(caseObj.name)}</div>
+        <div style="font-size:${ef2Px(32)}px;font-weight:bold;margin-bottom:${ef2Px(18)}px">נספח ${i + 1}</div>
+        <div style="font-size:${ef2Px(16)}px;margin-bottom:${ef2Px(10)}px">${efilingEscapeHtml(r.item.title || r.item.origName || '')}</div>
+        <div style="font-size:${ef2Px(13)}px;color:#444">(עמודים ${r.contentStart} עד ${r.contentEnd})</div>
       </div>`);
-      attachmentPageSets[i].forEach(p => allPageHtml.push(p.html));
-    });
+      await appendDescriptor(attachmentDescriptors[i]);
+    }
 
-    const pageDivs = allPageHtml.map((html, i) => `
-      <div class="ef2-page">
-        <div class="ef2-page-content">${html}</div>
-        ${numberingOn ? `<div class="ef2-page-footer">${startPage + i}</div>` : ''}
-      </div>`).join('');
-
-    const fullHtml = `<!doctype html><html dir="rtl" lang="he"><head><meta charset="utf-8"><title>${efilingEscapeHtml(bundle.name)}</title>
-      <style>
-        @page{size:A4;margin:0}
-        body{margin:0;font-family:'David','Times New Roman',serif;color:#000}
-        .ef2-page{position:relative;width:${EF2_MM.pageW}mm;height:${EF2_MM.pageH}mm;box-sizing:border-box;padding:${EF2_MM.margin}mm;page-break-after:always;overflow:hidden}
-        .ef2-page:last-child{page-break-after:auto}
-        .ef2-page-content{width:100%;height:100%;overflow:hidden}
-        .ef2-page-footer{position:absolute;bottom:8mm;left:0;right:0;text-align:center;font-size:10pt;color:#333}
-      </style></head><body>${pageDivs}</body></html>`;
-
-    const win = window.open('', '_blank');
-    if (!win) { efilingSetStatus('<div class="alert alert-warning">הדפדפן חסם את חלון ההדפסה — יש לאפשר חלונות קופצים לאתר ולנסות שוב.</div>'); return; }
-    win.document.write(fullHtml);
-    win.document.close();
-    win.focus();
-    setTimeout(() => { try { win.print(); } catch (e) {} }, 400);
-    efilingSetStatus('<div class="alert alert-info">מסמך ה-PDF מוכן — השתמש/י בחלון ההדפסה שנפתח כדי לשמור כ-PDF.</div>');
+    const pdfBytes = await outDoc.save();
+    const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${(bundle.name || 'הגשה').replace(/[\\/:*?"<>|]/g, '_')}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 15000);
+    efilingSetStatus('<div class="alert alert-info">קובץ ה-PDF ירד למחשב ✓</div>');
   } catch (e) {
     efilingSetStatus(`<div class="alert alert-warning">שגיאה בהכנת ה-PDF: ${e.message}</div>`);
   }
