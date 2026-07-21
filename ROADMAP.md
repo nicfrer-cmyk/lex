@@ -30,6 +30,11 @@ Two work sessions, both pushed live:
   - Independent RLS/security re-check: no cross-tenant leak, no RLS recursion, no `auth.users` permission trap in any of this session's new Platform methods (`getViewUrl`/`getShareUrl`/`downloadFileBytes`/`pickFiles`) — every one only ever operates on a `filePath` sourced from the office's own already-loaded data, never user-supplied, with Storage RLS as a second backstop either way.
 - Everything verified in real Chromium via Playwright (not just jsdom) — including at a real 390×844 phone viewport — with `saveDB` stubbed to avoid touching the live Supabase project (no separate dev/staging environment exists for this account).
 
+**Session C — real bug found via user testing, plus "remember me":**
+- **Root-caused why document preview wasn't actually working**: every file uploaded through `Platform.saveFile()`/`tmImportFile()` never had a `contentType` set on the Storage object (`bytesToBlob()` builds a type-less `Blob`, and the `.upload()` call never passed a `contentType` option either) — so Storage had no real MIME type to serve it with, and the browser fell back to downloading it instead of rendering it inline, regardless of the signed URL having no `download` disposition. Fixed by deriving the correct Content-Type from the file extension on every upload (`mimeTypeFor()`).
+  - **This only fixes it going forward.** Files already uploaded before this fix are stuck in Storage with the wrong Content-Type — Storage doesn't let you change that without re-uploading the bytes. Existing documents that don't preview correctly need to be re-uploaded once via each document's "🔄 עדכן גרסה" (update version) — same file, same everything, just re-saved so Storage picks up the correct type this time.
+- **"זכור אותי" (remember me)** on the login screen — opt-in only (checkbox, unchecked by default), layered on top of the existing `persistSession:false` decision rather than reversing it: checking it manually stores the session's refresh token in `localStorage` and restores it via `supabase.auth.setSession()` on the next visit; leaving it unchecked keeps the original behavior (sign in every time) for anyone on a shared/office computer.
+
 ## Status
 
 - [x] `fix15.sql`/`fix16.sql` — run. Push notification tables exist and the

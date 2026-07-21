@@ -12,13 +12,29 @@ window.Buffer = Buffer;
 window.process = window.process || { browser: true, env: {}, version: '' };
 
 // persistSession:false is a deliberate product decision, not the Supabase default:
-// this app holds client debt/legal data, so every fresh open of the app (closing and
-// reopening the tab/PWA, not just a same-tab reload) requires signing in again,
-// instead of silently restoring whatever session was last active on this device.
-// detectSessionInUrl (default true, unaffected by this) still lets the password-reset
-// email link log the user in for that one recovery flow.
+// this app holds client debt/legal data, so signing in requires a password every time
+// by default, instead of silently restoring whatever session was last active on this
+// device. "זכור אותי" (below) is the opt-in escape hatch for a user's own device —
+// persistence stays off unless they explicitly ask for it, rather than flipping the
+// default for everyone. detectSessionInUrl (default true, unaffected by this) still
+// lets the password-reset email link log the user in for that one recovery flow.
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: false } });
 window.supabaseClient = supabase; // used by auth.js for sign in/up/out + session state
+
+// "Remember me" — manual, opt-in persistence layered on top of persistSession:false.
+// Storing a refresh token in localStorage is exactly what Supabase's own
+// persistSession:true does by default for every app that doesn't turn it off; this
+// isn't a new category of risk, just applied only when the user actually asks for it
+// on this specific device rather than unconditionally for everyone.
+const REMEMBER_KEY = 'lextrack-remembered-session';
+function storeRememberedSession(session) {
+  if (session && session.refresh_token) {
+    localStorage.setItem(REMEMBER_KEY, JSON.stringify({ access_token: session.access_token, refresh_token: session.refresh_token }));
+  }
+}
+function clearRememberedSession() {
+  localStorage.removeItem(REMEMBER_KEY);
+}
 
 // docx and pizzip are loaded separately as plain <script> tags (prebuilt UMD bundles,
 // vendor/docx.umd.js and vendor/pizzip.min.js).
@@ -127,6 +143,26 @@ function clearOfficeCache() { _officeCache = null; }
 function bytesToBlob(buffer) {
   return new Blob([buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)]);
 }
+
+// Every upload went through here with no `contentType` — Storage then had no real
+// MIME type to serve the object with, so a signed URL opened for in-app preview
+// (previewDoc()'s <iframe>/<img>) had nothing telling the browser "this is a PDF/
+// image, render it" and fell back to treating it as an opaque download instead, even
+// though the URL had no `download` disposition set. Filename extension alone doesn't
+// fix this — browsers key off the actual Content-Type header.
+function mimeTypeFor(filename) {
+  const ext = (filename || '').split('.').pop().toLowerCase();
+  const map = {
+    pdf: 'application/pdf',
+    doc: 'application/msword',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    xls: 'application/vnd.ms-excel',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    csv: 'text/csv',
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+  };
+  return map[ext] || 'application/octet-stream';
+}
 async function blobToByteArray(blob) {
   const ab = await blob.arrayBuffer();
   return Array.from(new Uint8Array(ab));
@@ -170,10 +206,30 @@ window.Platform = {
       await this.ensureSoloOffice(profile.officeName);
     }
   },
-  async signIn(email, password) {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+  async signIn(email, password, remember) {
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw error;
+    if (remember) storeRememberedSession(data.session);
+    else clearRememberedSession();
     clearOfficeCache();
+  },
+  // Called once at page load, before anything else touches auth state. If a previous
+  // sign-in opted into "זכור אותי" on this device, this restores that session instead
+  // of leaving the user at the login screen; a rejected/expired refresh token just
+  // clears the stale entry and falls through to a normal login prompt.
+  async tryRestoreRememberedSession() {
+    const raw = localStorage.getItem(REMEMBER_KEY);
+    if (!raw) return false;
+    try {
+      const { access_token, refresh_token } = JSON.parse(raw);
+      const { data, error } = await supabase.auth.setSession({ access_token, refresh_token });
+      if (error || !data.session) throw error || new Error('no session');
+      storeRememberedSession(data.session); // setSession may have rotated the refresh token
+      return true;
+    } catch (e) {
+      clearRememberedSession();
+      return false;
+    }
   },
   async signInWithGoogle() {
     // location.href (not just origin+pathname) so a `?invite=token` in the current
@@ -213,6 +269,7 @@ window.Platform = {
   },
   async signOut() {
     await supabase.auth.signOut();
+    clearRememberedSession();
     clearOfficeCache();
   },
   async resetPasswordForEmail(email) {
@@ -393,7 +450,7 @@ window.Platform = {
     // separately (origName in db.docs) and still shown to the user via openFile()'s
     // displayName param, so this is invisible to anyone except at the storage layer.
     const path = `${officeId}/documents/${crypto.randomUUID()}-${toSafeKey(filename)}`;
-    const { error } = await supabase.storage.from(BUCKET).upload(path, bytesToBlob(buffer), { upsert: true });
+    const { error } = await supabase.storage.from(BUCKET).upload(path, bytesToBlob(buffer), { upsert: true, contentType: mimeTypeFor(filename) });
     if (error) throw error;
     return path;
   },
@@ -559,7 +616,7 @@ window.Platform = {
     const { officeId } = await currentOffice();
     await enforceStorageQuota(officeId, buffer.length);
     const path = `${officeId}/templates/${toSafeKey(folderName)}/${toSafeKey(filename)}`;
-    const { error } = await supabase.storage.from(BUCKET).upload(path, bytesToBlob(buffer), { upsert: true });
+    const { error } = await supabase.storage.from(BUCKET).upload(path, bytesToBlob(buffer), { upsert: true, contentType: mimeTypeFor(filename) });
     if (error) throw error;
   },
 

@@ -47,11 +47,13 @@ async function authSignIn(btn) {
   authShowError('');
   const email = document.getElementById('auth-email').value.trim();
   const password = document.getElementById('auth-password').value;
+  const rememberEl = document.getElementById('auth-remember-me');
+  const remember = !!(rememberEl && rememberEl.checked);
   if (!email || !password) { authShowError('נא למלא אימייל וסיסמה'); return; }
   authShowStatus('מתחבר...');
   if (btn) btn.disabled = true;
   try {
-    await Platform.signIn(email, password);
+    await Platform.signIn(email, password, remember);
     authShowStatus('');
     // Left disabled on success — the auth-gate is about to be hidden by showApp()
     // anyway, and re-enabling would just flash the button an instant before that.
@@ -230,3 +232,9 @@ window.supabaseClient.auth.onAuthStateChange((event, session) => {
   if (inPasswordRecovery) return;
   if (session) showApp(); else showAuthGate();
 });
+
+// Registered above first so its listener is already subscribed by the time this
+// resolves — Platform.tryRestoreRememberedSession() calls supabase.auth.setSession()
+// internally, which fires the same onAuthStateChange listener with the restored
+// session, landing the user straight in the app instead of at the login screen.
+Platform.tryRestoreRememberedSession();
