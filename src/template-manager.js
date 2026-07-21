@@ -12,11 +12,11 @@ async function tmRender() {
     if (!folders.length) { wrap.innerHTML = '<div class="empty">עדיין לא יובאו קבצים</div>'; return; }
     wrap.innerHTML = folders.map(f => `
       <div class="legal-section">
-        <div class="legal-section-title">${f.name}</div>
+        <div class="legal-section-title">${escapeHtml(f.name)}</div>
         ${f.files.length ? f.files.map(name => `
           <div class="doc-item">
             <div class="doc-icon doc">${(name.split('.').pop()||'').slice(0,3).toUpperCase()}</div>
-            <div style="flex:1">${name}</div>
+            <div style="flex:1">${escapeHtml(name)}</div>
             <button class="btn btn-sm btn-danger" onclick="tmDeleteFile('${f.name.replace(/'/g,"\\'")}','${name.replace(/'/g,"\\'")}')">מחק</button>
           </div>`).join('') : '<div class="empty">תיקייה ריקה</div>'}
       </div>`).join('');

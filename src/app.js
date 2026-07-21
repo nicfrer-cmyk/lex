@@ -112,6 +112,17 @@ async function saveDB() {
 }
 
 function uid() { return Date.now().toString(36)+Math.random().toString(36).substr(2,5); }
+// Nearly all UI here is built by assigning innerHTML template literals with user-typed
+// fields (case/client/task/note/debtor text, etc.) interpolated directly — with no
+// escaping, a case or client named e.g. `<img src=x onerror=alert(1)>` would silently
+// execute for every other member of the same office who opens that list. Escapes all
+// 5 HTML-significant characters so this is also safe inside `value="${...}"` attributes,
+// not just text nodes.
+function escapeHtml(s) {
+  return String(s==null?'':s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
 function getNextClientNumber() {
   if (!db.counters) db.counters = { nextClientNumber: 1, caseCounters: {} };
   return String(db.counters.nextClientNumber++);
@@ -343,9 +354,9 @@ window.addEventListener('unhandledrejection', (e) => {
 });
 
 function populateSelects() {
-  const co='<option value="">בחר לקוח...</option>'+db.clients.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
-  const cas='<option value="">ללא תיק</option>'+db.cases.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
-  const casReq='<option value="">בחר תיק...</option>'+db.cases.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
+  const co='<option value="">בחר לקוח...</option>'+db.clients.map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+  const cas='<option value="">ללא תיק</option>'+db.cases.map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+  const casReq='<option value="">בחר תיק...</option>'+db.cases.map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
   document.getElementById('case-client').innerHTML=co;
   document.getElementById('task-case').innerHTML=cas;
   document.getElementById('event-case').innerHTML=cas;
@@ -357,7 +368,7 @@ function populateSelects() {
   if(tlc) tlc.innerHTML=cas;
   // tasks filter
   const tf=document.getElementById('tasks-filter');
-  if(tf) tf.innerHTML='<option value="">כל התיקים</option>'+db.cases.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
+  if(tf) tf.innerHTML='<option value="">כל התיקים</option>'+db.cases.map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
 }
 
 function switchFormTab(el,id) {
@@ -596,14 +607,14 @@ function renderCasesTable(cases){
     return `<tr onclick="openCaseDetail('${c.id}')">
       <td>
         <div style="display:flex;align-items:center;gap:6px">
-          <b style="color:var(--navy)">${c.name}</b>
-          ${c.caseSubNumber?`<span style="font-size:10px;color:var(--accent2);background:var(--accent-dim);border-radius:4px;padding:1px 5px;font-weight:700;flex-shrink:0">${c.caseSubNumber}</span>`:''}
+          <b style="color:var(--navy)">${escapeHtml(c.name)}</b>
+          ${c.caseSubNumber?`<span style="font-size:10px;color:var(--accent2);background:var(--accent-dim);border-radius:4px;padding:1px 5px;font-weight:700;flex-shrink:0">${escapeHtml(c.caseSubNumber)}</span>`:''}
         </div>
-        <span style="font-size:11px;color:var(--text3)">${c.number||''} ${c.courtNumber?'| '+c.courtNumber:''}</span>
+        <span style="font-size:11px;color:var(--text3)">${escapeHtml(c.number||'')} ${c.courtNumber?'| '+escapeHtml(c.courtNumber):''}</span>
       </td>
       <td>
-        <div style="color:var(--text2);font-size:12px">${cl?cl.name:'—'}</div>
-        ${c.debtorName?`<div style="font-size:11px;color:var(--text3)">${c.caseType==='general'?'צד':'חייב'}: ${c.debtorName}</div>`:''}
+        <div style="color:var(--text2);font-size:12px">${cl?escapeHtml(cl.name):'—'}</div>
+        ${c.debtorName?`<div style="font-size:11px;color:var(--text3)">${c.caseType==='general'?'צד':'חייב'}: ${escapeHtml(c.debtorName)}</div>`:''}
       </td>
       <td style="color:var(--accent2);font-weight:600">${c.amount?'₪'+c.amount.toLocaleString():'—'}</td>
       <td style="color:var(--text2);font-size:12px">${c.stage}</td>
@@ -631,9 +642,9 @@ function renderCasesBoard(cases){
       const days=daysSinceHE(c.opened);
       return `<div class="kanban-card" onclick="openCaseDetail('${c.id}')">
         <div class="kanban-card-name">
-          ${c.caseSubNumber?`<span style="font-size:10px;color:var(--accent2);font-weight:700;opacity:0.85;margin-left:5px">${c.caseSubNumber}</span>`:''}${c.name}
+          ${c.caseSubNumber?`<span style="font-size:10px;color:var(--accent2);font-weight:700;opacity:0.85;margin-left:5px">${escapeHtml(c.caseSubNumber)}</span>`:''}${escapeHtml(c.name)}
         </div>
-        ${c.debtorName?`<div class="kanban-card-sub">${c.debtorName}</div>`:''}
+        ${c.debtorName?`<div class="kanban-card-sub">${escapeHtml(c.debtorName)}</div>`:''}
         <div class="kanban-card-amount">${c.amount?'₪'+c.amount.toLocaleString():'—'}</div>
         <div class="kanban-card-foot">
           <span class="badge badge-${c.status}" style="font-size:10px;padding:2px 7px">${smap[c.status]||c.status}</span>
@@ -708,13 +719,13 @@ function openCaseDetail(id) {
     <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px">
       <div>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <h2 style="font-size:20px;font-weight:700;color:var(--navy)">${c.name}</h2>
-          ${c.caseSubNumber?`<span style="font-size:13px;color:var(--accent2);background:var(--accent-dim);border:1px solid rgba(37,99,235,0.3);border-radius:6px;padding:2px 9px;font-weight:700">${c.caseSubNumber}</span>`:''}
+          <h2 style="font-size:20px;font-weight:700;color:var(--navy)">${escapeHtml(c.name)}</h2>
+          ${c.caseSubNumber?`<span style="font-size:13px;color:var(--accent2);background:var(--accent-dim);border:1px solid rgba(37,99,235,0.3);border-radius:6px;padding:2px 9px;font-weight:700">${escapeHtml(c.caseSubNumber)}</span>`:''}
         </div>
         <div style="font-size:12px;color:var(--text3);margin-top:4px">
-          ${c.number?'#'+c.number+' · ':''}נפתח ${c.opened||''}
-          ${c.courtNumber?' · ביהמ"ש: '+c.courtNumber:''}
-          ${c.court?' | '+c.court:''}
+          ${c.number?'#'+escapeHtml(c.number)+' · ':''}נפתח ${escapeHtml(c.opened||'')}
+          ${c.courtNumber?' · ביהמ"ש: '+escapeHtml(c.courtNumber):''}
+          ${c.court?' | '+escapeHtml(c.court):''}
         </div>
       </div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px">
@@ -740,18 +751,18 @@ function openCaseDetail(id) {
     <div class="two-col" style="margin-bottom:0">
       ${c.debtorName?`<div class="debtor-card">
         <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px">פרטי חייב</div>
-        <div style="font-weight:600;color:var(--navy);margin-bottom:4px">${c.debtorName} ${c.debtorId?'('+c.debtorId+')':''}</div>
-        ${c.debtorAddress?`<div style="font-size:12px;color:var(--text2)">📍 ${c.debtorAddress}</div>`:''}
-        ${c.debtorPhone?`<div style="font-size:12px;color:var(--text2)">📞 ${c.debtorPhone}</div>`:''}
-        ${c.debtorEmail?`<div style="font-size:12px;color:var(--text2)">✉ ${c.debtorEmail}</div>`:''}
-        ${c.debtDesc?`<div style="font-size:11px;color:var(--text3);margin-top:6px">${c.debtDesc}</div>`:''}
+        <div style="font-weight:600;color:var(--navy);margin-bottom:4px">${escapeHtml(c.debtorName)} ${c.debtorId?'('+escapeHtml(c.debtorId)+')':''}</div>
+        ${c.debtorAddress?`<div style="font-size:12px;color:var(--text2)">📍 ${escapeHtml(c.debtorAddress)}</div>`:''}
+        ${c.debtorPhone?`<div style="font-size:12px;color:var(--text2)">📞 ${escapeHtml(c.debtorPhone)}</div>`:''}
+        ${c.debtorEmail?`<div style="font-size:12px;color:var(--text2)">✉ ${escapeHtml(c.debtorEmail)}</div>`:''}
+        ${c.debtDesc?`<div style="font-size:11px;color:var(--text3);margin-top:6px">${escapeHtml(c.debtDesc)}</div>`:''}
       </div>`:'<div></div>'}
       ${cl?`<div class="debtor-card" style="border-right-color:var(--success)">
         <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px">פרטי לקוח</div>
-        <div style="font-weight:600;color:var(--navy);margin-bottom:4px">${cl.name}</div>
-        ${cl.phone?`<div style="font-size:12px;color:var(--text2)">📞 ${cl.phone}</div>`:''}
-        ${cl.email?`<div style="font-size:12px;color:var(--text2)">✉ ${cl.email}</div>`:''}
-        ${cl.address?`<div style="font-size:12px;color:var(--text2)">📍 ${cl.address}</div>`:''}
+        <div style="font-weight:600;color:var(--navy);margin-bottom:4px">${escapeHtml(cl.name)}</div>
+        ${cl.phone?`<div style="font-size:12px;color:var(--text2)">📞 ${escapeHtml(cl.phone)}</div>`:''}
+        ${cl.email?`<div style="font-size:12px;color:var(--text2)">✉ ${escapeHtml(cl.email)}</div>`:''}
+        ${cl.address?`<div style="font-size:12px;color:var(--text2)">📍 ${escapeHtml(cl.address)}</div>`:''}
       </div>`:'<div></div>'}
     </div>
 
@@ -762,10 +773,10 @@ function openCaseDetail(id) {
         ${c.expensesType?`<span>הוצאות: ${c.expensesType==='client'?'על חשבון הלקוח':c.expensesType==='office'?'על חשבון המשרד':'לא רלוונטי'}</span>`:''}
         ${c.retainer?`<span>מקדמה/ריטיינר: ₪${c.retainer.toLocaleString()}</span>`:''}
       </div>
-      ${c.feeNotes?`<div style="font-size:12px;color:var(--text3);margin-top:8px">${c.feeNotes}</div>`:''}
+      ${c.feeNotes?`<div style="font-size:12px;color:var(--text3);margin-top:8px">${escapeHtml(c.feeNotes)}</div>`:''}
     </div>`:''}
 
-    ${c.notes?`<div class="card"><div class="card-title">הערות</div><div style="font-size:13px;color:var(--text2);line-height:1.7">${c.notes}</div></div>`:''}
+    ${c.notes?`<div class="card"><div class="card-title">הערות</div><div style="font-size:13px;color:var(--text2);line-height:1.7">${escapeHtml(c.notes)}</div></div>`:''}
 
     <!-- Tabs -->
     <div class="card">
@@ -785,7 +796,7 @@ function openCaseDetail(id) {
         ${caseTasks.length?caseTasks.map(t=>`<div class="task-item">
           ${taskCbHtml(t,true)}
           <div class="prio-dot prio-${t.priority||'normal'}"></div>
-          <div style="flex:1"><div class="task-text ${t.done?'done':''}">${t.text}</div>${t.notes?`<div style="font-size:11px;color:var(--text3)">${t.notes}</div>`:''}</div>
+          <div style="flex:1"><div class="task-text ${t.done?'done':''}">${escapeHtml(t.text)}</div>${t.notes?`<div style="font-size:11px;color:var(--text3)">${escapeHtml(t.notes)}</div>`:''}</div>
           <div class="task-meta ${t.priority==='urgent'&&!t.done?'urgent':''}">${t.due||''}</div>
           <button class="btn btn-sm" style="color:var(--danger);border:none;padding:2px 6px;font-size:12px" onclick="delTask('${t.id}',true)">✕</button>
         </div>`).join(''):'<div class="empty" style="padding:16px">אין משימות</div>'}
@@ -799,7 +810,7 @@ function openCaseDetail(id) {
             <div style="font-size:13px;font-weight:700;color:var(--accent2)">${(e.date||'').split('-')[2]||''}</div>
             <div style="font-size:9px;color:var(--text3)">${monthHE((e.date||'').split('-')[1])}</div>
           </div>
-          <div style="flex:1"><div style="font-weight:500;color:var(--navy)">${e.title}</div><div style="font-size:11px;color:var(--text3)">${e.type||''} ${e.location?'| '+e.location:''} ${e.time?'| '+e.time:''}</div>${e.notes?`<div style="font-size:11px;color:var(--text3)">${e.notes}</div>`:''}</div>
+          <div style="flex:1"><div style="font-weight:500;color:var(--navy)">${escapeHtml(e.title)}</div><div style="font-size:11px;color:var(--text3)">${escapeHtml(e.type||'')} ${e.location?'| '+escapeHtml(e.location):''} ${e.time?'| '+escapeHtml(e.time):''}</div>${e.notes?`<div style="font-size:11px;color:var(--text3)">${escapeHtml(e.notes)}</div>`:''}</div>
           <button class="btn btn-sm" style="color:var(--danger);border:none;padding:2px 6px" onclick="delEvent('${e.id}',true)">✕</button>
         </div>`).join(''):'<div class="empty" style="padding:16px">אין דיונים</div>'}
       </div>
@@ -829,9 +840,9 @@ function openCaseDetail(id) {
       <div id="ct-payments" style="display:none">
         <button class="btn btn-sm" style="margin-bottom:10px" onclick="addPaymentForCase('${id}')">+ תשלום</button>
         ${casePayments.length?casePayments.map(p=>`<div class="fin-row">
-          <div><div style="font-weight:500;color:var(--navy)">₪${p.amount.toLocaleString()}</div><div style="font-size:11px;color:var(--text3)">${p.type==='debt'?'גבייה':p.type==='retainer'?'מקדמה':'הוצאה'} | ${p.method||''}</div></div>
+          <div><div style="font-weight:500;color:var(--navy)">₪${p.amount.toLocaleString()}</div><div style="font-size:11px;color:var(--text3)">${p.type==='debt'?'גבייה':p.type==='retainer'?'מקדמה':'הוצאה'} | ${escapeHtml(p.method||'')}</div></div>
           <div style="display:flex;align-items:center;gap:6px">
-            <div style="text-align:left"><div style="font-size:12px;color:var(--text2)">${p.date||''}</div><div style="font-size:11px;color:var(--text3)">${p.note||''}</div></div>
+            <div style="text-align:left"><div style="font-size:12px;color:var(--text2)">${p.date||''}</div><div style="font-size:11px;color:var(--text3)">${escapeHtml(p.note||'')}</div></div>
             <button class="btn btn-sm" onclick="editPayment('${p.id}')">✏</button>
             <button class="btn btn-sm" style="color:var(--danger);border:none;padding:2px 6px" onclick="delPayment('${p.id}')">✕</button>
           </div>
@@ -853,7 +864,7 @@ function openCaseDetail(id) {
               <button class="btn btn-sm" style="padding:1px 6px;font-size:11px;color:var(--danger);border:none" onclick="delDiary('${id}',${idx})">✕</button>
             </div>
           </div>
-          <div style="font-size:13px;color:var(--text2);line-height:1.6;white-space:pre-wrap">${e.text}</div>
+          <div style="font-size:13px;color:var(--text2);line-height:1.6;white-space:pre-wrap">${escapeHtml(e.text)}</div>
         </div>`).join('') || '<div class="empty" style="padding:16px">אין רישומים</div>'}
       </div>
 
@@ -865,7 +876,7 @@ function openCaseDetail(id) {
         </div>
         ${caseTime.length?caseTime.map(t=>`<div class="fin-row">
           <div>
-            <div style="font-weight:500;color:var(--navy)">${t.description||'—'}</div>
+            <div style="font-weight:500;color:var(--navy)">${escapeHtml(t.description||'—')}</div>
             <div style="font-size:11px;color:var(--text3)">${formatDuration(t.duration)} | ${t.date||''}</div>
           </div>
           <button class="btn btn-sm" style="color:var(--danger);border:none;padding:2px 6px" onclick="delTimeEntry('${t.id}')">✕</button>
@@ -1097,7 +1108,7 @@ function efilingItemsHtml(caseId, bundleId, items) {
       <div style="width:38px;height:38px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;background:${isMain ? 'var(--accent-dim)' : 'var(--bg4)'};color:${isMain ? 'var(--accent2)' : 'var(--text2)'}">${badge}</div>
       <div class="doc-icon ${it.ext || 'doc'}">${(it.ext || '').toUpperCase()}</div>
       <div style="flex:1;min-width:0">
-        <div style="font-size:13px;font-weight:500;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${title.replace(/"/g,'&quot;')}">${title}</div>
+        <div style="font-size:13px;font-weight:500;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(title)}">${escapeHtml(title)}</div>
         <div style="font-size:11px;color:var(--text3)">${isMain ? 'מסמך ראשי' : 'נספח ' + nCount}</div>
       </div>
       <div style="display:flex;gap:3px;flex-shrink:0">
@@ -1121,7 +1132,7 @@ function efilingSourceDocsHtml(caseId, bundleId, allDocs, bundleItems) {
   return available.map(d => `<div class="doc-item" style="min-width:0">
     <div class="doc-icon ${d.ext || 'doc'}">${(d.ext || '').toUpperCase()}</div>
     <div style="flex:1;min-width:0">
-      <div style="font-size:13px;font-weight:500;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(d.name||'').replace(/"/g,'&quot;')}">${d.name}</div>
+      <div style="font-size:13px;font-weight:500;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(d.name||'')}">${escapeHtml(d.name||'')}</div>
       <div style="font-size:11px;color:var(--text3)">${d.date || ''}</div>
     </div>
     <button class="btn btn-sm btn-primary" onclick="addExistingDocToEfiling('${caseId}','${bundleId}','${d.id}')">+ הוסף</button>
@@ -1139,7 +1150,7 @@ function efilingTabHtml(caseId, allCaseDocs) {
       <div class="doc-item" style="cursor:pointer;min-width:0" onclick="openEfilingEditor('${caseId}','${b.id}')">
         <div class="doc-icon doc">📑</div>
         <div style="flex:1;min-width:0">
-          <div style="font-size:13px;font-weight:500;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(b.name||'').replace(/</g,'&lt;')}</div>
+          <div style="font-size:13px;font-weight:500;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(b.name||'')}</div>
           <div style="font-size:11px;color:var(--text3)">${b.items.length} מסמכים ${b.preparedAt ? '· נשמר למסמכי התיק ב-' + new Date(b.preparedAt).toLocaleDateString('he-IL') : '· טיוטה, טרם נשמר למסמכי התיק'}</div>
         </div>
         <button class="btn btn-sm" style="color:var(--danger)" onclick="event.stopPropagation();deleteEfilingBundle('${caseId}','${b.id}')">🗑</button>
@@ -1154,7 +1165,7 @@ function efilingTabHtml(caseId, allCaseDocs) {
   return `
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
       <button class="btn btn-sm" onclick="closeEfilingEditor('${caseId}')">→ חזרה לרשימת ההגשות</button>
-      <input class="form-input" style="flex:1;font-weight:600" value="${(editing.name||'').replace(/"/g,'&quot;')}" onchange="renameEfilingBundle('${caseId}','${editing.id}',this.value)" placeholder="שם ההגשה">
+      <input class="form-input" style="flex:1;font-weight:600" value="${escapeHtml(editing.name||'')}" onchange="renameEfilingBundle('${caseId}','${editing.id}',this.value)" placeholder="שם ההגשה">
     </div>
     <div class="alert alert-info">סמן כל מסמך כ"מסמך ראשי" או כ"נספח" וסדר את הנספחים לפי הסדר הרצוי. כל נספח נשאר קובץ נפרד (לא מאוחדים לקובץ אחד), כנדרש להגשה בנט המשפט.</div>
     <div class="two-col" style="align-items:start">
@@ -1231,7 +1242,9 @@ function efilingSetStatus(html) {
 // easy to miss entirely if you weren't looking right at it — which is almost
 // certainly why it could look like clicking the button "did nothing." Validation
 // failures now also render as a persistent inline message that stays on screen.
+let efilingActionBusy = false;
 async function commitEfilingToDocuments(caseId, bundleId) {
+  if (efilingActionBusy) return;
   const bundle = findEfilingBundle(caseId, bundleId);
   if (!bundle) return;
   const caseObj = db.cases.find(x => x.id === caseId);
@@ -1241,6 +1254,7 @@ async function commitEfilingToDocuments(caseId, bundleId) {
   const attachments = bundle.items.filter(i => i.role === 'nispach');
   if (!mainItems.length) { efilingSetStatus('<div class="alert alert-warning">⚠ יש לסמן מסמך ראשי אחד לפחות (כפתור 🔀 ליד אחד המסמכים).</div>'); return; }
   if (!attachments.length) { efilingSetStatus('<div class="alert alert-warning">⚠ יש להוסיף נספח אחד לפחות (כפתור 🔀 ליד אחד המסמכים).</div>'); return; }
+  efilingActionBusy = true;
   efilingSetStatus('<div class="alert alert-info">שומר למסמכי התיק...</div>');
   // Re-committing (e.g. after adding one more attachment) previously left every
   // earlier run's cover/TOC docx files sitting in the docs list alongside the new,
@@ -1291,6 +1305,8 @@ async function commitEfilingToDocuments(caseId, bundleId) {
     if (currentPanel === 'case-detail') refreshEfilingTab(caseId);
   } catch (e) {
     efilingSetStatus(`<div class="alert alert-warning">שגיאה בשמירה למסמכי התיק: ${e.message}</div>`);
+  } finally {
+    efilingActionBusy = false;
   }
 }
 
@@ -1470,6 +1486,7 @@ function ef2PageCountOf(descriptor) {
 }
 
 async function downloadEfilingPDF(caseId, bundleId) {
+  if (efilingActionBusy) return;
   const bundle = findEfilingBundle(caseId, bundleId);
   if (!bundle) return;
   const caseObj = db.cases.find(x => x.id === caseId);
@@ -1482,6 +1499,7 @@ async function downloadEfilingPDF(caseId, bundleId) {
   const numberingOn = !!document.getElementById('ef-pagenum-enable')?.checked;
   const startPage = numberingOn ? (parseInt(document.getElementById('ef-pagenum-start')?.value, 10) || 1) : 1;
 
+  efilingActionBusy = true;
   efilingSetStatus('<div class="alert alert-info">מכין PDF להורדה — טוען ומעבד את כל הקבצים, זה עשוי לקחת מספר שניות...</div>');
   try {
     const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
@@ -1580,6 +1598,8 @@ async function downloadEfilingPDF(caseId, bundleId) {
     efilingSetStatus('<div class="alert alert-info">קובץ ה-PDF ירד למחשב ✓</div>');
   } catch (e) {
     efilingSetStatus(`<div class="alert alert-warning">שגיאה בהכנת ה-PDF: ${e.message}</div>`);
+  } finally {
+    efilingActionBusy = false;
   }
 }
 
@@ -1646,11 +1666,11 @@ function generateLegalDoc(type) {
     document.getElementById('legal-gen-title').textContent = 'הסכם שכ"ט – ' + c.name;
     document.getElementById('legal-gen-body').innerHTML = `
       <div class="form-row">
-        <div class="form-group"><label class="form-label">שם הלקוח</label><input class="form-input" id="lg-client-name" value="${cl.name||''}"></div>
-        <div class="form-group"><label class="form-label">ת.ז / ח.פ</label><input class="form-input" id="lg-client-id" value="${cl.idNum||''}"></div>
+        <div class="form-group"><label class="form-label">שם הלקוח</label><input class="form-input" id="lg-client-name" value="${escapeHtml(cl.name||'')}"></div>
+        <div class="form-group"><label class="form-label">ת.ז / ח.פ</label><input class="form-input" id="lg-client-id" value="${escapeHtml(cl.idNum||'')}"></div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label class="form-label">נושא התיק</label><input class="form-input" id="lg-matter" value="${c.name||''}"></div>
+        <div class="form-group"><label class="form-label">נושא התיק</label><input class="form-input" id="lg-matter" value="${escapeHtml(c.name||'')}"></div>
         <div class="form-group"><label class="form-label">אחוז גבייה (%)</label><input class="form-input" type="number" id="lg-fee-pct" value="${c.feePct||15}"></div>
       </div>
     `;
@@ -1659,20 +1679,24 @@ function generateLegalDoc(type) {
     document.getElementById('legal-gen-title').textContent = 'ייפוי כוח – ' + c.name;
     document.getElementById('legal-gen-body').innerHTML = `
       <div class="form-row">
-        <div class="form-group"><label class="form-label">שם הממנה</label><input class="form-input" id="poa-grantor-name" value="${cl.name||''}"></div>
-        <div class="form-group"><label class="form-label">ת.ז / ח.פ</label><input class="form-input" id="poa-grantor-id" value="${cl.idNum||''}"></div>
+        <div class="form-group"><label class="form-label">שם הממנה</label><input class="form-input" id="poa-grantor-name" value="${escapeHtml(cl.name||'')}"></div>
+        <div class="form-group"><label class="form-label">ת.ז / ח.פ</label><input class="form-input" id="poa-grantor-id" value="${escapeHtml(cl.idNum||'')}"></div>
       </div>
       <div class="form-group"><label class="form-label">נושא</label>
-        <input class="form-input" id="poa-matter" value="${c.caseType!=='general'&&c.debtorName?'גביית חוב מ'+c.debtorName:c.name||''}">
+        <input class="form-input" id="poa-matter" value="${escapeHtml(c.caseType!=='general'&&c.debtorName?'גביית חוב מ'+c.debtorName:c.name||'')}">
       </div>
     `;
     openModal('modal-legal-gen');
   }
 }
 
+let legalDocBusy=false;
 async function downloadLegalDoc() {
+  if(legalDocBusy) return;
   const c = db.cases.find(x=>x.id===currentCaseId);
   if(!c) return;
+  legalDocBusy=true;
+  try {
   if(currentLegalDocType==='attorney-fee') {
     const fields = {
       clientName: document.getElementById('lg-client-name').value,
@@ -1690,6 +1714,9 @@ async function downloadLegalDoc() {
     };
     if (!fields.grantorName.trim() && !await customConfirm('שם מייפה הכוח ריק במסמך. ליצור בכל זאת?')) return;
     await buildWithTemplate('poa', fields, c);
+  }
+  } finally {
+    legalDocBusy=false;
   }
 }
 
@@ -1762,7 +1789,11 @@ async function buildWithTemplate(type, data, caseObj) {
     closeModal('modal-legal-gen');
     notify('המסמך נשמר! פותח...');
     await Platform.openFile(filePath, filename);
-    if (currentPanel === 'case-detail') reopenCaseDetailKeepingTab(currentCaseId);
+    // Only refresh if the user is still looking at the case this doc was generated for —
+    // they may have navigated to a different case while fillLegalTemplate/openFile (real
+    // file I/O) were still in flight; forcing a refresh (or worse, forcing navigation back
+    // to caseObj) would yank them away from whatever they're doing now.
+    if (currentPanel === 'case-detail' && caseObj && currentCaseId === caseObj.id) reopenCaseDetailKeepingTab(caseObj.id);
   } catch(e) {
     notify('שגיאה: ' + e.message);
     console.error(e);
@@ -1819,16 +1850,16 @@ function renderClients(filter='') {
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
       <div class="client-avatar" style="background:${c.color};color:${c.textColor};margin-bottom:0">${c.initials}</div>
       <div style="flex:1;min-width:0">
-        ${c.clientNumber?`<div style="font-size:10px;color:var(--accent2);font-weight:700;letter-spacing:0.04em">מספר לקוח: ${c.clientNumber}</div>`:''}
-        <div style="font-weight:600;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.name}</div>
-        <div style="font-size:11px;color:var(--text3)">${c.type}${c.idNum?' · '+c.idNum:''}</div>
+        ${c.clientNumber?`<div style="font-size:10px;color:var(--accent2);font-weight:700;letter-spacing:0.04em">מספר לקוח: ${escapeHtml(c.clientNumber)}</div>`:''}
+        <div style="font-weight:600;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(c.name)}</div>
+        <div style="font-size:11px;color:var(--text3)">${escapeHtml(c.type)}${c.idNum?' · '+escapeHtml(c.idNum):''}</div>
       </div>
     </div>
-    ${c.phone?`<div style="font-size:12px;color:var(--text2);margin-bottom:2px">📞 ${c.phone}</div>`:''}
-    ${c.email?`<div style="font-size:12px;color:var(--text2);margin-bottom:2px">✉ ${c.email}</div>`:''}
-    ${c.address?`<div style="font-size:11px;color:var(--text3);margin-bottom:4px">📍 ${c.address}</div>`:''}
-    ${c.contact?`<div style="font-size:11px;color:var(--text3)">איש קשר: ${c.contact} ${c.contactPhone?'| '+c.contactPhone:''}</div>`:''}
-    ${c.notes?`<div style="font-size:11px;color:var(--text3);margin-top:4px;padding-top:4px;border-top:1px solid var(--border)">${c.notes}</div>`:''}
+    ${c.phone?`<div style="font-size:12px;color:var(--text2);margin-bottom:2px">📞 ${escapeHtml(c.phone)}</div>`:''}
+    ${c.email?`<div style="font-size:12px;color:var(--text2);margin-bottom:2px">✉ ${escapeHtml(c.email)}</div>`:''}
+    ${c.address?`<div style="font-size:11px;color:var(--text3);margin-bottom:4px">📍 ${escapeHtml(c.address)}</div>`:''}
+    ${c.contact?`<div style="font-size:11px;color:var(--text3)">איש קשר: ${escapeHtml(c.contact)} ${c.contactPhone?'| '+escapeHtml(c.contactPhone):''}</div>`:''}
+    ${c.notes?`<div style="font-size:11px;color:var(--text3);margin-top:4px;padding-top:4px;border-top:1px solid var(--border)">${escapeHtml(c.notes)}</div>`:''}
     <div style="display:flex;align-items:center;margin-top:10px;gap:6px">
       <span class="badge badge-active">${db.cases.filter(x=>x.client===c.id&&x.status!=='closed').length} תיקים פעילים</span>
       <button class="btn btn-sm" style="margin-right:auto;font-size:11px" onclick="event.stopPropagation();editClient('${c.id}')">עריכה</button>
@@ -1886,12 +1917,12 @@ function openClientDetail(id) {
   document.getElementById('client-detail-body').innerHTML=`
     <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px">
       <div class="client-avatar" style="background:${cl.color||'rgba(37,99,235,0.15)'};color:${cl.textColor||'var(--accent2)'};width:56px;height:56px;font-size:18px;margin-bottom:0">
-        ${cl.initials||cl.name.substring(0,2).toUpperCase()}
+        ${escapeHtml(cl.initials||cl.name.substring(0,2).toUpperCase())}
       </div>
       <div>
-        <h2 style="font-size:20px;font-weight:700;color:var(--navy);margin-bottom:3px">${cl.name}</h2>
+        <h2 style="font-size:20px;font-weight:700;color:var(--navy);margin-bottom:3px">${escapeHtml(cl.name)}</h2>
         <div style="font-size:12px;color:var(--text3)">
-          ${cl.clientNumber?`<span style="color:var(--accent2);font-weight:700">מספר לקוח: ${cl.clientNumber}</span> · `:''}${cl.type}${cl.idNum?' · ת.ז/ח.פ: '+cl.idNum:''}
+          ${cl.clientNumber?`<span style="color:var(--accent2);font-weight:700">מספר לקוח: ${escapeHtml(cl.clientNumber)}</span> · `:''}${escapeHtml(cl.type)}${cl.idNum?' · ת.ז/ח.פ: '+escapeHtml(cl.idNum):''}
         </div>
       </div>
     </div>
@@ -1906,16 +1937,16 @@ function openClientDetail(id) {
       <div class="card-title">פרטי קשר</div>
       <div class="two-col">
         <div>
-          ${cl.phone?`<div style="font-size:13px;color:var(--text2);margin-bottom:6px">📞 ${cl.phone}</div>`:''}
-          ${cl.email?`<div style="font-size:13px;color:var(--text2);margin-bottom:6px">✉ ${cl.email}</div>`:''}
-          ${cl.address?`<div style="font-size:13px;color:var(--text2);margin-bottom:6px">📍 ${cl.address}</div>`:''}
+          ${cl.phone?`<div style="font-size:13px;color:var(--text2);margin-bottom:6px">📞 ${escapeHtml(cl.phone)}</div>`:''}
+          ${cl.email?`<div style="font-size:13px;color:var(--text2);margin-bottom:6px">✉ ${escapeHtml(cl.email)}</div>`:''}
+          ${cl.address?`<div style="font-size:13px;color:var(--text2);margin-bottom:6px">📍 ${escapeHtml(cl.address)}</div>`:''}
         </div>
         <div>
-          ${cl.contact?`<div style="font-size:13px;color:var(--text2);margin-bottom:6px">איש קשר: ${cl.contact}</div>`:''}
-          ${cl.contactPhone?`<div style="font-size:13px;color:var(--text2);margin-bottom:6px">📞 ${cl.contactPhone}</div>`:''}
+          ${cl.contact?`<div style="font-size:13px;color:var(--text2);margin-bottom:6px">איש קשר: ${escapeHtml(cl.contact)}</div>`:''}
+          ${cl.contactPhone?`<div style="font-size:13px;color:var(--text2);margin-bottom:6px">📞 ${escapeHtml(cl.contactPhone)}</div>`:''}
         </div>
       </div>
-      ${cl.notes?`<div style="font-size:13px;color:var(--text2);margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">${cl.notes}</div>`:''}
+      ${cl.notes?`<div style="font-size:13px;color:var(--text2);margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">${escapeHtml(cl.notes)}</div>`:''}
     </div>
 
     <div class="card" style="margin-bottom:16px">
@@ -1924,10 +1955,10 @@ function openClientDetail(id) {
         ${clientCases.map(c=>`<tr onclick="openCaseDetail('${c.id}')">
           <td>
             <div style="display:flex;align-items:center;gap:6px">
-              ${c.caseSubNumber?`<span style="font-size:10px;color:var(--accent2);font-weight:700;flex-shrink:0">${c.caseSubNumber}</span>`:''}
-              <b style="color:var(--navy)">${c.name}</b>
+              ${c.caseSubNumber?`<span style="font-size:10px;color:var(--accent2);font-weight:700;flex-shrink:0">${escapeHtml(c.caseSubNumber)}</span>`:''}
+              <b style="color:var(--navy)">${escapeHtml(c.name)}</b>
             </div>
-            ${c.number?`<span style="font-size:11px;color:var(--text3)">#${c.number}</span>`:''}
+            ${c.number?`<span style="font-size:11px;color:var(--text3)">#${escapeHtml(c.number)}</span>`:''}
           </td>
           <td style="color:var(--accent2);font-weight:600">${c.amount?'₪'+c.amount.toLocaleString():'—'}</td>
           <td style="font-size:12px;color:var(--text2)">${c.stage}</td>
@@ -1943,12 +1974,12 @@ function openClientDetail(id) {
         return `<div class="fin-row">
           <div>
             <div style="font-weight:500;color:var(--navy)">₪${p.amount.toLocaleString()}</div>
-            <div style="font-size:11px;color:var(--text3)">${p.type==='debt'?'גבייה':p.type==='retainer'?'מקדמה':'הוצאה'} | ${p.method||''}</div>
-            ${pc?`<div style="font-size:11px;color:var(--accent2)">${pc.name}</div>`:''}
+            <div style="font-size:11px;color:var(--text3)">${p.type==='debt'?'גבייה':p.type==='retainer'?'מקדמה':'הוצאה'} | ${escapeHtml(p.method||'')}</div>
+            ${pc?`<div style="font-size:11px;color:var(--accent2)">${escapeHtml(pc.name)}</div>`:''}
           </div>
           <div style="text-align:left">
             <div style="font-size:12px;color:var(--text2)">${p.date||''}</div>
-            ${p.note?`<div style="font-size:11px;color:var(--text3)">${p.note}</div>`:''}
+            ${p.note?`<div style="font-size:11px;color:var(--text3)">${escapeHtml(p.note)}</div>`:''}
           </div>
         </div>`;
       }).join('')+'<div class="fin-row" style="margin-top:8px"><b style="color:var(--text2)">סה"כ גבוי</b><b style="color:var(--success)">₪'+totalCollected.toLocaleString()+'</b></div>':'<div class="empty" style="padding:16px">אין תשלומים</div>'}
@@ -1964,9 +1995,9 @@ function openClientDetail(id) {
             <div style="font-size:9px;color:var(--text3)">${monthHE((e.date||'').split('-')[1])}</div>
           </div>
           <div style="flex:1">
-            <div style="font-weight:500;color:var(--navy)">${e.title}</div>
-            <div style="font-size:11px;color:var(--text3)">${e.type||''} ${e.location?'| '+e.location:''} ${e.time?'| '+e.time:''}</div>
-            ${ec?`<div style="font-size:11px;color:var(--accent2);cursor:pointer" onclick="openCaseDetail('${ec.id}')">${ec.name}</div>`:''}
+            <div style="font-weight:500;color:var(--navy)">${escapeHtml(e.title)}</div>
+            <div style="font-size:11px;color:var(--text3)">${escapeHtml(e.type||'')} ${e.location?'| '+escapeHtml(e.location):''} ${e.time?'| '+escapeHtml(e.time):''}</div>
+            ${ec?`<div style="font-size:11px;color:var(--accent2);cursor:pointer" onclick="openCaseDetail('${ec.id}')">${escapeHtml(ec.name)}</div>`:''}
           </div>
         </div>`;
       }).join(''):'<div class="empty" style="padding:16px">אין אירועים</div>'}
@@ -2023,9 +2054,9 @@ function renderTasks(){
       ${taskCbHtml(t)}
       <div class="prio-dot prio-${t.priority||'normal'}"></div>
       <div style="flex:1">
-        <div class="task-text ${t.done?'done':''}">${t.text}</div>
-        ${c?`<div style="font-size:11px;color:var(--text3)">${c.name}</div>`:''}
-        ${t.notes&&!t.done?`<div style="font-size:11px;color:var(--text3)">${t.notes}</div>`:''}
+        <div class="task-text ${t.done?'done':''}">${escapeHtml(t.text)}</div>
+        ${c?`<div style="font-size:11px;color:var(--text3)">${escapeHtml(c.name)}</div>`:''}
+        ${t.notes&&!t.done?`<div style="font-size:11px;color:var(--text3)">${escapeHtml(t.notes)}</div>`:''}
       </div>
       ${t.due?`<div class="task-meta ${(ov||t.priority==='urgent')&&!t.done?'urgent':''}">${t.due}</div>`:''}
       <button class="btn btn-sm" style="color:var(--danger);border:none;padding:2px 6px;font-size:12px" onclick="delTask('${t.id}')">✕</button>
@@ -2073,9 +2104,9 @@ function eventRow(e) {
       <div style="font-size:9px;color:var(--text3)">${monthHE((e.date||'').split('-')[1])}</div>
     </div>
     <div style="flex:1">
-      <div style="font-weight:500;color:var(--navy)">${e.title}</div>
-      <div style="font-size:11px;color:var(--text3)">${e.type||''} ${e.location?'| '+e.location:''} ${e.time?'| '+e.time:''}</div>
-      ${c?`<div style="font-size:11px;color:var(--accent2);cursor:pointer;display:flex;align-items:center;gap:5px" onclick="openCaseDetail('${c.id}')">${c.name}${c.caseSubNumber?`<span style="font-size:10px;background:var(--accent-dim);border-radius:4px;padding:1px 5px;font-weight:700">${c.caseSubNumber}</span>`:''}</div>`:''}
+      <div style="font-weight:500;color:var(--navy)">${escapeHtml(e.title)}</div>
+      <div style="font-size:11px;color:var(--text3)">${escapeHtml(e.type||'')} ${e.location?'| '+escapeHtml(e.location):''} ${e.time?'| '+escapeHtml(e.time):''}</div>
+      ${c?`<div style="font-size:11px;color:var(--accent2);cursor:pointer;display:flex;align-items:center;gap:5px" onclick="openCaseDetail('${c.id}')">${escapeHtml(c.name)}${c.caseSubNumber?`<span style="font-size:10px;background:var(--accent-dim);border-radius:4px;padding:1px 5px;font-weight:700">${escapeHtml(c.caseSubNumber)}</span>`:''}</div>`:''}
     </div>
     <button class="btn btn-sm" style="color:var(--danger);border:none;padding:2px 6px" onclick="delEvent('${e.id}')">✕</button>
   </div>`;
@@ -2201,7 +2232,7 @@ function renderFinance(){
     const cPay=db.payments.filter(p=>p.caseId===c.id&&p.type==='debt').reduce((s,p)=>s+p.amount,0);
     const pct=c.amount?Math.round(cPay/c.amount*100):0;
     return `<div class="fin-row" onclick="openCaseDetail('${c.id}')" style="cursor:pointer">
-      <div><div style="font-weight:500;color:var(--navy);font-size:13px">${c.name}</div>
+      <div><div style="font-weight:500;color:var(--navy);font-size:13px">${escapeHtml(c.name)}</div>
         <div style="font-size:11px;color:var(--text3)">חוב: ₪${(c.amount||0).toLocaleString()} | שכ"ט: ${feeTypeLabel(c)}</div>
         <div class="progress-wrap" style="margin-top:4px;width:120px"><div class="progress-fill" style="width:${Math.min(pct,100)}%"></div></div>
       </div>
@@ -2218,11 +2249,11 @@ function renderFinance(){
     const typeMap={debt:'גבייה',retainer:'מקדמה',expense:'הוצאה'};
     return `<div class="fin-row">
       <div><div style="font-weight:600;color:${p.type==='expense'?'var(--danger)':'var(--success)'}">₪${p.amount.toLocaleString()}</div>
-        <div style="font-size:11px;color:var(--text3)">${typeMap[p.type]||p.type} | ${p.method||''}</div>
-        ${c?`<div style="font-size:11px;color:var(--text3)">${c.name}</div>`:''}
+        <div style="font-size:11px;color:var(--text3)">${escapeHtml(typeMap[p.type]||p.type)} | ${escapeHtml(p.method||'')}</div>
+        ${c?`<div style="font-size:11px;color:var(--text3)">${escapeHtml(c.name)}</div>`:''}
       </div>
       <div style="display:flex;align-items:center;gap:6px">
-        <div style="text-align:left"><div style="font-size:12px;color:var(--text2)">${p.date||''}</div><div style="font-size:11px;color:var(--text3)">${p.note||''}</div></div>
+        <div style="text-align:left"><div style="font-size:12px;color:var(--text2)">${p.date||''}</div><div style="font-size:11px;color:var(--text3)">${escapeHtml(p.note||'')}</div></div>
         <button class="btn btn-sm" onclick="editPayment('${p.id}')">✏</button>
         <button class="btn btn-sm" style="color:var(--danger);border:none;padding:2px 6px" onclick="delPayment('${p.id}')">✕</button>
       </div>
@@ -2238,7 +2269,7 @@ function renderFinance(){
     const smap={active:'פעיל',urgent:'דחוף',pending:'ממתין',closed:'סגור'};
     return `<div class="fin-row" onclick="openCaseDetail('${c.id}')" style="cursor:pointer">
       <div style="flex:2;min-width:0">
-        <div style="font-weight:500;color:var(--navy);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.name}</div>
+        <div style="font-weight:500;color:var(--navy);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(c.name)}</div>
         <div style="font-size:11px;color:var(--text3)">${smap[c.status]||c.status} | ${feeTypeLabel(c)}</div>
       </div>
       <div style="flex:1;text-align:left">
@@ -2411,15 +2442,19 @@ async function pickFile(){
 
 function getExt(name){const e=(name||'').split('.').pop().toLowerCase();if(e==='pdf')return 'pdf';if(['doc','docx'].includes(e))return 'doc';if(['xls','xlsx','csv'].includes(e))return 'xls';return 'img';}
 
+let docSaveBusy=false;
 async function saveDoc(){
+  if(docSaveBusy) return;
   const name=document.getElementById('doc-name').value.trim();
   if(!name){notify('נא להזין שם מסמך');return;}
+  docSaveBusy=true;
   let filePath=null;
   try {
     if(selectedFile) filePath=await Platform.saveFile({buffer:selectedFile.buffer,filename:selectedFile.filename});
-  } catch(e) { notify('שגיאה: ' + e.message); return; }
+  } catch(e) { notify('שגיאה: ' + e.message); docSaveBusy=false; return; }
   db.docs.unshift({id:uid(),name,cat:document.getElementById('doc-cat').value,caseId:document.getElementById('doc-case').value,notes:document.getElementById('doc-notes').value.trim(),date:new Date().toLocaleDateString('he-IL'),ext:selectedFile?getExt(selectedFile.filename):'doc',filePath,origName:selectedFile?selectedFile.filename:null});
   saveDB();closeModal('modal-doc');notify('מסמך נשמר! ✓');renderDocs();selectedFile=null;
+  docSaveBusy=false;
 }
 
 function renderDocs(filter=''){
@@ -2445,8 +2480,8 @@ function docItemHtml(d, opts={}) {
   return `<div class="doc-item" ${d.filePath?`onclick="previewDoc('${d.id}')"`:''}>
     <div class="doc-icon ${d.ext}">${(d.ext||'').toUpperCase()}</div>
     <div style="flex:1;min-width:0">
-      <div style="font-size:13px;font-weight:500;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${d.name}</div>
-      <div style="font-size:11px;color:var(--text3)">${d.date||''} ${d.notes?'· '+d.notes:''}</div>
+      <div style="font-size:13px;font-weight:500;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(d.name)}</div>
+      <div style="font-size:11px;color:var(--text3)">${d.date||''} ${d.notes?'· '+escapeHtml(d.notes):''}</div>
     </div>
     <div class="overflow-menu-wrap anchor-left" onclick="event.stopPropagation()">
       <button class="btn btn-sm" onclick="toggleOverflowMenu(this)">⋮</button>
@@ -2616,13 +2651,16 @@ async function downloadDoc(docId) {
 // (new Storage object — old bytes are simply orphaned, not deleted, matching how this
 // codebase already treats Storage as append-only elsewhere) rather than creating a
 // second document, so name/category/case-link/history all stay put across versions.
+let docVersionBusy = false;
 async function uploadNewVersion(docId) {
+  if (docVersionBusy) return;
   const d = db.docs.find(x => x.id === docId);
   if (!d) return;
-  const result = await Platform.pickFile();
-  if (!result) return;
-  notify('מעלה גרסה מעודכנת...');
+  docVersionBusy = true;
   try {
+    const result = await Platform.pickFile();
+    if (!result) return;
+    notify('מעלה גרסה מעודכנת...');
     const filePath = await Platform.saveFile({ buffer: result.buffer, filename: result.filename });
     d.filePath = filePath;
     d.origName = result.filename;
@@ -2632,10 +2670,15 @@ async function uploadNewVersion(docId) {
     saveDB();
     notify('הגרסה עודכנה ✓');
     if (currentPanel === 'docs') renderDocs();
-    else if (currentPanel === 'case-detail') reopenCaseDetailKeepingTab(currentCaseId);
+    // Only refresh case-detail if we're still on the same case this doc belongs to —
+    // otherwise the user navigated elsewhere while the upload was in flight, and forcing
+    // a refresh (or navigation) back to d.caseId would yank them away from that case.
+    else if (currentPanel === 'case-detail' && currentCaseId === d.caseId) reopenCaseDetailKeepingTab(d.caseId);
     if (document.getElementById('modal-doc-preview').classList.contains('open')) previewDoc(docId);
   } catch (e) {
     notify('שגיאה בהעלאת הגרסה: ' + e.message);
+  } finally {
+    docVersionBusy = false;
   }
 }
 
@@ -2665,7 +2708,7 @@ function openDocCasePicker(docId, mode) {
   document.getElementById('doc-case-picker-title').textContent = mode === 'move' ? 'העבר מסמך לתיק אחר' : 'שכפל מסמך לתיק';
   document.getElementById('doc-case-picker-confirm-btn').textContent = mode === 'move' ? 'העבר' : 'שכפל';
   const sel = document.getElementById('doc-case-picker-select');
-  sel.innerHTML = '<option value="">ללא תיק</option>' + db.cases.map(c => `<option value="${c.id}" ${c.id === (d.caseId || '') ? 'selected' : ''}>${c.name}</option>`).join('');
+  sel.innerHTML = '<option value="">ללא תיק</option>' + db.cases.map(c => `<option value="${c.id}" ${c.id === (d.caseId || '') ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
   openModal('modal-doc-case-picker');
 }
 
@@ -2798,7 +2841,7 @@ function renderBatchStep() {
   document.getElementById('batch-doc-name').value = f.name;
   document.getElementById('batch-doc-cat').value = f.cat;
   const caseSel = document.getElementById('batch-doc-case');
-  caseSel.innerHTML = '<option value="">ללא תיק</option>' + db.cases.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+  caseSel.innerHTML = '<option value="">ללא תיק</option>' + db.cases.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
   caseSel.value = f.caseId || '';
   renderBatchPreview(f);
 }
@@ -2830,8 +2873,15 @@ async function renderBatchPreview(f) {
   }
 }
 
+let batchSaveBusy = false;
 async function saveAllStaged() {
-  if (!batchStagedFiles.length) return;
+  if (!batchStagedFiles.length || batchSaveBusy) return;
+  batchSaveBusy = true;
+  // Captured before the upload loop (and before closeBatchUpload() clears the staged
+  // list) so the post-save refresh targets the case these files were actually staged
+  // for, not whatever case the global currentCaseId points to once the multi-file
+  // upload (real, possibly slow, awaited I/O) finishes.
+  const targetCaseId = batchStagedFiles[0].caseId;
   notify('שומר מסמכים...');
   try {
     for (const f of batchStagedFiles) {
@@ -2842,14 +2892,19 @@ async function saveAllStaged() {
     notify(`${batchStagedFiles.length} מסמכים נשמרו! ✓`);
     closeBatchUpload();
     if (currentPanel === 'docs') renderDocs();
-    else if (currentPanel === 'case-detail') reopenCaseDetailKeepingTab(currentCaseId);
+    else if (currentPanel === 'case-detail' && currentCaseId === targetCaseId) reopenCaseDetailKeepingTab(targetCaseId);
   } catch (e) {
     notify('שגיאה בשמירה: ' + e.message);
+  } finally {
+    batchSaveBusy = false;
   }
 }
 
 async function addAllAsIs() {
-  if (!batchStagedFiles.length) return;
+  if (!batchStagedFiles.length || batchSaveBusy) return;
+  batchSaveBusy = true;
+  // Same reasoning as saveAllStaged() above.
+  const targetCaseId = batchStagedFiles[0].caseId;
   notify('מוסיף מסמכים...');
   try {
     for (const f of batchStagedFiles) {
@@ -2860,9 +2915,11 @@ async function addAllAsIs() {
     notify(`${batchStagedFiles.length} מסמכים נוספו! ✓`);
     closeBatchUpload();
     if (currentPanel === 'docs') renderDocs();
-    else if (currentPanel === 'case-detail') reopenCaseDetailKeepingTab(currentCaseId);
+    else if (currentPanel === 'case-detail' && currentCaseId === targetCaseId) reopenCaseDetailKeepingTab(targetCaseId);
   } catch (e) {
     notify('שגיאה בהוספה: ' + e.message);
+  } finally {
+    batchSaveBusy = false;
   }
 }
 
@@ -2877,8 +2934,11 @@ function renderDashboard(){
   const today=localDateISO(new Date());
   const overdue=db.tasks.filter(t=>!t.done&&t.due&&t.due<today).length;
 
-  const _now=new Date();const _curM=String(_now.getMonth()+1).padStart(2,'0');const _curY=String(_now.getFullYear());
-  const monthHours=(db.timeEntries||[]).filter(t=>{const p=(t.date||'').split('.');return p.length===3&&p[1]===_curM&&p[2]===_curY;}).reduce((s,t)=>s+(t.duration||0),0);
+  const _now=new Date();const _curM=_now.getMonth()+1;const _curY=_now.getFullYear();
+  // t.date comes from toLocaleDateString('he-IL') ("5.7.2026" — NOT zero-padded), so
+  // comparing p[1] against a zero-padded "07" string only ever matched Oct/Nov/Dec;
+  // this widget silently showed 0:00 for every month Jan–Sep. Compare numerically instead.
+  const monthHours=(db.timeEntries||[]).filter(t=>{const p=(t.date||'').split('.');return p.length===3&&+p[1]===_curM&&+p[2]===_curY;}).reduce((s,t)=>s+(t.duration||0),0);
   const mh=Math.floor(monthHours/3600),mm2=Math.floor((monthHours%3600)/60);
   document.getElementById('s-active').textContent=active;
   document.getElementById('s-urgent-txt').textContent=urgent?`${urgent} דחופים`:'';
@@ -2912,8 +2972,8 @@ function renderDashboard(){
     ${taskCbHtml(t)}
     <div class="prio-dot prio-${t.priority||'normal'}"></div>
     <div style="flex:1">
-      <div class="task-text" style="font-size:13px">${t.text}</div>
-      ${c?`<div style="font-size:11px;color:var(--accent2);cursor:pointer;display:flex;align-items:center;gap:5px" onclick="openCaseDetail('${c.id}')">${c.name}${c.caseSubNumber?`<span style="font-size:10px;background:var(--accent-dim);border-radius:4px;padding:1px 5px;font-weight:700">${c.caseSubNumber}</span>`:''}</div>`:''}
+      <div class="task-text" style="font-size:13px">${escapeHtml(t.text)}</div>
+      ${c?`<div style="font-size:11px;color:var(--accent2);cursor:pointer;display:flex;align-items:center;gap:5px" onclick="openCaseDetail('${c.id}')">${escapeHtml(c.name)}${c.caseSubNumber?`<span style="font-size:10px;background:var(--accent-dim);border-radius:4px;padding:1px 5px;font-weight:700">${escapeHtml(c.caseSubNumber)}</span>`:''}</div>`:''}
     </div>
     <div class="task-meta ${t.due&&t.due<today?'urgent':''}">${t.due||''}</div>
   </div>`;
@@ -2923,10 +2983,10 @@ function renderDashboard(){
   document.getElementById('d-cases').innerHTML=db.cases.slice(0,5).map(c=>`<div class="task-item" style="cursor:pointer" onclick="openCaseDetail('${c.id}')">
     <div style="flex:1">
       <div style="display:flex;align-items:center;gap:6px">
-        <div style="font-weight:500;color:var(--navy);font-size:13px">${c.name}</div>
-        ${c.caseSubNumber?`<span style="font-size:10px;color:var(--accent2);background:var(--accent-dim);border-radius:4px;padding:1px 5px;font-weight:700;flex-shrink:0">${c.caseSubNumber}</span>`:''}
+        <div style="font-weight:500;color:var(--navy);font-size:13px">${escapeHtml(c.name)}</div>
+        ${c.caseSubNumber?`<span style="font-size:10px;color:var(--accent2);background:var(--accent-dim);border-radius:4px;padding:1px 5px;font-weight:700;flex-shrink:0">${escapeHtml(c.caseSubNumber)}</span>`:''}
       </div>
-      <div style="font-size:11px;color:var(--text3)">${c.debtorName||''} ${c.amount?'| ₪'+c.amount.toLocaleString():''}</div>
+      <div style="font-size:11px;color:var(--text3)">${escapeHtml(c.debtorName||'')} ${c.amount?'| ₪'+c.amount.toLocaleString():''}</div>
     </div>
     <span class="badge badge-${c.status}">${smap[c.status]}</span>
   </div>`).join('')||'<div class="empty">אין תיקים</div>';
@@ -3242,7 +3302,7 @@ async function renderTeamSection() {
     const roleLabel = { owner:'בעלים', lawyer:'עו"ד', secretary:'מזכירה' };
     // m.email is null for rows created before the office_members.email column existed
     // (fix7.sql) — falls back to a truncated user_id rather than showing "undefined".
-    wrap.innerHTML = team.map(m => `<div class="fin-row"><span>${m.user_id === me.id ? 'את/ה' : (m.email || m.user_id.slice(0,8))}</span><span class="badge badge-active">${roleLabel[m.role]||m.role}</span></div>`).join('') || '<div class="empty">אין חברי צוות נוספים</div>';
+    wrap.innerHTML = team.map(m => `<div class="fin-row"><span>${m.user_id === me.id ? 'את/ה' : escapeHtml(m.email || m.user_id.slice(0,8))}</span><span class="badge badge-active">${roleLabel[m.role]||m.role}</span></div>`).join('') || '<div class="empty">אין חברי צוות נוספים</div>';
   } catch (e) { wrap.innerHTML = '<div class="empty">שגיאה בטעינת הצוות</div>'; }
 }
 async function createTeamInvite() {
@@ -3254,6 +3314,7 @@ async function createTeamInvite() {
   const email = (document.getElementById('invite-email').value || '').trim().toLowerCase();
   const role = document.getElementById('invite-role').value;
   if (!email) { notify('נא להזין אימייל'); return; }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { notify('כתובת אימייל לא תקינה'); return; }
   try {
     const { token, link } = await Platform.createInvite(email, role);
     const linkEl = document.getElementById('invite-link-result');
@@ -3606,6 +3667,7 @@ async function agentExecTool(name, input) {
   try {
     switch(name) {
       case 'createCase': {
+        if (!input.name || !input.name.trim()) return 'שגיאה: חסר שם תיק.';
         let clientId = '';
         if (input.clientName) {
           const q = (input.clientName||'').trim();
@@ -3631,6 +3693,7 @@ async function agentExecTool(name, input) {
         return `✅ תיק "${obj.name}" נוצר בהצלחה (מזהה: ${obj.id})`;
       }
       case 'createClient': {
+        if (!input.name || !input.name.trim()) return 'שגיאה: חסר שם לקוח.';
         const colors=[['rgba(37,99,235,0.15)','var(--accent2)'],['rgba(22,163,74,0.15)','var(--success)'],['rgba(217,119,6,0.15)','var(--warning)'],['rgba(220,38,38,0.15)','var(--danger)']];
         const [bg,tc]=colors[db.clients.length%4];
         const obj = {
@@ -3669,6 +3732,7 @@ async function agentExecTool(name, input) {
         return `✅ ייפוי כוח לתיק "${c.name}" נוצר ונשמר`;
       }
       case 'addTask': {
+        if (!input.text || !input.text.trim()) return 'שגיאה: חסר תיאור למשימה.';
         const task = { id:uid(), text:input.text, due:input.due||'', caseId:input.caseId||'', priority:input.priority||'normal', notes:'', done:false };
         db.tasks.unshift(task); saveDB(); refreshSidebar();
         return `✅ משימה "${input.text}" נוספה`;
@@ -3689,6 +3753,7 @@ async function agentExecTool(name, input) {
       case 'addEvent': {
         const c = db.cases.find(x=>x.id===input.caseId);
         if (!c) return 'שגיאה: תיק לא נמצא.';
+        if (!input.title || !input.title.trim() || !input.date) return 'שגיאה: חסרה כותרת או תאריך לאירוע.';
         db.events.push({ id:uid(), title:input.title, date:input.date, time:input.time||'', location:input.location||'', type:input.type||'דיון', caseId:input.caseId, notes:'' });
         saveDB();
         return `✅ אירוע "${input.title}" (${input.date}) נוסף לתיק "${c.name}"`;
@@ -3696,6 +3761,7 @@ async function agentExecTool(name, input) {
       case 'addDiaryEntry': {
         const c = db.cases.find(x=>x.id===input.caseId);
         if (!c) return 'שגיאה: תיק לא נמצא.';
+        if (!input.text || !input.text.trim()) return 'שגיאה: חסר תוכן לרישום היומן.';
         if (!c.diary) c.diary=[];
         c.diary.push({ text:input.text, date:new Date().toLocaleString('he-IL') });
         saveDB();
@@ -3857,6 +3923,10 @@ async function agentExecTool(name, input) {
         return rlines.join('\n');
       }
       case 'getFinancialReport': {
+        // Mirrors the same UI-level gate that hides the Finance panel from secretaries
+        // (nav(), line ~148) — without this, a secretary could just ask the chat for
+        // office-wide revenue/collections instead of opening the (hidden) Finance panel.
+        if (currentRole === 'secretary') return 'אין הרשאה לצפות בדוח כספי (תפקיד מזכירה).';
         const frPeriod=input.period||'all';
         const frPay=frPeriod==='all'?db.payments:db.payments.filter(p=>(p.date||'').startsWith(frPeriod));
         const frLabel=frPeriod==='all'?'כל הזמנים':frPeriod;
