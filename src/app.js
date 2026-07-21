@@ -23,7 +23,7 @@ const CASE_STAGES = {
 };
 function getCaseStages(c) { return CASE_STAGES[c && c.caseType] || CASE_STAGES.debt; }
 
-let db = {cases:[], clients:[], tasks:[], events:[], docs:[], payments:[], settings:{}, efilingBundles:{}};
+let db = {cases:[], clients:[], tasks:[], events:[], docs:[], payments:[], trustTransactions:[], settings:{}, efilingBundles:{}};
 let currentCaseId = null;
 let selectedFile = null;
 // In-case docs tab (ct-docs) sort/filter state — read by openCaseDetail() on every
@@ -57,6 +57,7 @@ async function loadDB() {
   if (data) {
     db = data;
     if (!db.payments) db.payments = [];
+    if (!db.trustTransactions) db.trustTransactions = [];
     if (!db.timeEntries) db.timeEntries = [];
     if (!db.settings) db.settings = {};
     if (!db.efilingBundles) db.efilingBundles = {};
@@ -409,12 +410,27 @@ function updateCaseTypeUI() {
 }
 
 // ===== CASES =====
-function saveCase() {
+async function saveCase() {
   const name=document.getElementById('case-name').value.trim();
   if(!name){notify('נא להזין שם תיק');return;}
   const eid=document.getElementById('case-edit-id').value;
   const old = eid ? db.cases.find(c=>c.id===eid) : {};
   const newStatus=document.getElementById('case-status').value;
+  // Closing a case with a nonzero trust balance doesn't touch the ledger itself (the
+  // history stays intact either way) — it just requires the user to say what happened
+  // to the money, so a real balance can't silently vanish from view once the case is
+  // no longer in the active list.
+  let trustCloseNote = eid ? (old.trustCloseNote||'') : '';
+  if (eid && newStatus==='closed' && old.status!=='closed') {
+    const trust=caseTrustTotals(eid);
+    if (trust.available !== 0) {
+      const proceed=await customConfirm(`קיימת יתרת כספי נאמנות בתיק זה (₪${trust.available.toLocaleString()}). לסגור את התיק בכל זאת?`,{title:'יתרת כספי נאמנות בתיק'});
+      if (!proceed) return;
+      trustCloseNote=prompt('מה נעשה ביתרת כספי הנאמנות? (לדוגמה: הוחזרה ללקוח / מיועדת להוצאה עתידית / הועברה באישור לתיק אחר / התיק נסגר אך הכרטסת נותרת פתוחה)')||'';
+    }
+  } else if (newStatus!=='closed') {
+    trustCloseNote='';
+  }
   // Stamped the moment status becomes 'closed' (kept as-is on a re-save while still
   // closed; cleared if reopened) — used for period-based "cases closed" analytics,
   // which the status flag alone can't answer since it carries no timestamp.
@@ -451,7 +467,8 @@ function saveCase() {
     legalDocs:eid?(old.legalDocs||{}):{},
     collected:eid?(old.collected||0):0,
     caseSubNumber:eid?(old.caseSubNumber||''):'',
-    closedAt
+    closedAt,
+    trustCloseNote
   };
   // Generate a sub-number on first save, and also if a client gets attached later
   // via edit to a case that started with none — otherwise it silently never gets
@@ -556,6 +573,45 @@ function feeTypeLabel(c){
 // db.payments). Computing it live instead removes that risk entirely.
 function caseCollectedTotal(c){
   return db.payments.filter(p=>p.caseId===c.id&&p.type==='debt').reduce((s,p)=>s+(p.amount||0),0);
+}
+
+// ===== TRUST ACCOUNTING (כספי נאמנות והוצאות) =====
+// A separate ledger from db.payments (client fees/retainer/office income) — this
+// tracks money the CLIENT deposited in trust to fund case-related disbursements
+// (court fees, process-server, etc.), never the firm's own fees. Lives as its own
+// db.trustTransactions array, same pattern as db.payments (flat, caseId-linked),
+// so no schema/migration is needed — it's just another array in the office's JSON blob.
+const TRUST_EXPENSE_CATEGORIES = [
+  'אגרת בית משפט','אגרת הוצאה לפועל','אגרת פתיחת תיק','אגרת בקשה','שליחות','מסירה משפטית',
+  'איתור מען','איתור חייב','עיקול','רישום עיקול','תפיסת רכב או נכס','גרירה','אחסנה',
+  'פרסום','שמאות','חוות דעת מומחה','תרגום','נוטריון','צילום והדפסה','דואר רשום',
+  'נסח טאבו','רשם המשכונות','רשם החברות','רשות מקרקעי ישראל','מידע ממאגר','אגרת רשות',
+  'עמלת בנק','הוצאה אחרת'
+];
+const TRUST_TX_LABELS = {
+  deposit:'הפקדה', expense:'הוצאה', refund:'החזר ללקוח',
+  transfer_out:'העברה לתיק אחר', transfer_in:'העברה מתיק אחר',
+  earmark:'שמירה להוצאה עתידית', release:'שחרור סכום שמור'
+};
+// Only these types actually move the ledger; 'earmark'/'release' don't touch the real
+// balance (the money is still physically in trust) — they just track how much of it is
+// already spoken for, shown separately as "reserved" so it isn't double-counted as free.
+function caseTrustTotals(caseId){
+  const all=(db.trustTransactions||[]).filter(t=>t.caseId===caseId);
+  const active=t=>t.status!=='reversed'&&t.status!=='cancelled'&&t.status!=='draft';
+  const sum=(type)=>all.filter(t=>t.type===type&&active(t)).reduce((s,t)=>s+(t.amount||0),0);
+  const deposits=sum('deposit')+sum('transfer_in');
+  const expenses=sum('expense');
+  const refunds=sum('refund');
+  const transfersOut=sum('transfer_out');
+  const corrections=all.filter(t=>t.type==='correction'&&active(t)).reduce((s,t)=>s+(t.amount||0),0);
+  const balance=deposits-expenses-refunds-transfersOut+corrections;
+  const earmarked=sum('earmark')-sum('release');
+  return {
+    all, deposits, expenses, refunds, transfersOut, corrections,
+    balance, reserved:Math.max(0,earmarked), available:balance-Math.max(0,earmarked),
+    lastActivity:all.filter(active).map(t=>t.date).sort().slice(-1)[0]||null
+  };
 }
 
 function toggleCasesView(){
@@ -680,6 +736,66 @@ function reopenCaseDetailKeepingTab(caseId) {
   }
 }
 
+function trustTabHtml(caseId, trust) {
+  trust = trust || caseTrustTotals(caseId);
+  const caseObj = db.cases.find(x=>x.id===caseId);
+  // Running balance shown per row needs chronological (ascending) order to accumulate
+  // correctly, but the table itself displays newest-first like every other tab here —
+  // compute the cumulative balance in ascending order first, then reverse for display.
+  const active=t=>t.status!=='reversed'&&t.status!=='cancelled'&&t.status!=='draft';
+  const chrono=trust.all.slice().sort((a,b)=>(a.date||'')<(b.date||'')?-1:(a.date||'')>(b.date||'')?1:0);
+  let running=0;
+  const withBalance=chrono.map(t=>{
+    if(active(t)){
+      const sign=(t.type==='deposit'||t.type==='transfer_in'||t.type==='release')?1:(t.type==='correction')?Math.sign(t.amount)||1:-1;
+      running += t.type==='correction'?t.amount:sign*t.amount;
+    }
+    return {t,balanceAfter:running};
+  });
+  const rows=withBalance.slice().reverse();
+  const canReverse = currentRole!=='secretary';
+  const rowHtml=({t,balanceAfter})=>{
+    const isIn = t.type==='deposit'||t.type==='transfer_in'||t.type==='release';
+    const reversed = t.status==='reversed';
+    const statusLabel = {draft:'טיוטה',pending:'ממתין לאישור',paid:'שולם',cancelled:'בוטל',reversed:'הופך'}[t.status]||'';
+    return `<tr style="${reversed?'opacity:0.5;text-decoration:line-through':''}">
+      <td style="font-size:12px;color:var(--text3)">${t.date||''}</td>
+      <td style="font-size:12px">${TRUST_TX_LABELS[t.type]||t.type}</td>
+      <td style="font-size:12px">${escapeHtml(t.category||t.source||'')}</td>
+      <td style="font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(t.description||'')}">${escapeHtml(t.description||'')}${t.payee?' · '+escapeHtml(t.payee):''}</td>
+      <td style="font-size:12px;font-weight:600;color:${isIn?'var(--success)':'var(--danger)'}">${isIn?'+':'-'}₪${(t.amount||0).toLocaleString()}</td>
+      <td style="font-size:12px;color:var(--text2)">₪${balanceAfter.toLocaleString()}</td>
+      <td style="font-size:11px;color:var(--text3)">${t.reference?escapeHtml(t.reference):''}</td>
+      <td style="font-size:11px;color:var(--text3)">${statusLabel}</td>
+      <td>
+        <div style="display:flex;gap:4px">
+          ${t.receiptFilePath?`<button class="btn btn-sm" title="פתח קבלה" onclick="Platform.openFile('${t.receiptFilePath}','${(t.receiptFilename||'receipt').replace(/'/g,"")}')">🧾</button>`:''}
+          ${!reversed&&t.status!=='cancelled'&&canReverse?`<button class="btn btn-sm" style="color:var(--danger)" title="בטל תנועה" onclick="reverseTrustTransaction('${caseId}','${t.id}')">↩</button>`:''}
+        </div>
+      </td>
+    </tr>`;
+  };
+  return `
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+      <button class="btn btn-sm btn-primary" onclick="openTrustDeposit('${caseId}')">+ הפקדה</button>
+      <button class="btn btn-sm" onclick="openTrustExpense('${caseId}')">+ הוצאה</button>
+      ${trust.all.length?`<button class="btn btn-sm" onclick="exportTrustLedger('${caseId}')">📋 העתק כרטסת</button>`:''}
+    </div>
+    <div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:14px">
+      <div class="stat"><div class="stat-label">יתרה זמינה</div><div class="stat-value" style="color:${trust.available<0?'var(--danger)':'var(--success)'};font-size:18px">₪${trust.available.toLocaleString()}</div></div>
+      <div class="stat"><div class="stat-label">סה"כ הופקד</div><div class="stat-value" style="font-size:16px">₪${trust.deposits.toLocaleString()}</div></div>
+      <div class="stat"><div class="stat-label">סה"כ שולם</div><div class="stat-value" style="font-size:16px">₪${trust.expenses.toLocaleString()}</div></div>
+      <div class="stat"><div class="stat-label">שמור להוצאה עתידית</div><div class="stat-value" style="font-size:16px">₪${trust.reserved.toLocaleString()}</div></div>
+    </div>
+    ${trust.available<0?'<div class="alert alert-warning">⚠ היתרה הזמינה שלילית — יש הוצאות שחורגות מהכספים שהופקדו בנאמנות.</div>':''}
+    ${caseObj&&caseObj.status==='closed'&&caseObj.trustCloseNote?`<div class="alert alert-info">📌 התיק נסגר עם יתרת נאמנות — מה נעשה: ${escapeHtml(caseObj.trustCloseNote)}</div>`:''}
+    ${trust.all.length?`<div style="overflow-x:auto"><table class="data-table">
+      <thead><tr><th>תאריך</th><th>סוג</th><th>קטגוריה/מקור</th><th>תיאור</th><th>סכום</th><th>יתרה</th><th>אסמכתא</th><th>סטטוס</th><th></th></tr></thead>
+      <tbody>${rows.map(rowHtml).join('')}</tbody>
+    </table></div>`:'<div class="empty" style="padding:16px">אין עדיין תנועות בכספי הנאמנות של תיק זה</div>'}
+  `;
+}
+
 function openCaseDetail(id) {
   currentCaseId=id;
   const c=db.cases.find(x=>x.id===id);
@@ -714,6 +830,7 @@ function openCaseDetail(id) {
   const pct=Math.round(((stageIdx+1)/stages.length)*100);
   const totalCollected=casePayments.filter(p=>p.type==='debt').reduce((s,p)=>s+p.amount,0);
   const expectedFee=Math.round(calcExpectedFee(c));
+  const caseTrust=caseTrustTotals(id);
 
   document.getElementById('case-detail-body').innerHTML=`
     <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px">
@@ -788,6 +905,7 @@ function openCaseDetail(id) {
         <div class="tab" onclick="switchTab(this,'ct-events')">דיונים (${caseEvents.length})</div>
         <div class="tab" onclick="switchTab(this,'ct-time')">שעות (${caseTime.length})</div>
         <div class="tab" onclick="switchTab(this,'ct-efiling')">הגשה לנט המשפט${caseEfBundleCount?' ('+caseEfBundleCount+')':''}</div>
+        <div class="tab" onclick="switchTab(this,'ct-trust')">כספי נאמנות והוצאות${caseTrust.all.length?' (₪'+caseTrust.available.toLocaleString()+')':''}</div>
       </div>
 
       <!-- Tasks -->
@@ -885,6 +1003,9 @@ function openCaseDetail(id) {
 
       <!-- E-filing (נט המשפט) -->
       <div id="ct-efiling" style="display:none">${efilingTabHtml(id, allCaseDocs)}</div>
+
+      <!-- Trust accounting (כספי נאמנות והוצאות) -->
+      <div id="ct-trust" style="display:none">${trustTabHtml(id, caseTrust)}</div>
     </div>
   `;
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
@@ -1612,6 +1733,7 @@ async function deleteCase() {
   db.docs=db.docs.filter(d=>d.caseId!==id);
   db.payments=db.payments.filter(p=>p.caseId!==id);
   db.timeEntries=(db.timeEntries||[]).filter(t=>t.caseId!==id);
+  db.trustTransactions=(db.trustTransactions||[]).filter(t=>t.caseId!==id);
   saveDB(); nav('cases',document.querySelectorAll('.nav-item')[1]); notify('תיק נמחק');
 }
 
@@ -1913,6 +2035,9 @@ function openClientDetail(id) {
   const totalDebt=activeCases.reduce((s,c)=>s+(c.amount||0),0);
   const totalCollected=allPayments.filter(p=>p.type==='debt').reduce((s,p)=>s+p.amount,0);
   const smap={active:'פעיל',urgent:'דחוף',pending:'ממתין',closed:'סגור'};
+  const clientTrust=clientCases.map(c=>({c,trust:caseTrustTotals(c.id)}));
+  const clientTrustAvailable=clientTrust.reduce((s,x)=>s+x.trust.available,0);
+  const clientTrustWithBalance=clientTrust.filter(x=>x.trust.all.length);
 
   document.getElementById('client-detail-body').innerHTML=`
     <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px">
@@ -1966,6 +2091,15 @@ function openClientDetail(id) {
         </tr>`).join('')}
       </tbody></table>`:'<div class="empty" style="padding:16px">אין תיקים ללקוח זה</div>'}
     </div>
+
+    ${clientTrustWithBalance.length?`<div class="card" style="margin-bottom:16px">
+      <div class="card-title">כספי נאמנות — סיכום (${clientTrustWithBalance.length} תיקים עם תנועות)</div>
+      <div class="fin-row" style="margin-bottom:6px"><b style="color:var(--text2)">יתרה זמינה בכל תיקי הלקוח</b><b style="color:${clientTrustAvailable<0?'var(--danger)':'var(--success)'}">₪${clientTrustAvailable.toLocaleString()}</b></div>
+      ${clientTrustWithBalance.map(({c,trust})=>`<div class="fin-row" style="cursor:pointer" onclick="openCaseDetail('${c.id}')">
+        <div style="font-size:12px;color:var(--text2)">${escapeHtml(c.name)}</div>
+        <div style="font-size:12px;font-weight:600;color:${trust.available<0?'var(--danger)':'var(--text2)'}">₪${trust.available.toLocaleString()}</div>
+      </div>`).join('')}
+    </div>`:''}
 
     <div class="card" style="margin-bottom:16px">
       <div class="card-title">תשלומים (${allPayments.length})</div>
@@ -2178,6 +2312,186 @@ function delPayment(id){
   db.payments=db.payments.filter(x=>x.id!==id);
   saveDB();notify('תשלום נמחק');
   if(currentPanel==='case-detail') reopenCaseDetailKeepingTab(currentCaseId); else renderFinance();
+}
+
+// ===== TRUST ACCOUNTING actions (see caseTrustTotals/trustTabHtml above) =====
+let trustDepositReceiptFile=null, trustExpenseReceiptFile=null, trustSaveBusy=false;
+
+function openTrustDeposit(caseId){
+  document.getElementById('trust-dep-case-id').value=caseId;
+  document.getElementById('trust-dep-amount').value='';
+  document.getElementById('trust-dep-date').value=localDateISO(new Date());
+  document.getElementById('trust-dep-source').value='';
+  document.getElementById('trust-dep-method').value='העברה בנקאית';
+  document.getElementById('trust-dep-reference').value='';
+  document.getElementById('trust-dep-desc').value='';
+  document.getElementById('trust-dep-notes').value='';
+  trustDepositReceiptFile=null;
+  document.getElementById('trust-dep-file-info').style.display='none';
+  openModal('modal-trust-deposit');
+}
+async function pickTrustDepositReceipt(){
+  const result=await Platform.pickFile();
+  if(!result) return;
+  trustDepositReceiptFile=result;
+  const info=document.getElementById('trust-dep-file-info');
+  info.style.display='block'; info.textContent='✓ '+result.filename;
+}
+async function saveTrustDeposit(){
+  if(trustSaveBusy) return;
+  const caseId=document.getElementById('trust-dep-case-id').value;
+  const c=db.cases.find(x=>x.id===caseId);
+  if(!c) return;
+  const amount=parseFloat(document.getElementById('trust-dep-amount').value);
+  if(!amount||amount<=0){notify('נא להזין סכום הפקדה');return;}
+  trustSaveBusy=true;
+  try{
+    let receiptFilePath=null, receiptFilename=null;
+    if(trustDepositReceiptFile){
+      receiptFilePath=await Platform.saveFile({buffer:trustDepositReceiptFile.buffer,filename:trustDepositReceiptFile.filename});
+      receiptFilename=trustDepositReceiptFile.filename;
+    }
+    const user=await Platform.getUser().catch(()=>null);
+    db.trustTransactions.push({
+      id:uid(), caseId, type:'deposit', amount,
+      date:document.getElementById('trust-dep-date').value||localDateISO(new Date()),
+      source:document.getElementById('trust-dep-source').value.trim(),
+      method:document.getElementById('trust-dep-method').value,
+      reference:document.getElementById('trust-dep-reference').value.trim(),
+      description:document.getElementById('trust-dep-desc').value.trim(),
+      notes:document.getElementById('trust-dep-notes').value.trim(),
+      receiptFilePath, receiptFilename, status:'paid',
+      createdBy:user?user.email:'', createdAt:new Date().toISOString()
+    });
+    saveDB();
+    closeModal('modal-trust-deposit');
+    notify('ההפקדה נרשמה בנאמנות ✓');
+    trustDepositReceiptFile=null;
+    if(currentPanel==='case-detail'&&currentCaseId===caseId) reopenCaseDetailKeepingTab(caseId);
+  }catch(e){
+    notify('שגיאה: '+e.message);
+  }finally{
+    trustSaveBusy=false;
+  }
+}
+
+function openTrustExpense(caseId){
+  document.getElementById('trust-exp-case-id').value=caseId;
+  document.getElementById('trust-exp-amount').value='';
+  document.getElementById('trust-exp-date').value=localDateISO(new Date());
+  document.getElementById('trust-exp-cat').value=TRUST_EXPENSE_CATEGORIES[0];
+  document.getElementById('trust-exp-payee').value='';
+  document.getElementById('trust-exp-method').value='העברה בנקאית';
+  document.getElementById('trust-exp-reference').value='';
+  document.getElementById('trust-exp-desc').value='';
+  document.getElementById('trust-exp-notes').value='';
+  document.getElementById('trust-exp-status').value='paid';
+  trustExpenseReceiptFile=null;
+  document.getElementById('trust-exp-file-info').style.display='none';
+  const trust=caseTrustTotals(caseId);
+  document.getElementById('trust-exp-balance-hint').textContent=`יתרה זמינה כרגע: ₪${trust.available.toLocaleString()}`;
+  openModal('modal-trust-expense');
+}
+async function pickTrustExpenseReceipt(){
+  const result=await Platform.pickFile();
+  if(!result) return;
+  trustExpenseReceiptFile=result;
+  const info=document.getElementById('trust-exp-file-info');
+  info.style.display='block'; info.textContent='✓ '+result.filename;
+}
+async function saveTrustExpense(){
+  if(trustSaveBusy) return;
+  const caseId=document.getElementById('trust-exp-case-id').value;
+  const c=db.cases.find(x=>x.id===caseId);
+  if(!c) return;
+  const amount=parseFloat(document.getElementById('trust-exp-amount').value);
+  if(!amount||amount<=0){notify('נא להזין סכום הוצאה');return;}
+  const status=document.getElementById('trust-exp-status').value;
+  let overrideReason='';
+  const trust=caseTrustTotals(caseId);
+  if(amount>trust.available){
+    const proceed=await customConfirm(
+      `היתרה הזמינה בנאמנות בתיק זה היא ₪${trust.available.toLocaleString()}. ההוצאה המבוקשת (₪${amount.toLocaleString()}) חורגת ממנה — היתרה לאחריה תהיה ₪${(trust.available-amount).toLocaleString()}. להמשיך בכל זאת?`,
+      {danger:true, okText:'כן, אשר חריגה', title:'חריגה מיתרת נאמנות'}
+    );
+    if(!proceed) return;
+    overrideReason=prompt('נא לציין סיבה לאישור החריגה מהיתרה:')||'';
+    if(!overrideReason.trim()){notify('יש לציין סיבה לאישור החריגה');return;}
+  }
+  trustSaveBusy=true;
+  try{
+    let receiptFilePath=null, receiptFilename=null;
+    if(trustExpenseReceiptFile){
+      receiptFilePath=await Platform.saveFile({buffer:trustExpenseReceiptFile.buffer,filename:trustExpenseReceiptFile.filename});
+      receiptFilename=trustExpenseReceiptFile.filename;
+    }
+    const user=await Platform.getUser().catch(()=>null);
+    db.trustTransactions.push({
+      id:uid(), caseId, type:'expense', amount,
+      date:document.getElementById('trust-exp-date').value||localDateISO(new Date()),
+      category:document.getElementById('trust-exp-cat').value,
+      payee:document.getElementById('trust-exp-payee').value.trim(),
+      method:document.getElementById('trust-exp-method').value,
+      reference:document.getElementById('trust-exp-reference').value.trim(),
+      description:document.getElementById('trust-exp-desc').value.trim(),
+      notes:document.getElementById('trust-exp-notes').value.trim(),
+      receiptFilePath, receiptFilename, status, overrideReason,
+      createdBy:user?user.email:'', createdAt:new Date().toISOString()
+    });
+    saveDB();
+    closeModal('modal-trust-expense');
+    notify('ההוצאה נרשמה ✓');
+    trustExpenseReceiptFile=null;
+    if(currentPanel==='case-detail'&&currentCaseId===caseId) reopenCaseDetailKeepingTab(caseId);
+  }catch(e){
+    notify('שגיאה: '+e.message);
+  }finally{
+    trustSaveBusy=false;
+  }
+}
+
+// Reversal, not deletion — the transaction stays visible (struck through, excluded
+// from the balance) with who/when/why, instead of silently disappearing from history.
+async function reverseTrustTransaction(caseId, txId){
+  const t=(db.trustTransactions||[]).find(x=>x.id===txId);
+  if(!t) return;
+  if(!await customConfirm('לבטל תנועה זו? היא תישאר בהיסטוריה אך לא תיספר יותר ביתרה.',{danger:true,okText:'בטל תנועה',title:'ביטול תנועה'})) return;
+  const reason=prompt('נא לציין סיבה לביטול התנועה:');
+  if(reason===null) return;
+  if(!reason.trim()){notify('יש לציין סיבה לביטול');return;}
+  const user=await Platform.getUser().catch(()=>null);
+  t.status='reversed';
+  t.reversedBy=user?user.email:'';
+  t.reversedAt=new Date().toISOString();
+  t.reversedReason=reason.trim();
+  saveDB();
+  notify('התנועה בוטלה');
+  if(currentPanel==='case-detail'&&currentCaseId===caseId) reopenCaseDetailKeepingTab(caseId);
+}
+
+function exportTrustLedger(caseId){
+  const c=db.cases.find(x=>x.id===caseId);
+  if(!c) return;
+  const trust=caseTrustTotals(caseId);
+  const chrono=trust.all.slice().sort((a,b)=>(a.date||'')<(b.date||'')?-1:(a.date||'')>(b.date||'')?1:0);
+  let txt=`כרטסת כספי נאמנות – ${c.name}\n${'─'.repeat(40)}\n\n`;
+  let running=0;
+  chrono.forEach(t=>{
+    const active=t.status!=='reversed'&&t.status!=='cancelled'&&t.status!=='draft';
+    if(active){
+      const sign=(t.type==='deposit'||t.type==='transfer_in'||t.type==='release')?1:(t.type==='correction')?(Math.sign(t.amount)||1):-1;
+      running+=t.type==='correction'?t.amount:sign*t.amount;
+    }
+    txt+=`${t.date||''} | ${TRUST_TX_LABELS[t.type]||t.type} | ${t.category||t.source||''} | ${t.description||''}${t.payee?' ('+t.payee+')':''} | ₪${(t.amount||0).toLocaleString()} | יתרה: ₪${running.toLocaleString()}${t.status==='reversed'?' [בוטל: '+(t.reversedReason||'')+']':t.status==='cancelled'?' [בוטל]':t.status==='draft'?' [טיוטה]':t.status==='pending'?' [ממתין]':''}\n`;
+  });
+  txt+=`\nיתרה זמינה נוכחית: ₪${trust.available.toLocaleString()}\n`;
+  if(trust.reserved) txt+=`שמור להוצאה עתידית: ₪${trust.reserved.toLocaleString()}\n`;
+  const ta=document.createElement('textarea');
+  ta.value=txt;
+  ta.style.position='fixed';ta.style.opacity='0';
+  document.body.appendChild(ta);ta.select();
+  try{document.execCommand('copy');notify('הכרטסת הועתקה ✓');}catch(e){notify('שגיאה בהעתקה');}
+  document.body.removeChild(ta);
 }
 
 function renderFinance(){
@@ -2999,7 +3313,7 @@ function renderDashboard(){
 function switchTab(el,id){
   el.closest('.card').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   el.classList.add('active');
-  ['ct-tasks','ct-docs','ct-events','ct-diary','ct-payments','ct-time','ct-efiling'].forEach(t=>{const e=document.getElementById(t);if(e)e.style.display='none';});
+  ['ct-tasks','ct-docs','ct-events','ct-diary','ct-payments','ct-time','ct-efiling','ct-trust'].forEach(t=>{const e=document.getElementById(t);if(e)e.style.display='none';});
   const t=document.getElementById(id);if(t)t.style.display='block';
 }
 

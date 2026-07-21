@@ -1116,6 +1116,80 @@ textarea.form-input{resize:vertical;min-height:80px}
   </div>
 </div>
 
+<!-- MODAL TRUST DEPOSIT: money the client put in trust to fund case disbursements —
+     see trustTabHtml()/saveTrustDeposit() in app.js. Separate from modal-payment, which
+     is the firm's own fees/retainer/office income. -->
+<div class="modal-overlay" id="modal-trust-deposit">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title">הפקדה לכספי נאמנות</div><button class="modal-close" onclick="closeModal('modal-trust-deposit')">×</button></div>
+    <input type="hidden" id="trust-dep-case-id">
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">סכום ההפקדה (₪) *</label><input class="form-input" id="trust-dep-amount" type="number" placeholder="0"></div>
+      <div class="form-group"><label class="form-label">תאריך</label><input class="form-input" id="trust-dep-date" type="date"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">מקור ההפקדה</label><input class="form-input" id="trust-dep-source" placeholder="הלקוח / גורם מפקיד"></div>
+      <div class="form-group"><label class="form-label">אמצעי תשלום</label>
+        <select class="form-input" id="trust-dep-method"><option>העברה בנקאית</option><option>צ'ק</option><option>מזומן</option><option>כרטיס אשראי</option><option>אחר</option></select>
+      </div>
+    </div>
+    <div class="form-group"><label class="form-label">מספר אסמכתא</label><input class="form-input" id="trust-dep-reference"></div>
+    <div class="form-group"><label class="form-label">תיאור</label><input class="form-input" id="trust-dep-desc" placeholder="תיאור ההפקדה..."></div>
+    <div class="form-group"><label class="form-label">הערות</label><textarea class="form-input" id="trust-dep-notes"></textarea></div>
+    <div class="form-group"><label class="form-label">קבלה / אסמכתא (קובץ)</label>
+      <div class="file-drop" onclick="pickTrustDepositReceipt()">📎 לחץ לבחירת קובץ</div>
+      <div id="trust-dep-file-info" style="font-size:12px;color:var(--success);margin-top:6px;display:none"></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-primary" onclick="saveTrustDeposit()">שמור הפקדה</button><button class="btn" onclick="closeModal('modal-trust-deposit')">ביטול</button></div>
+  </div>
+</div>
+
+<!-- MODAL TRUST EXPENSE: a disbursement paid FROM the client's trust funds (court fees,
+     process-server, etc.) — see trustTabHtml()/saveTrustExpense() in app.js. -->
+<div class="modal-overlay" id="modal-trust-expense">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title">הוצאה מכספי נאמנות</div><button class="modal-close" onclick="closeModal('modal-trust-expense')">×</button></div>
+    <input type="hidden" id="trust-exp-case-id">
+    <div style="font-size:12px;color:var(--text3);margin-bottom:8px" id="trust-exp-balance-hint"></div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">סכום ההוצאה (₪) *</label><input class="form-input" id="trust-exp-amount" type="number" placeholder="0"></div>
+      <div class="form-group"><label class="form-label">תאריך</label><input class="form-input" id="trust-exp-date" type="date"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">קטגוריה</label>
+        <select class="form-input" id="trust-exp-cat">
+          <option>אגרת בית משפט</option><option>אגרת הוצאה לפועל</option><option>אגרת פתיחת תיק</option>
+          <option>אגרת בקשה</option><option>שליחות</option><option>מסירה משפטית</option>
+          <option>איתור מען</option><option>איתור חייב</option><option>עיקול</option>
+          <option>רישום עיקול</option><option>תפיסת רכב או נכס</option><option>גרירה</option>
+          <option>אחסנה</option><option>פרסום</option><option>שמאות</option><option>חוות דעת מומחה</option>
+          <option>תרגום</option><option>נוטריון</option><option>צילום והדפסה</option><option>דואר רשום</option>
+          <option>נסח טאבו</option><option>רשם המשכונות</option><option>רשם החברות</option>
+          <option>רשות מקרקעי ישראל</option><option>מידע ממאגר</option><option>אגרת רשות</option>
+          <option>עמלת בנק</option><option>הוצאה אחרת</option>
+        </select>
+      </div>
+      <div class="form-group"><label class="form-label">משולם ל-</label><input class="form-input" id="trust-exp-payee" placeholder="ספק / גורם מקבל"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">אמצעי תשלום</label>
+        <select class="form-input" id="trust-exp-method"><option>העברה בנקאית</option><option>צ'ק</option><option>מזומן</option><option>כרטיס אשראי</option><option>אחר</option></select>
+      </div>
+      <div class="form-group"><label class="form-label">סטטוס</label>
+        <select class="form-input" id="trust-exp-status"><option value="paid">שולם</option><option value="pending">ממתין לאישור</option><option value="draft">טיוטה</option></select>
+      </div>
+    </div>
+    <div class="form-group"><label class="form-label">מספר אסמכתא</label><input class="form-input" id="trust-exp-reference"></div>
+    <div class="form-group"><label class="form-label">תיאור</label><input class="form-input" id="trust-exp-desc" placeholder="תיאור ההוצאה..."></div>
+    <div class="form-group"><label class="form-label">הערות</label><textarea class="form-input" id="trust-exp-notes"></textarea></div>
+    <div class="form-group"><label class="form-label">קבלה / חשבונית (קובץ)</label>
+      <div class="file-drop" onclick="pickTrustExpenseReceipt()">📎 לחץ לבחירת קובץ</div>
+      <div id="trust-exp-file-info" style="font-size:12px;color:var(--success);margin-top:6px;display:none"></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-primary" onclick="saveTrustExpense()">שמור הוצאה</button><button class="btn" onclick="closeModal('modal-trust-expense')">ביטול</button></div>
+  </div>
+</div>
+
 <!-- MODAL LEGAL DOC GENERATOR -->
 <div class="modal-overlay" id="modal-legal-gen">
   <div class="modal modal-wide">
