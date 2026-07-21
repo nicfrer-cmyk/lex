@@ -651,6 +651,24 @@ function renderCasesBoard(cases){
   }).join('');
 }
 
+// Every mutation inside case-detail (delete a doc/task/event/payment, log time,
+// rename a doc, etc.) re-renders the whole panel via openCaseDetail(), which
+// always redraws with יומן טיפול as the active tab per its own default markup —
+// silently kicking the user back to a different tab after every single action,
+// e.g. deleting a document from the מסמכים tab lands back on the diary tab
+// instead of staying put. This wraps that refresh to re-select whichever tab
+// was actually open beforehand, the same fix already proven for the e-filing
+// tab specifically (refreshEfilingTab) — generalized here to every tab/action.
+function reopenCaseDetailKeepingTab(caseId) {
+  const activeTab = document.querySelector('#panel-case-detail .tabs .tab.active');
+  const match = activeTab && activeTab.getAttribute('onclick') ? activeTab.getAttribute('onclick').match(/'(ct-[a-z]+)'/) : null;
+  openCaseDetail(caseId);
+  if (match) {
+    const btn = document.querySelector(`[onclick*="switchTab(this,'${match[1]}')"]`);
+    if (btn) switchTab(btn, match[1]);
+  }
+}
+
 function openCaseDetail(id) {
   currentCaseId=id;
   const c=db.cases.find(x=>x.id===id);
@@ -1744,7 +1762,7 @@ async function buildWithTemplate(type, data, caseObj) {
     closeModal('modal-legal-gen');
     notify('המסמך נשמר! פותח...');
     await Platform.openFile(filePath, filename);
-    if (currentPanel === 'case-detail') openCaseDetail(currentCaseId);
+    if (currentPanel === 'case-detail') reopenCaseDetailKeepingTab(currentCaseId);
   } catch(e) {
     notify('שגיאה: ' + e.message);
     console.error(e);
@@ -1972,7 +1990,7 @@ function saveTask(){
 function toggleTask(id,inDetail=false){
   const t=db.tasks.find(x=>x.id===id);
   if(t){t.done=!t.done;t.completedAt=t.done?new Date().toISOString():null;saveDB();}
-  if(inDetail) openCaseDetail(currentCaseId);
+  if(inDetail) reopenCaseDetailKeepingTab(currentCaseId);
   else renderTasks();
   if(currentPanel==='dashboard') renderDashboard();
 }
@@ -2017,7 +2035,7 @@ function renderTasks(){
   document.getElementById('tasks-done').innerHTML=done.length?done.map(row).join(''):'<div class="empty" style="padding:16px">ריק</div>';
 }
 
-function delTask(id,inDetail=false){db.tasks=db.tasks.filter(t=>t.id!==id);saveDB();if(inDetail)openCaseDetail(currentCaseId);else renderTasks();}
+function delTask(id,inDetail=false){db.tasks=db.tasks.filter(t=>t.id!==id);saveDB();if(inDetail)reopenCaseDetailKeepingTab(currentCaseId);else renderTasks();}
 
 // ===== CALENDAR =====
 let calDate=new Date();
@@ -2057,7 +2075,7 @@ function eventRow(e) {
     <div style="flex:1">
       <div style="font-weight:500;color:var(--navy)">${e.title}</div>
       <div style="font-size:11px;color:var(--text3)">${e.type||''} ${e.location?'| '+e.location:''} ${e.time?'| '+e.time:''}</div>
-      ${c?`<div style="font-size:11px;color:var(--accent2);cursor:pointer" onclick="openCaseDetail('${c.id}')">${c.name}</div>`:''}
+      ${c?`<div style="font-size:11px;color:var(--accent2);cursor:pointer" onclick="openCaseDetail('${c.id}')">${c.name}${c.number?' · #'+c.number:''}</div>`:''}
     </div>
     <button class="btn btn-sm" style="color:var(--danger);border:none;padding:2px 6px" onclick="delEvent('${e.id}')">✕</button>
   </div>`;
@@ -2085,7 +2103,7 @@ function saveEvent(){
   saveDB();closeModal('modal-event');notify('אירוע נוסף! ✓');renderCalendar();
 }
 
-function delEvent(id,inDetail=false){db.events=db.events.filter(e=>e.id!==id);saveDB();if(inDetail)openCaseDetail(currentCaseId);else renderCalendar();}
+function delEvent(id,inDetail=false){db.events=db.events.filter(e=>e.id!==id);saveDB();if(inDetail)reopenCaseDetailKeepingTab(currentCaseId);else renderCalendar();}
 
 // ===== FINANCE =====
 function savePayment(){
@@ -2106,7 +2124,7 @@ function savePayment(){
   }
   if(caseId&&payData.type==='debt'){const c=db.cases.find(x=>x.id===caseId);if(c)c.collected=(c.collected||0)+amount;}
   saveDB();closeModal('modal-payment');notify(eid?'תשלום עודכן! ✓':'תשלום נרשם! ✓');
-  if(currentPanel==='case-detail') openCaseDetail(currentCaseId); else renderFinance();
+  if(currentPanel==='case-detail') reopenCaseDetailKeepingTab(currentCaseId); else renderFinance();
 }
 
 function editPayment(id){
@@ -2128,7 +2146,7 @@ function delPayment(id){
   if(p&&p.caseId&&p.type==='debt'){const c=db.cases.find(x=>x.id===p.caseId);if(c)c.collected=Math.max(0,(c.collected||0)-p.amount);}
   db.payments=db.payments.filter(x=>x.id!==id);
   saveDB();notify('תשלום נמחק');
-  if(currentPanel==='case-detail') openCaseDetail(currentCaseId); else renderFinance();
+  if(currentPanel==='case-detail') reopenCaseDetailKeepingTab(currentCaseId); else renderFinance();
 }
 
 function renderFinance(){
@@ -2416,7 +2434,7 @@ function renderDocs(filter=''){
     ${docs.filter(d=>d.cat===cat).map(d=>docItemHtml(d)).join('')}
   </div>`).join('');
 }
-function delDoc(id,inDetail=false){db.docs=db.docs.filter(d=>d.id!==id);saveDB();if(inDetail)openCaseDetail(currentCaseId);else renderDocs();}
+function delDoc(id,inDetail=false){db.docs=db.docs.filter(d=>d.id!==id);saveDB();if(inDetail)reopenCaseDetailKeepingTab(currentCaseId);else renderDocs();}
 
 // Shared row markup for both the global docs panel and the in-case docs tab. Clicking
 // the row opens the in-app preview (previewDoc); the ⋮ menu holds everything else —
@@ -2614,7 +2632,7 @@ async function uploadNewVersion(docId) {
     saveDB();
     notify('הגרסה עודכנה ✓');
     if (currentPanel === 'docs') renderDocs();
-    else if (currentPanel === 'case-detail') openCaseDetail(currentCaseId);
+    else if (currentPanel === 'case-detail') reopenCaseDetailKeepingTab(currentCaseId);
     if (document.getElementById('modal-doc-preview').classList.contains('open')) previewDoc(docId);
   } catch (e) {
     notify('שגיאה בהעלאת הגרסה: ' + e.message);
@@ -2629,7 +2647,7 @@ function renameDoc(docId) {
   d.name = newName.trim();
   saveDB();
   if (currentPanel === 'docs') renderDocs();
-  else if (currentPanel === 'case-detail') openCaseDetail(currentCaseId);
+  else if (currentPanel === 'case-detail') reopenCaseDetailKeepingTab(currentCaseId);
 }
 
 // Shared by "העבר" (move) and "שכפל" (copy) — both need the same "pick a destination
@@ -2667,7 +2685,7 @@ function confirmDocCasePicker() {
   saveDB();
   closeModal('modal-doc-case-picker');
   if (currentPanel === 'docs') renderDocs();
-  else if (currentPanel === 'case-detail') openCaseDetail(currentCaseId);
+  else if (currentPanel === 'case-detail') reopenCaseDetailKeepingTab(currentCaseId);
 }
 
 // "Open in Word, linked to the site" (real WebDAV, not the download-then-reupload
@@ -2824,7 +2842,7 @@ async function saveAllStaged() {
     notify(`${batchStagedFiles.length} מסמכים נשמרו! ✓`);
     closeBatchUpload();
     if (currentPanel === 'docs') renderDocs();
-    else if (currentPanel === 'case-detail') openCaseDetail(currentCaseId);
+    else if (currentPanel === 'case-detail') reopenCaseDetailKeepingTab(currentCaseId);
   } catch (e) {
     notify('שגיאה בשמירה: ' + e.message);
   }
@@ -2842,7 +2860,7 @@ async function addAllAsIs() {
     notify(`${batchStagedFiles.length} מסמכים נוספו! ✓`);
     closeBatchUpload();
     if (currentPanel === 'docs') renderDocs();
-    else if (currentPanel === 'case-detail') openCaseDetail(currentCaseId);
+    else if (currentPanel === 'case-detail') reopenCaseDetailKeepingTab(currentCaseId);
   } catch (e) {
     notify('שגיאה בהוספה: ' + e.message);
   }
@@ -2888,16 +2906,26 @@ function renderDashboard(){
   </div>`).join(''):'<div class="empty">אין תיקים עדיין</div>';
 
   const urgentTasks=db.tasks.filter(t=>!t.done&&(t.priority==='urgent'||(t.due&&t.due<=today))).slice(0,5);
-  document.getElementById('d-tasks').innerHTML=urgentTasks.length?urgentTasks.map(t=>`<div class="task-item">
+  document.getElementById('d-tasks').innerHTML=urgentTasks.length?urgentTasks.map(t=>{
+    const c=t.caseId?db.cases.find(x=>x.id===t.caseId):null;
+    return `<div class="task-item">
     ${taskCbHtml(t)}
     <div class="prio-dot prio-${t.priority||'normal'}"></div>
-    <div class="task-text" style="flex:1;font-size:13px">${t.text}</div>
+    <div style="flex:1">
+      <div class="task-text" style="font-size:13px">${t.text}</div>
+      ${c?`<div style="font-size:11px;color:var(--accent2);cursor:pointer" onclick="openCaseDetail('${c.id}')">${c.name}${c.number?' · #'+c.number:''}</div>`:''}
+    </div>
     <div class="task-meta ${t.due&&t.due<today?'urgent':''}">${t.due||''}</div>
-  </div>`).join(''):'<div class="empty">אין משימות דחופות ✓</div>';
+  </div>`;
+  }).join(''):'<div class="empty">אין משימות דחופות ✓</div>';
 
   const smap={active:'פעיל',urgent:'דחוף',pending:'ממתין',closed:'סגור'};
   document.getElementById('d-cases').innerHTML=db.cases.slice(0,5).map(c=>`<div class="task-item" style="cursor:pointer" onclick="openCaseDetail('${c.id}')">
-    <div style="flex:1"><div style="font-weight:500;color:var(--navy);font-size:13px">${c.name}</div>
+    <div style="flex:1">
+      <div style="display:flex;align-items:center;gap:6px">
+        <div style="font-weight:500;color:var(--navy);font-size:13px">${c.name}</div>
+        ${c.number?`<span style="font-size:10px;color:var(--text3)">#${c.number}</span>`:''}
+      </div>
       <div style="font-size:11px;color:var(--text3)">${c.debtorName||''} ${c.amount?'| ₪'+c.amount.toLocaleString():''}</div>
     </div>
     <span class="badge badge-${c.status}">${smap[c.status]}</span>
@@ -2976,7 +3004,7 @@ function saveTimeEntry(){
   saveDB();
   document.getElementById('modal-timelog').classList.remove('open');
   notify('שעות נשמרו ✓');
-  if(currentPanel==='case-detail') openCaseDetail(currentCaseId);
+  if(currentPanel==='case-detail') reopenCaseDetailKeepingTab(currentCaseId);
   if(currentPanel==='dashboard') renderDashboard();
 }
 
@@ -3014,14 +3042,14 @@ function saveManualTime(){
   saveDB();
   closeManualTime();
   notify('שעות נשמרו ✓');
-  if(currentPanel==='case-detail') openCaseDetail(currentCaseId);
+  if(currentPanel==='case-detail') reopenCaseDetailKeepingTab(currentCaseId);
   if(currentPanel==='dashboard') renderDashboard();
 }
 
 function delTimeEntry(id){
   db.timeEntries=(db.timeEntries||[]).filter(t=>t.id!==id);
   saveDB();
-  if(currentPanel==='case-detail') openCaseDetail(currentCaseId);
+  if(currentPanel==='case-detail') reopenCaseDetailKeepingTab(currentCaseId);
   notify('נמחק');
 }
 
