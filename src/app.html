@@ -429,7 +429,7 @@ textarea.form-input{resize:vertical;min-height:80px}
   <div class="sidebar" id="sidebar">
     <div class="logo">
       <div class="logo-title">⚖ LexTrack</div>
-      <div class="logo-sub">ירין אשואל, עו"ד | גבייה</div>
+      <div class="logo-sub">ירין אשואל, עו"ד | ניהול תיקים</div>
     </div>
     <div class="nav-section">ראשי</div>
     <div class="nav-item active" onclick="nav('dashboard',this)">
@@ -488,8 +488,8 @@ textarea.form-input{resize:vertical;min-height:80px}
       <div class="content">
         <div class="stats-grid stats-grid-5">
           <div class="stat"><div class="stat-label">תיקים פעילים</div><div class="stat-value" id="s-active">0</div><div class="stat-sub" id="s-urgent-txt"></div></div>
-          <div class="stat"><div class="stat-label">חוב בטיפול</div><div class="stat-value" id="s-debt" style="color:var(--accent2);font-size:20px">₪0</div></div>
-          <div class="stat"><div class="stat-label">גבוי החודש</div><div class="stat-value" id="s-collected" style="color:var(--success);font-size:20px">₪0</div></div>
+          <div class="stat"><div class="stat-label">כספים בטיפול</div><div class="stat-value" id="s-debt" style="color:var(--accent2);font-size:20px">₪0</div></div>
+          <div class="stat"><div class="stat-label">התקבל החודש</div><div class="stat-value" id="s-collected" style="color:var(--success);font-size:20px">₪0</div></div>
           <div class="stat"><div class="stat-label">משימות פתוחות</div><div class="stat-value" id="s-tasks" style="color:var(--warning)">0</div><div class="stat-sub" id="s-overdue-txt"></div></div>
           <div class="stat"><div class="stat-label">שעות החודש</div><div class="stat-value" id="s-hours" style="color:var(--accent2);font-size:20px">0:00</div><div class="stat-sub" id="s-hours-txt"></div></div>
         </div>
@@ -520,6 +520,7 @@ textarea.form-input{resize:vertical;min-height:80px}
             <option value="">כל השלבים</option>
             <option>איסוף מסמכים</option><option>התראה ראשונה</option><option>גישור</option>
             <option>כתב תביעה</option><option>דיון</option><option>הוצאה לפועל</option><option>סגור</option>
+            <option>פתיחה</option><option>בטיפול</option><option>ממתין לצד ג'</option>
           </select>
           <button id="cases-view-toggle" class="btn btn-sm" onclick="toggleCasesView()" title="החלף תצוגה">⊞ לוח</button>
           <button class="btn btn-primary" onclick="openModal('modal-case')">+ תיק חדש</button>
@@ -530,7 +531,7 @@ textarea.form-input{resize:vertical;min-height:80px}
       </div>
       <div id="cases-table-wrap" class="content content-table">
         <table class="data-table">
-          <thead><tr><th>שם תיק / מס׳</th><th>לקוח / חייב</th><th>סכום חוב</th><th>שלב</th><th>נפתח</th><th>שכ"ט</th><th>סטטוס</th><th></th></tr></thead>
+          <thead><tr><th>שם תיק / מס׳</th><th>לקוח / צד קשור</th><th>סכום</th><th>שלב</th><th>נפתח</th><th>שכ"ט</th><th>סטטוס</th><th></th></tr></thead>
           <tbody id="cases-tbody"></tbody>
         </table>
         <div id="cases-empty" class="empty-main" style="display:none">
@@ -652,13 +653,13 @@ textarea.form-input{resize:vertical;min-height:80px}
       </div>
       <div class="content">
         <div class="stats-grid">
-          <div class="stat"><div class="stat-label">סה"כ חוב בטיפול</div><div class="amount-big" id="fin-total-debt">₪0</div></div>
-          <div class="stat"><div class="stat-label">גבוי סה"כ</div><div class="amount-big" id="fin-total-collected" style="color:var(--success)">₪0</div></div>
+          <div class="stat"><div class="stat-label">סכום כספי בטיפול</div><div class="amount-big" id="fin-total-debt">₪0</div></div>
+          <div class="stat"><div class="stat-label">נגבה/שולם בפועל</div><div class="amount-big" id="fin-total-collected" style="color:var(--success)">₪0</div></div>
           <div class="stat"><div class="stat-label">שכ"ט צפוי</div><div class="amount-big" id="fin-expected-fee" style="color:var(--warning)">₪0</div></div>
           <div class="stat"><div class="stat-label">שכ"ט שנגבה</div><div class="amount-big" id="fin-collected-fee" style="color:var(--accent2)">₪0</div></div>
         </div>
         <div class="card">
-          <div class="card-title">גבייה מול יתרת חוב – 6 חודשים אחרונים</div>
+          <div class="card-title">תקבולים מול יתרה – 6 חודשים אחרונים</div>
           <div id="fin-chart"></div>
         </div>
         <div class="two-col">
@@ -683,6 +684,7 @@ textarea.form-input{resize:vertical;min-height:80px}
       <div class="topbar">
         <div class="topbar-title">מסמכים</div>
         <div class="topbar-actions">
+          <button class="btn" onclick="openBatchUpload()">📎 העלאה מרובה</button>
           <button class="btn btn-primary" onclick="openModal('modal-doc')">+ הוסף מסמך</button>
         </div>
       </div>
@@ -796,6 +798,12 @@ textarea.form-input{resize:vertical;min-height:80px}
     </div>
     <!-- Tab: פרטי תיק -->
     <div id="ctab-basic">
+      <div class="form-group"><label class="form-label">סוג תיק</label>
+        <select class="form-input" id="case-type" onchange="updateCaseTypeUI()" style="max-width:220px">
+          <option value="debt">גבייה</option>
+          <option value="general">כללי</option>
+        </select>
+      </div>
       <div class="form-row">
         <div class="form-group"><label class="form-label">שם התיק *</label><input class="form-input" id="case-name" placeholder="כהן נ׳ לוי בע״מ"></div>
         <div class="form-group"><label class="form-label">מספר תיק</label><input class="form-input" id="case-number" placeholder="2025-001"></div>
@@ -831,9 +839,9 @@ textarea.form-input{resize:vertical;min-height:80px}
     </div>
     <!-- Tab: פרטי חייב -->
     <div id="ctab-debtor" style="display:none">
-      <div class="alert alert-info">פרטי החייב ישמשו לאוטומציה של הסכם שכ"ט וייפוי כוח</div>
+      <div class="alert alert-info" id="debtor-tab-alert">פרטי החייב ישמשו לאוטומציה של הסכם שכ"ט וייפוי כוח</div>
       <div class="form-row">
-        <div class="form-group"><label class="form-label">שם החייב *</label><input class="form-input" id="case-debtor-name" placeholder="שם מלא / שם חברה"></div>
+        <div class="form-group"><label class="form-label" id="lbl-debtor-name">שם החייב *</label><input class="form-input" id="case-debtor-name" placeholder="שם מלא / שם חברה"></div>
         <div class="form-group"><label class="form-label">ת.ז / ח.פ של החייב</label><input class="form-input" id="case-debtor-id" placeholder="000000000"></div>
       </div>
       <div class="form-row">
@@ -842,11 +850,11 @@ textarea.form-input{resize:vertical;min-height:80px}
       </div>
       <div class="form-row">
         <div class="form-group"><label class="form-label">אימייל החייב</label><input class="form-input" id="case-debtor-email" type="email"></div>
-        <div class="form-group"><label class="form-label">סוג חייב</label>
+        <div class="form-group"><label class="form-label" id="lbl-debtor-type">סוג חייב</label>
           <select class="form-input" id="case-debtor-type"><option value="יחיד">יחיד</option><option value="חברה">חברה</option><option value="עוסק מורשה">עוסק מורשה</option></select>
         </div>
       </div>
-      <div class="form-group"><label class="form-label">מקור החוב / תיאור קצר</label><textarea class="form-input" id="case-debt-desc" placeholder="לדוגמה: חוב מחוזה שירות מיום..." style="min-height:60px"></textarea></div>
+      <div class="form-group"><label class="form-label" id="lbl-debt-desc">מקור החוב / תיאור קצר</label><textarea class="form-input" id="case-debt-desc" placeholder="לדוגמה: חוב מחוזה שירות מיום..." style="min-height:60px"></textarea></div>
     </div>
     <!-- Tab: שכר טרחה -->
     <div id="ctab-fee" style="display:none">
@@ -971,6 +979,35 @@ textarea.form-input{resize:vertical;min-height:80px}
     </div>
     <div class="form-group"><label class="form-label">הערות</label><textarea class="form-input" id="doc-notes"></textarea></div>
     <div class="modal-footer"><button class="btn btn-primary" onclick="saveDoc()">שמור מסמך</button><button class="btn" onclick="closeModal('modal-doc')">ביטול</button></div>
+  </div>
+</div>
+
+<!-- MODAL DOC BATCH (multi-file staging: pick many files at once, step through each
+     with a preview + editable name/category/case, or add them all at once) -->
+<div class="modal-overlay" id="modal-doc-batch">
+  <div class="modal modal-wide">
+    <div class="modal-header"><div class="modal-title" id="batch-doc-title">העלאה מרובה</div><button class="modal-close" onclick="closeBatchUpload()">×</button></div>
+    <div id="batch-doc-preview" style="min-height:180px;max-height:320px;overflow:auto;background:var(--bg3);border-radius:var(--radius);margin-bottom:12px;display:flex;align-items:center;justify-content:center;text-align:center"></div>
+    <div class="form-group"><label class="form-label">שם המסמך *</label><input class="form-input" id="batch-doc-name" oninput="batchSyncField('name',this.value)"></div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">קטגוריה</label>
+        <select class="form-input" id="batch-doc-cat" onchange="batchSyncField('cat',this.value)">
+          <option>תביעות וכתבי בי דין</option><option>התראות ומכתבים</option>
+          <option>חוזים ונספחים</option><option>פסקי דין</option><option>ראיות</option><option selected>אחר</option>
+        </select>
+      </div>
+      <div class="form-group"><label class="form-label">תיק קשור</label><select class="form-input" id="batch-doc-case" onchange="batchSyncField('caseId',this.value)"><option value="">ללא תיק</option></select></div>
+    </div>
+    <div class="modal-footer" style="flex-direction:column;gap:8px;align-items:stretch">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <button class="btn btn-sm" id="batch-prev-btn" onclick="stepBatch(-1)">◀ הקודם</button>
+        <span id="batch-step-counter" style="font-size:12px;color:var(--text3)"></span>
+        <button class="btn btn-sm" id="batch-next-btn" onclick="stepBatch(1)">הבא ▶</button>
+      </div>
+      <button class="btn btn-primary" style="width:100%" onclick="saveAllStaged()">✓ שמור את כל המסמכים</button>
+      <button class="btn" style="width:100%" onclick="addAllAsIs()">✓ הוסף הכל כפי שהם (ללא עריכה)</button>
+      <button class="btn" style="width:100%" onclick="closeBatchUpload()">ביטול</button>
+    </div>
   </div>
 </div>
 

@@ -1,6 +1,7 @@
 
 const { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
-        AlignmentType, BorderStyle, WidthType, LineRuleType, UnderlineType, LevelFormat } = __req('docx');
+        AlignmentType, BorderStyle, WidthType, LineRuleType, UnderlineType, LevelFormat,
+        Footer, PageNumber } = __req('docx');
 
 // ===== OFFICE INFO =====
 const OFFICE = {
@@ -12,9 +13,24 @@ const OFFICE = {
   title: 'משרד עורכי דין ירין אשואל'
 };
 
-let db = {cases:[], clients:[], tasks:[], events:[], docs:[], payments:[], settings:{}};
+// Stage lists per case type — single source of truth (used to be the same 7-value
+// collection-pipeline array hardcoded in ~5 places). Cases saved before caseType
+// existed have no value for it; every read goes through getCaseStages(), which
+// defaults to 'debt', so those cases keep behaving exactly as before with zero migration.
+const CASE_STAGES = {
+  debt: ['איסוף מסמכים','התראה ראשונה','גישור','כתב תביעה','דיון','הוצאה לפועל','סגור'],
+  general: ['פתיחה','בטיפול','ממתין לצד ג\'','דיון','סגור']
+};
+function getCaseStages(c) { return CASE_STAGES[c && c.caseType] || CASE_STAGES.debt; }
+
+let db = {cases:[], clients:[], tasks:[], events:[], docs:[], payments:[], settings:{}, efilingBundles:{}};
 let currentCaseId = null;
 let selectedFile = null;
+// In-case docs tab (ct-docs) sort/filter state — read by openCaseDetail() on every
+// re-render, set by the controls in that tab; kept as plain globals (not per-case)
+// since only one case-detail page is ever open at a time.
+let docsTabSort = 'added';
+let docsTabFilterExt = '';
 let currentLegalDocType = null;
 let casesView = localStorage.getItem('lextrack-view') || 'table';
 let currentClientId = null;
@@ -35,6 +51,7 @@ async function loadDB() {
     if (!db.payments) db.payments = [];
     if (!db.timeEntries) db.timeEntries = [];
     if (!db.settings) db.settings = {};
+    if (!db.efilingBundles) db.efilingBundles = {};
     if (!db.counters) db.counters = { nextClientNumber: 1, caseCounters: {} };
     if (!db.counters.caseCounters) db.counters.caseCounters = {};
     let dirty = false;
@@ -153,7 +170,6 @@ function openModal(id) {
         const el=document.getElementById(f);if(el)el.value='';
       });
       document.getElementById('case-fee-pct').value='15';
-      document.getElementById('case-stage').selectedIndex=0;
       document.getElementById('case-status').selectedIndex=0;
       // These selects don't get rebuilt like case-client does — without resetting
       // them explicitly, a new case silently inherits fee type/VAT/debtor type/
@@ -162,6 +178,8 @@ function openModal(id) {
       document.getElementById('case-fee-type').selectedIndex=0;
       document.getElementById('case-fee-vat').selectedIndex=0;
       document.getElementById('case-expenses-type').selectedIndex=0;
+      document.getElementById('case-type').selectedIndex=0;
+      updateCaseTypeUI();
       updateFeeFields();
     }
   }
@@ -307,6 +325,8 @@ function populateSelects() {
   document.getElementById('task-case').innerHTML=cas;
   document.getElementById('event-case').innerHTML=cas;
   document.getElementById('doc-case').innerHTML=cas;
+  const bdc=document.getElementById('batch-doc-case');
+  if(bdc) bdc.innerHTML=cas;
   document.getElementById('pay-case').innerHTML=casReq;
   const tlc=document.getElementById('tl-case');
   if(tlc) tlc.innerHTML=cas;
@@ -328,21 +348,39 @@ function updateFeeFields() {
   document.getElementById('fee-fixed-group').style.display=(t==='fixed'||t==='both'||t==='hourly')?'block':'none';
 }
 
+// Rebuilds the stage <select> for the chosen case type and relabels the debtor/
+// opposing-party tab — called on #case-type change and whenever the case form is
+// (re)opened, so a 'general' case never shows the collection-only stage list or
+// a "debtor"-required framing.
+function updateCaseTypeUI() {
+  const type=document.getElementById('case-type').value||'debt';
+  const stages=CASE_STAGES[type]||CASE_STAGES.debt;
+  const stageSel=document.getElementById('case-stage');
+  const prevValue=stageSel.value;
+  stageSel.innerHTML=stages.map(s=>`<option>${s}</option>`).join('');
+  stageSel.value=stages.includes(prevValue)?prevValue:stages[0];
+  const debtorTabBtn=document.querySelector(`[onclick="switchFormTab(this,'ctab-debtor')"]`);
+  const isGeneral=type==='general';
+  if(debtorTabBtn) debtorTabBtn.textContent=isGeneral?'צד קשור':'פרטי חייב';
+  const alertEl=document.getElementById('debtor-tab-alert');
+  if(alertEl) alertEl.style.display=isGeneral?'none':'';
+  const lblName=document.getElementById('lbl-debtor-name');
+  if(lblName) lblName.textContent=isGeneral?'שם הצד השני':'שם החייב *';
+  const lblType=document.getElementById('lbl-debtor-type');
+  if(lblType) lblType.textContent=isGeneral?'סוג צד':'סוג חייב';
+  const lblDesc=document.getElementById('lbl-debt-desc');
+  if(lblDesc) lblDesc.textContent=isGeneral?'תיאור התיק':'מקור החוב / תיאור קצר';
+}
+
 // ===== CASES =====
 function saveCase() {
   const name=document.getElementById('case-name').value.trim();
   if(!name){notify('נא להזין שם תיק');return;}
-  const debtorName=document.getElementById('case-debtor-name').value.trim();
-  if(!debtorName){
-    notify('נא להזין שם חייב (שדה חובה)');
-    const debtorTab=document.querySelector(`[onclick="switchFormTab(this,'ctab-debtor')"]`);
-    if(debtorTab) switchFormTab(debtorTab,'ctab-debtor');
-    return;
-  }
   const eid=document.getElementById('case-edit-id').value;
   const old = eid ? db.cases.find(c=>c.id===eid) : {};
   const obj={
     id:eid||uid(), name,
+    caseType:document.getElementById('case-type').value||'debt',
     client:document.getElementById('case-client').value,
     amount:parseFloat(document.getElementById('case-amount').value)||0,
     stage:document.getElementById('case-stage').value,
@@ -532,7 +570,7 @@ function renderCasesTable(cases){
       </td>
       <td>
         <div style="color:var(--text2);font-size:12px">${cl?cl.name:'—'}</div>
-        ${c.debtorName?`<div style="font-size:11px;color:var(--text3)">חייב: ${c.debtorName}</div>`:''}
+        ${c.debtorName?`<div style="font-size:11px;color:var(--text3)">${c.caseType==='general'?'צד':'חייב'}: ${c.debtorName}</div>`:''}
       </td>
       <td style="color:var(--accent2);font-weight:600">${c.amount?'₪'+c.amount.toLocaleString():'—'}</td>
       <td style="color:var(--text2);font-size:12px">${c.stage}</td>
@@ -551,7 +589,7 @@ function renderCasesTable(cases){
 }
 
 function renderCasesBoard(cases){
-  const stages=['איסוף מסמכים','התראה ראשונה','גישור','כתב תביעה','דיון','הוצאה לפועל','סגור'];
+  const stages=[...new Set([...CASE_STAGES.debt,...CASE_STAGES.general])];
   const smap={active:'פעיל',urgent:'דחוף',pending:'ממתין',closed:'סגור'};
   const board=document.getElementById('cases-board');
   board.innerHTML=stages.map(stage=>{
@@ -586,13 +624,20 @@ function openCaseDetail(id) {
   if(!c) return;
   const cl=db.clients.find(x=>x.id===c.client);
   const caseTasks=db.tasks.filter(t=>t.caseId===id);
-  const caseDocs=db.docs.filter(d=>d.caseId===id);
+  const caseEfBundle=(db.efilingBundles&&db.efilingBundles[id])||{items:[]};
+  const caseEfItems=caseEfBundle.items||[];
+  let caseDocs=db.docs.filter(d=>d.caseId===id);
+  if(docsTabFilterExt) caseDocs=caseDocs.filter(d=>d.ext===docsTabFilterExt);
+  if(docsTabSort==='opened') caseDocs=caseDocs.slice().sort((a,b)=>(b.lastOpenedAt||'').localeCompare(a.lastOpenedAt||''));
+  else if(docsTabSort==='type') caseDocs=caseDocs.slice().sort((a,b)=>(a.ext||'').localeCompare(b.ext||''));
+  // else 'added': db.docs is always unshift()ed on save, so filtering alone already
+  // preserves newest-first order — no explicit sort needed.
   const caseEvents=db.events.filter(e=>e.caseId===id);
   const casePayments=db.payments.filter(p=>p.caseId===id);
   const caseTime=(db.timeEntries||[]).filter(t=>t.caseId===id);
   const caseTimeSecs=caseTime.reduce((s,t)=>s+(t.duration||0),0);
   const smap={active:'פעיל',urgent:'דחוף',pending:'ממתין',closed:'סגור'};
-  const stages=['איסוף מסמכים','התראה ראשונה','גישור','כתב תביעה','דיון','הוצאה לפועל','סגור'];
+  const stages=getCaseStages(c);
   const stageIdx=stages.indexOf(c.stage);
   const pct=Math.round(((stageIdx+1)/stages.length)*100);
   const totalCollected=casePayments.filter(p=>p.type==='debt').reduce((s,p)=>s+p.amount,0);
@@ -625,8 +670,8 @@ function openCaseDetail(id) {
 
     <!-- Stats row -->
     <div class="stats-grid" style="margin-bottom:16px">
-      <div class="stat"><div class="stat-label">סכום חוב</div><div class="stat-value" style="color:var(--accent2);font-size:20px">${c.amount?'₪'+c.amount.toLocaleString():'—'}</div></div>
-      <div class="stat"><div class="stat-label">גבוי בפועל</div><div class="stat-value" style="color:var(--success);font-size:20px">₪${totalCollected.toLocaleString()}</div></div>
+      <div class="stat"><div class="stat-label">${c.caseType==='general'?'סכום / שווי':'סכום חוב'}</div><div class="stat-value" style="color:var(--accent2);font-size:20px">${c.amount?'₪'+c.amount.toLocaleString():'—'}</div></div>
+      <div class="stat"><div class="stat-label">${c.caseType==='general'?'התקבל בפועל':'גבוי בפועל'}</div><div class="stat-value" style="color:var(--success);font-size:20px">₪${totalCollected.toLocaleString()}</div></div>
       <div class="stat"><div class="stat-label">שכ"ט צפוי</div><div class="stat-value" style="color:var(--warning);font-size:18px">₪${expectedFee.toLocaleString()}</div></div>
       <div class="stat"><div class="stat-label">שלב</div><div style="font-size:14px;font-weight:600;color:var(--navy);margin-top:4px">${c.stage}</div>
         <div class="stage-bar">${stages.map((s,i)=>`<div class="stage-step ${i<stageIdx?'done':i===stageIdx?'current':''}"></div>`).join('')}</div>
@@ -684,16 +729,17 @@ function openCaseDetail(id) {
     <!-- Tabs -->
     <div class="card">
       <div class="tabs">
-        <div class="tab active" onclick="switchTab(this,'ct-tasks')">משימות (${caseTasks.length})</div>
-        <div class="tab" onclick="switchTab(this,'ct-events')">דיונים (${caseEvents.length})</div>
+        <div class="tab active" onclick="switchTab(this,'ct-diary')">יומן טיפול</div>
+        <div class="tab" onclick="switchTab(this,'ct-tasks')">משימות (${caseTasks.length})</div>
         <div class="tab" onclick="switchTab(this,'ct-docs')">מסמכים (${caseDocs.length})</div>
         <div class="tab" onclick="switchTab(this,'ct-payments')">תשלומים (${casePayments.length})</div>
-        <div class="tab" onclick="switchTab(this,'ct-diary')">יומן טיפול</div>
+        <div class="tab" onclick="switchTab(this,'ct-events')">דיונים (${caseEvents.length})</div>
         <div class="tab" onclick="switchTab(this,'ct-time')">שעות (${caseTime.length})</div>
+        <div class="tab" onclick="switchTab(this,'ct-efiling')">הגשה לנט המשפט${caseEfItems.length?' ('+caseEfItems.length+')':''}</div>
       </div>
 
       <!-- Tasks -->
-      <div id="ct-tasks">
+      <div id="ct-tasks" style="display:none">
         <button class="btn btn-sm" style="margin-bottom:10px" onclick="addTaskForCase('${id}')">+ משימה</button>
         ${caseTasks.length?caseTasks.map(t=>`<div class="task-item">
           ${taskCbHtml(t,true)}
@@ -719,11 +765,26 @@ function openCaseDetail(id) {
 
       <!-- Docs -->
       <div id="ct-docs" style="display:none">
-        <button class="btn btn-sm" style="margin-bottom:10px" onclick="addDocForCase('${id}')">+ מסמך</button>
+        <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:center">
+          <button class="btn btn-sm" onclick="addDocForCase('${id}')">+ מסמך</button>
+          <button class="btn btn-sm" onclick="openBatchUpload('${id}')">📎 העלאה מרובה</button>
+          <select class="form-input btn filter-select" style="font-size:12px" onchange="docsTabSort=this.value;openCaseDetail('${id}')">
+            <option value="added" ${docsTabSort==='added'?'selected':''}>מיון: נוסף לאחרונה</option>
+            <option value="opened" ${docsTabSort==='opened'?'selected':''}>מיון: נפתח לאחרונה</option>
+            <option value="type" ${docsTabSort==='type'?'selected':''}>מיון: סוג קובץ</option>
+          </select>
+          <select class="form-input btn filter-select" style="font-size:12px" onchange="docsTabFilterExt=this.value;openCaseDetail('${id}')">
+            <option value="">כל הסוגים</option>
+            <option value="pdf" ${docsTabFilterExt==='pdf'?'selected':''}>PDF</option>
+            <option value="doc" ${docsTabFilterExt==='doc'?'selected':''}>Word</option>
+            <option value="xls" ${docsTabFilterExt==='xls'?'selected':''}>Excel</option>
+            <option value="img" ${docsTabFilterExt==='img'?'selected':''}>תמונה</option>
+          </select>
+        </div>
         ${caseDocs.length?caseDocs.map(d=>`<div class="doc-item">
           <div class="doc-icon ${d.ext}">${d.ext.toUpperCase()}</div>
           <div style="flex:1"><div style="font-size:13px;font-weight:500;color:var(--navy)">${d.name}</div><div style="font-size:11px;color:var(--text3)">${d.date||''} ${d.notes?'· '+d.notes:''}</div></div>
-          ${d.filePath?`<button class="btn btn-sm" onclick="openFile('${d.filePath.replace(/\\/g,'/')}','${(d.origName||d.name||'').replace(/\\/g,'')}')">פתח</button>`:''}
+          ${d.filePath?`<button class="btn btn-sm" onclick="openFile('${d.id}','${d.filePath.replace(/\\/g,'/')}','${(d.origName||d.name||'').replace(/\\/g,'')}')">פתח</button>`:''}
           <button class="btn btn-sm" style="color:var(--danger);border:none;padding:2px 6px" onclick="delDoc('${d.id}',true)">✕</button>
         </div>`).join(''):'<div class="empty" style="padding:16px">אין מסמכים</div>'}
       </div>
@@ -743,14 +804,20 @@ function openCaseDetail(id) {
       </div>
 
       <!-- Diary -->
-      <div id="ct-diary" style="display:none">
+      <div id="ct-diary">
         <div style="display:flex;gap:8px;margin-bottom:12px">
           <textarea class="form-input" id="diary-input" placeholder="רשום פעולה, שיחה, הערה, התפתחות..." style="flex:1;min-height:60px"></textarea>
           <button class="btn btn-primary btn-sm" onclick="addDiary('${id}')">הוסף</button>
         </div>
-        ${(c.diary||[]).slice().reverse().map(e=>`<div style="background:var(--bg3);border-radius:var(--radius);padding:12px;margin-bottom:8px;border-right:2px solid var(--border2)">
-          <div style="font-size:11px;color:var(--text3);margin-bottom:4px">${e.date}</div>
-          <div style="font-size:13px;color:var(--text2);line-height:1.6">${e.text}</div>
+        ${(c.diary||[]).map((e,idx)=>({e,idx})).reverse().map(({e,idx})=>`<div style="background:var(--bg3);border-radius:var(--radius);padding:12px;margin-bottom:8px;border-right:2px solid var(--border2)">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:4px">
+            <div style="font-size:11px;color:var(--text3)">${e.date}</div>
+            <div style="display:flex;gap:4px;flex-shrink:0">
+              <button class="btn btn-sm" style="padding:1px 6px;font-size:11px" onclick="editDiary('${id}',${idx})">✏</button>
+              <button class="btn btn-sm" style="padding:1px 6px;font-size:11px;color:var(--danger);border:none" onclick="delDiary('${id}',${idx})">✕</button>
+            </div>
+          </div>
+          <div style="font-size:13px;color:var(--text2);line-height:1.6;white-space:pre-wrap">${e.text}</div>
         </div>`).join('') || '<div class="empty" style="padding:16px">אין רישומים</div>'}
       </div>
 
@@ -767,6 +834,15 @@ function openCaseDetail(id) {
           </div>
           <button class="btn btn-sm" style="color:var(--danger);border:none;padding:2px 6px" onclick="delTimeEntry('${t.id}')">✕</button>
         </div>`).join(''):'<div class="empty" style="padding:12px 0">אין רשומות שעות</div>'}
+      </div>
+
+      <!-- E-filing (נט המשפט) -->
+      <div id="ct-efiling" style="display:none">
+        <div class="alert alert-info">הוסף קבצים, סמן כל אחד כ"מסמך ראשי" או כ"נספח", סדר את הנספחים לפי הסדר הרצוי, ולחץ "הכן להגשה" — ייווצרו שערי נספחים ממוספרים (ותוכן עניינים אם יש מעל 5 נספחים) בהתאם לתקנות סדר הדין האזרחי. כל נספח נשאר קובץ נפרד (לא מאוחדים לקובץ אחד), כנדרש להגשה בנט המשפט.</div>
+        <button class="btn btn-sm" style="margin:10px 0" onclick="addEfilingFile('${id}')">+ הוסף קובץ</button>
+        ${efilingItemsHtml(id, caseEfItems)}
+        ${caseEfItems.length?`<button class="btn btn-primary" style="margin-top:12px" onclick="prepareEfilingBundle('${id}')">📑 הכן להגשה</button>`:''}
+        ${caseEfBundle.preparedAt?`<div class="alert alert-info" style="margin-top:10px">הוכן לאחרונה: ${new Date(caseEfBundle.preparedAt).toLocaleString('he-IL')}${caseEfBundle.tocFilePath?' · כולל תוכן עניינים':''}</div>`:''}
       </div>
     </div>
   `;
@@ -790,13 +866,201 @@ function markDocSigned(type) {
 
 function monthHE(m){const a=['','ינו','פבר','מרץ','אפר','מאי','יוני','יולי','אוג','ספט','אוק','נוב','דצמ'];return a[+m]||'';}
 
+// Editing reuses the same textarea/button rather than a separate form — diaryEditIndex
+// tracks which entry (by index into the underlying, non-reversed c.diary array) is being
+// edited, if any. Indexing avoids needing to backfill ids onto diary entries that predate
+// this feature.
+let diaryEditIndex = null;
 function addDiary(caseId) {
   const text=document.getElementById('diary-input').value.trim();
   if(!text) return;
   const c=db.cases.find(x=>x.id===caseId);
   if(!c.diary) c.diary=[];
-  c.diary.push({text, date:new Date().toLocaleString('he-IL')});
+  if(diaryEditIndex!==null && c.diary[diaryEditIndex]) c.diary[diaryEditIndex].text=text;
+  else c.diary.push({text, date:new Date().toLocaleString('he-IL')});
+  diaryEditIndex=null;
   saveDB(); openCaseDetail(caseId);
+}
+
+function editDiary(caseId, idx) {
+  const c=db.cases.find(x=>x.id===caseId);
+  if(!c || !c.diary || !c.diary[idx]) return;
+  diaryEditIndex=idx;
+  const input=document.getElementById('diary-input');
+  input.value=c.diary[idx].text;
+  input.focus();
+  const btn=document.querySelector(`[onclick="addDiary('${caseId}')"]`);
+  if(btn) btn.textContent='עדכן רישום';
+}
+
+async function delDiary(caseId, idx) {
+  if(!await customConfirm('למחוק רישום זה מיומן הטיפול?', {danger:true, okText:'מחק', title:'מחיקת רישום'})) return;
+  const c=db.cases.find(x=>x.id===caseId);
+  if(!c || !c.diary) return;
+  c.diary.splice(idx,1);
+  if(diaryEditIndex===idx) diaryEditIndex=null;
+  saveDB(); openCaseDetail(caseId);
+}
+
+// ===== E-FILING (הגשה לנט המשפט) =====
+// Per-case bundle of documents being organized for e-filing to נט המשפט: each item
+// is either the "מסמך ראשי" (main pleading) or a "נספח" (attachment). Attachment
+// numbering is NOT stored — it's always the item's 1-based position among role==='nispach'
+// items in bundle.items, so reordering can never desync numbers from what's displayed.
+// db.efilingBundles is a brand-new top-level key (see loadDB()'s defaulting), so it
+// can't affect any existing case/office data.
+function efilingOpenFile(p, name) { Platform.openFile(p, name); }
+
+async function addEfilingFile(caseId) {
+  const result = await Platform.pickFile();
+  if (!result) return;
+  let filePath;
+  try { filePath = await Platform.saveFile({ buffer: result.buffer, filename: result.filename }); }
+  catch (e) { notify('שגיאה: ' + e.message); return; }
+  if (!db.efilingBundles) db.efilingBundles = {};
+  if (!db.efilingBundles[caseId]) db.efilingBundles[caseId] = { items: [] };
+  const bundle = db.efilingBundles[caseId];
+  const hasMain = bundle.items.some(i => i.role === 'main');
+  bundle.items.push({
+    id: uid(), role: hasMain ? 'nispach' : 'main',
+    filePath, origName: result.filename, ext: getExt(result.filename),
+    title: result.filename.replace(/\.[^.]+$/, '')
+  });
+  saveDB();
+  if (currentPanel === 'case-detail') openCaseDetail(caseId);
+}
+
+function setEfilingRole(caseId, itemId, role) {
+  const bundle = db.efilingBundles && db.efilingBundles[caseId];
+  if (!bundle) return;
+  const it = bundle.items.find(x => x.id === itemId);
+  if (!it) return;
+  it.role = role;
+  saveDB();
+  if (currentPanel === 'case-detail') openCaseDetail(caseId);
+}
+
+function moveEfilingItem(caseId, itemId, dir) {
+  const bundle = db.efilingBundles && db.efilingBundles[caseId];
+  if (!bundle) return;
+  const i = bundle.items.findIndex(x => x.id === itemId);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= bundle.items.length) return;
+  [bundle.items[i], bundle.items[j]] = [bundle.items[j], bundle.items[i]];
+  saveDB();
+  if (currentPanel === 'case-detail') openCaseDetail(caseId);
+}
+
+async function deleteEfilingItem(caseId, itemId) {
+  if (!await customConfirm('להסיר קובץ זה מההגשה?', { danger: true, okText: 'הסר', title: 'הסרת קובץ' })) return;
+  const bundle = db.efilingBundles && db.efilingBundles[caseId];
+  if (!bundle) return;
+  bundle.items = bundle.items.filter(x => x.id !== itemId);
+  saveDB();
+  if (currentPanel === 'case-detail') openCaseDetail(caseId);
+}
+
+function efilingItemsHtml(caseId, items) {
+  if (!items.length) return '<div class="empty" style="padding:16px">עדיין לא נוספו קבצים</div>';
+  let nCount = 0;
+  return items.map((it, i) => {
+    if (it.role === 'nispach') nCount++;
+    const label = it.role === 'nispach' ? `נספח ${nCount} – ${it.title || it.origName || ''}` : (it.title || it.origName || '');
+    return `<div class="doc-item">
+      <div class="doc-icon ${it.ext || 'doc'}">${(it.ext || '').toUpperCase()}</div>
+      <div style="flex:1">
+        <div style="font-size:13px;font-weight:500;color:var(--navy)">${label}</div>
+        <div style="font-size:11px;color:var(--text3)">${it.role === 'main' ? 'מסמך ראשי' : 'נספח'}</div>
+      </div>
+      <select class="form-input btn filter-select" style="font-size:12px" onchange="setEfilingRole('${caseId}','${it.id}',this.value)">
+        <option value="main" ${it.role === 'main' ? 'selected' : ''}>מסמך ראשי</option>
+        <option value="nispach" ${it.role === 'nispach' ? 'selected' : ''}>נספח</option>
+      </select>
+      <button class="btn btn-sm" onclick="moveEfilingItem('${caseId}','${it.id}',-1)" ${i === 0 ? 'disabled' : ''}>↑</button>
+      <button class="btn btn-sm" onclick="moveEfilingItem('${caseId}','${it.id}',1)" ${i === items.length - 1 ? 'disabled' : ''}>↓</button>
+      ${it.filePath ? `<button class="btn btn-sm" onclick="efilingOpenFile('${(it.filePath || '').replace(/\\/g, '/')}','${(it.origName || it.title || '').replace(/\\/g, '')}')">פתח</button>` : ''}
+      <button class="btn btn-sm" style="color:var(--danger);border:none;padding:2px 6px" onclick="deleteEfilingItem('${caseId}','${it.id}')">✕</button>
+    </div>`;
+  }).join('');
+}
+
+// Format constants per the Courts Administrator's directive on document form/structure
+// (הודעה בדבר הוראת מנהל בתי המשפט בדבר צורת מסמך ומבנהו): A4, 2.5cm margins, David
+// font, 1.5 line spacing, 12pt body / 14pt titles / 36pt cover-page title, continuous
+// page numbers. MARGIN matches the existing 2.5cm constant already used in
+// draftDocument() (app.js, AI tool handlers) — kept in sync rather than reusing
+// generateReport's unrelated 2cm constant.
+const EFILING_MARGIN = 1418;
+const EFILING_FNT = { name: 'David', cs: 'David' };
+const EFILING_LANG = { value: 'he-IL', eastAsia: 'he-IL', bidi: 'he-IL' };
+function efP(text, opts = {}) {
+  return new Paragraph({
+    bidirectional: true,
+    alignment: opts.center ? AlignmentType.CENTER : AlignmentType.RIGHT,
+    spacing: { line: 360, lineRule: LineRuleType.AUTO, after: opts.after !== undefined ? opts.after : 200 },
+    children: [new TextRun({ text: String(text || ''), bold: !!opts.bold, size: opts.size || 24, font: EFILING_FNT, language: EFILING_LANG, color: '000000' })]
+  });
+}
+function efSection(children) {
+  return {
+    properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: EFILING_MARGIN, right: EFILING_MARGIN, bottom: EFILING_MARGIN, left: EFILING_MARGIN } }, rtl: true },
+    footers: { default: new Footer({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ children: [PageNumber.CURRENT], font: EFILING_FNT, size: 20 })] })] }) },
+    children
+  };
+}
+
+async function prepareEfilingBundle(caseId) {
+  const bundle = db.efilingBundles && db.efilingBundles[caseId];
+  if (!bundle || !bundle.items.length) { notify('אין קבצים בהגשה'); return; }
+  const caseObj = db.cases.find(x => x.id === caseId);
+  if (!caseObj) return;
+  const mainItems = bundle.items.filter(i => i.role === 'main');
+  const attachments = bundle.items.filter(i => i.role === 'nispach');
+  if (!mainItems.length) { notify('סמן מסמך ראשי אחד לפחות'); return; }
+  if (!attachments.length) { notify('הוסף נספח אחד לפחות'); return; }
+  notify('מכין הגשה...');
+  try {
+    for (let i = 0; i < attachments.length; i++) {
+      const item = attachments[i];
+      const number = i + 1;
+      // A separate numbered cover page per attachment — never merged into the
+      // attachment's own file, matching the Israel Bar Association's guidance that
+      // e-filed attachments must stay separate files, not one combined PDF.
+      const coverDoc = new Document({ sections: [efSection([
+        efP(caseObj.name, { size: 28, bold: true, after: 400 }),
+        efP(`נספח ${number}`, { center: true, bold: true, size: 72, after: 200 }),
+        efP(item.title || item.origName || '', { center: true, size: 28, after: 0 }),
+      ])] });
+      const coverBuf = await Packer.toBuffer(coverDoc);
+      const coverFilename = `נספח ${number} - שער.docx`;
+      const coverPath = await Platform.saveFile({ buffer: Array.from(coverBuf), filename: coverFilename });
+      item.coverFilePath = coverPath;
+      item.coverFilename = coverFilename;
+      db.docs.unshift({ id: uid(), name: coverFilename, cat: 'הגשה לנט המשפט', caseId, notes: '', date: new Date().toLocaleDateString('he-IL'), ext: 'doc', filePath: coverPath, origName: coverFilename });
+    }
+    // Table of contents is only required once a submission has more than 5
+    // attachments, per the directive.
+    let tocFilePath = null, tocFilename = null;
+    if (attachments.length > 5) {
+      const tocDoc = new Document({ sections: [efSection([
+        efP('תוכן עניינים', { center: true, bold: true, size: 72, after: 400 }),
+        efP(caseObj.name, { center: true, size: 28, after: 400 }),
+        ...attachments.map((a, i) => efP(`${i + 1}. ${a.title || a.origName || ''}`, { size: 24, after: 160 })),
+      ])] });
+      const tocBuf = await Packer.toBuffer(tocDoc);
+      tocFilename = `תוכן עניינים - ${caseObj.name}.docx`;
+      tocFilePath = await Platform.saveFile({ buffer: Array.from(tocBuf), filename: tocFilename });
+      db.docs.unshift({ id: uid(), name: tocFilename, cat: 'הגשה לנט המשפט', caseId, notes: '', date: new Date().toLocaleDateString('he-IL'), ext: 'doc', filePath: tocFilePath, origName: tocFilename });
+    }
+    bundle.tocFilePath = tocFilePath;
+    bundle.tocFilename = tocFilename;
+    bundle.preparedAt = new Date().toISOString();
+    saveDB();
+    notify(`ההגשה מוכנה! ${attachments.length} נספחים${tocFilePath ? ' + תוכן עניינים' : ''} ✓`);
+    if (currentPanel === 'case-detail') openCaseDetail(caseId);
+  } catch (e) {
+    notify('שגיאה בהכנת ההגשה: ' + e.message);
+  }
 }
 
 async function deleteCase() {
@@ -821,6 +1085,8 @@ function editCase() {
   document.getElementById('case-name').value=c.name;
   document.getElementById('case-client').value=c.client||'';
   document.getElementById('case-amount').value=c.amount||'';
+  document.getElementById('case-type').value=c.caseType||'debt';
+  updateCaseTypeUI();
   document.getElementById('case-stage').value=c.stage;
   document.getElementById('case-status').value=c.status;
   document.getElementById('case-number').value=c.number||'';
@@ -1533,7 +1799,11 @@ async function saveDoc(){
   saveDB();closeModal('modal-doc');notify('מסמך נשמר! ✓');renderDocs();selectedFile=null;
 }
 
-async function openFile(p,displayName){await Platform.openFile(p,displayName);}
+async function openFile(docId,p,displayName){
+  const d=db.docs.find(x=>x.id===docId);
+  if(d){ d.lastOpenedAt=new Date().toISOString(); saveDB(); }
+  await Platform.openFile(p,displayName);
+}
 
 function renderDocs(filter=''){
   const list=document.getElementById('docs-list');
@@ -1547,12 +1817,128 @@ function renderDocs(filter=''){
     ${docs.filter(d=>d.cat===cat).map(d=>`<div class="doc-item">
       <div class="doc-icon ${d.ext}">${d.ext.toUpperCase()}</div>
       <div style="flex:1"><div style="font-size:13px;font-weight:500;color:var(--navy)">${d.name}</div><div style="font-size:11px;color:var(--text3)">${d.date||''} ${d.notes?'· '+d.notes:''}</div></div>
-      ${d.filePath?`<button class="btn btn-sm" onclick="openFile('${d.filePath.replace(/\\/g,'/')}','${(d.origName||d.name||'').replace(/\\/g,'')}')">פתח</button>`:''}
+      ${d.filePath?`<button class="btn btn-sm" onclick="openFile('${d.id}','${d.filePath.replace(/\\/g,'/')}','${(d.origName||d.name||'').replace(/\\/g,'')}')">פתח</button>`:''}
       <button class="btn btn-sm" style="color:var(--danger);border:none;padding:2px 6px" onclick="delDoc('${d.id}')">✕</button>
     </div>`).join('')}
   </div>`).join('');
 }
 function delDoc(id,inDetail=false){db.docs=db.docs.filter(d=>d.id!==id);saveDB();if(inDetail)openCaseDetail(currentCaseId);else renderDocs();}
+
+// ===== BATCH DOCUMENT UPLOAD =====
+// A second, parallel entry point to the single-file modal-doc flow above — picks many
+// files at once via Platform.pickFiles(), then steps through each showing a live
+// preview + editable name/category/case, plus a one-click "add them all as-is" bulk
+// shortcut. batchStagedFiles holds the in-progress edits; nothing is saved to db.docs
+// (or Storage) until saveAllStaged()/addAllAsIs() runs.
+let batchStagedFiles = [];
+let batchStagedIdx = 0;
+let batchPreviewUrl = null; // the currently-shown step's blob: URL, revoked before the next one is created
+
+async function openBatchUpload(presetCaseId) {
+  const files = await Platform.pickFiles();
+  if (!files.length) return;
+  batchStagedFiles = files.map(f => ({
+    buffer: f.buffer, filename: f.filename,
+    name: f.filename.replace(/\.[^.]+$/, ''),
+    cat: 'אחר', caseId: presetCaseId || '', notes: '',
+    ext: getExt(f.filename)
+  }));
+  batchStagedIdx = 0;
+  openModal('modal-doc-batch');
+  renderBatchStep();
+}
+
+function closeBatchUpload() {
+  if (batchPreviewUrl) { URL.revokeObjectURL(batchPreviewUrl); batchPreviewUrl = null; }
+  batchStagedFiles = [];
+  closeModal('modal-doc-batch');
+}
+
+function batchSyncField(field, value) {
+  const f = batchStagedFiles[batchStagedIdx];
+  if (f) f[field] = value;
+}
+
+function stepBatch(dir) {
+  const j = batchStagedIdx + dir;
+  if (j < 0 || j >= batchStagedFiles.length) return;
+  batchStagedIdx = j;
+  renderBatchStep();
+}
+
+function renderBatchStep() {
+  const f = batchStagedFiles[batchStagedIdx];
+  if (!f) return;
+  const total = batchStagedFiles.length;
+  document.getElementById('batch-doc-title').textContent = `העלאה מרובה — מסמך ${batchStagedIdx + 1} מתוך ${total}`;
+  document.getElementById('batch-step-counter').textContent = `${batchStagedIdx + 1} / ${total}`;
+  document.getElementById('batch-prev-btn').disabled = batchStagedIdx === 0;
+  document.getElementById('batch-next-btn').disabled = batchStagedIdx === total - 1;
+  document.getElementById('batch-doc-name').value = f.name;
+  document.getElementById('batch-doc-cat').value = f.cat;
+  const caseSel = document.getElementById('batch-doc-case');
+  caseSel.innerHTML = '<option value="">ללא תיק</option>' + db.cases.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+  caseSel.value = f.caseId || '';
+  renderBatchPreview(f);
+}
+
+async function renderBatchPreview(f) {
+  if (batchPreviewUrl) { URL.revokeObjectURL(batchPreviewUrl); batchPreviewUrl = null; }
+  const box = document.getElementById('batch-doc-preview');
+  box.innerHTML = '<div class="empty">טוען תצוגה מקדימה...</div>';
+  try {
+    if (f.ext === 'pdf') {
+      batchPreviewUrl = URL.createObjectURL(new Blob([new Uint8Array(f.buffer)], { type: 'application/pdf' }));
+      box.innerHTML = `<iframe src="${batchPreviewUrl}" style="width:100%;height:320px;border:none"></iframe>`;
+    } else if (f.ext === 'img') {
+      batchPreviewUrl = URL.createObjectURL(new Blob([new Uint8Array(f.buffer)]));
+      box.innerHTML = `<img src="${batchPreviewUrl}" style="max-width:100%;max-height:320px;display:block;margin:0 auto">`;
+    } else if (/\.docx$/i.test(f.filename) && window.mammoth) {
+      const result = await window.mammoth.convertToHtml({ arrayBuffer: new Uint8Array(f.buffer).buffer });
+      box.innerHTML = `<div style="padding:12px;text-align:right;font-size:13px;line-height:1.6;width:100%">${result.value || '<i>מסמך ריק</i>'}</div>`;
+    } else {
+      box.innerHTML = `<div class="empty">📄 ${f.filename}<br><span style="font-size:11px">אין תצוגה מקדימה עבור סוג קובץ זה</span></div>`;
+    }
+  } catch (e) {
+    box.innerHTML = '<div class="empty">שגיאה בהצגת תצוגה מקדימה</div>';
+  }
+}
+
+async function saveAllStaged() {
+  if (!batchStagedFiles.length) return;
+  notify('שומר מסמכים...');
+  try {
+    for (const f of batchStagedFiles) {
+      const filePath = await Platform.saveFile({ buffer: f.buffer, filename: f.filename });
+      db.docs.unshift({ id: uid(), name: f.name || f.filename, cat: f.cat, caseId: f.caseId || '', notes: f.notes || '', date: new Date().toLocaleDateString('he-IL'), ext: f.ext, filePath, origName: f.filename });
+    }
+    saveDB();
+    notify(`${batchStagedFiles.length} מסמכים נשמרו! ✓`);
+    closeBatchUpload();
+    if (currentPanel === 'docs') renderDocs();
+    else if (currentPanel === 'case-detail') openCaseDetail(currentCaseId);
+  } catch (e) {
+    notify('שגיאה בשמירה: ' + e.message);
+  }
+}
+
+async function addAllAsIs() {
+  if (!batchStagedFiles.length) return;
+  notify('מוסיף מסמכים...');
+  try {
+    for (const f of batchStagedFiles) {
+      const filePath = await Platform.saveFile({ buffer: f.buffer, filename: f.filename });
+      db.docs.unshift({ id: uid(), name: f.filename.replace(/\.[^.]+$/, ''), cat: 'אחר', caseId: f.caseId || '', notes: '', date: new Date().toLocaleDateString('he-IL'), ext: f.ext, filePath, origName: f.filename });
+    }
+    saveDB();
+    notify(`${batchStagedFiles.length} מסמכים נוספו! ✓`);
+    closeBatchUpload();
+    if (currentPanel === 'docs') renderDocs();
+    else if (currentPanel === 'case-detail') openCaseDetail(currentCaseId);
+  } catch (e) {
+    notify('שגיאה בהוספה: ' + e.message);
+  }
+}
 
 // ===== DASHBOARD =====
 function renderDashboard(){
@@ -1577,7 +1963,7 @@ function renderDashboard(){
   document.getElementById('s-tasks').textContent=openT;
   document.getElementById('s-overdue-txt').textContent=overdue?`${overdue} באיחור`:'';
 
-  const stages=['איסוף מסמכים','התראה ראשונה','גישור','כתב תביעה','דיון','הוצאה לפועל','סגור'];
+  const stages=[...new Set([...CASE_STAGES.debt,...CASE_STAGES.general])];
   const stageCounts=stages.reduce((o,s)=>{o[s]=db.cases.filter(c=>c.stage===s).length;return o;},{});
   document.getElementById('d-stages').innerHTML=stages.map(s=>`<div class="fin-row">
     <div style="font-size:13px;color:var(--text2)">${s}</div>
@@ -1613,7 +1999,7 @@ function renderDashboard(){
 function switchTab(el,id){
   el.closest('.card').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   el.classList.add('active');
-  ['ct-tasks','ct-docs','ct-events','ct-diary','ct-payments','ct-time'].forEach(t=>{const e=document.getElementById(t);if(e)e.style.display='none';});
+  ['ct-tasks','ct-docs','ct-events','ct-diary','ct-payments','ct-time','ct-efiling'].forEach(t=>{const e=document.getElementById(t);if(e)e.style.display='none';});
   const t=document.getElementById(id);if(t)t.style.display='block';
 }
 
@@ -1946,21 +2332,22 @@ async function createTeamInvite() {
   } catch (e) { notify('שגיאה: ' + e.message); }
 }
 // ===== AI AGENT =====
-const AGENT_SYSTEM_PROMPT = `אתה עוזר משפטי חכם ומנוסה בתוכנת LexTrack של עו״ד ירין אשואל לניהול תיקי גבייה. יש לך גישה מלאה לקרוא את כל הנתונים: תיקים, לקוחות, תשלומים, יומני טיפול, מסמכים ואירועים. אתה יכול: ליצור תיקים ולקוחות, להפיק הסכמי שכר טרחה וייפויי כוח, לרשום משימות/תשלומים/אירועים, לסכם תיקים לפי יומן הטיפול, לנתח את כל התיקים (מה דחוף, מה תקוע, מה הוזנח), לתת המלצות לפעולה, ולהפיק דוחות כספיים. יש לך גישה לספריית מסמכים משפטיים (בקשות והסכמים) המכילה דוגמאות אמיתיות לפי סוג מסמך – כשמתבקש לנסח מסמך, קרא דוגמאות רלוונטיות מהספרייה, שלב אותן עם נתוני התיק והידע המשפטי שלך, וצור טיוטה מקצועית. כשמבקשים סיכום או דוח – הצג כטקסט ברור, ואם מבקשים 'מסמך' או 'קובץ' – הפק מסמך Word. תמיד אשר פעולות יצירה מיד, ובקש אישור לפני מחיקה או עריכה. דבר עברית מקצועית, תמציתית ומדויקת. כשאתה מנתח תיק – התבסס על העובדות מהיומן ומהנתונים, אל תמציא.`;
+const AGENT_SYSTEM_PROMPT = `אתה עוזר משפטי חכם ומנוסה בתוכנת LexTrack של עו״ד ירין אשואל לניהול תיקים משפטיים מכל סוג (גבייה, וגם תיקים כלליים אחרים). יש לך גישה מלאה לקרוא את כל הנתונים: תיקים, לקוחות, תשלומים, יומני טיפול, מסמכים ואירועים. אתה יכול: ליצור תיקים ולקוחות, להפיק הסכמי שכר טרחה וייפויי כוח, לרשום משימות/תשלומים/אירועים, לסכם תיקים לפי יומן הטיפול, לנתח את כל התיקים (מה דחוף, מה תקוע, מה הוזנח), לתת המלצות לפעולה, ולהפיק דוחות כספיים. יש לך גישה לספריית מסמכים משפטיים (בקשות והסכמים) המכילה דוגמאות אמיתיות לפי סוג מסמך – כשמתבקש לנסח מסמך, קרא דוגמאות רלוונטיות מהספרייה, שלב אותן עם נתוני התיק והידע המשפטי שלך, וצור טיוטה מקצועית. כשמבקשים סיכום או דוח – הצג כטקסט ברור, ואם מבקשים 'מסמך' או 'קובץ' – הפק מסמך Word. תמיד אשר פעולות יצירה מיד, ובקש אישור לפני מחיקה או עריכה. דבר עברית מקצועית, תמציתית ומדויקת. כשאתה מנתח תיק – התבסס על העובדות מהיומן ומהנתונים, אל תמציא.`;
 
 const AGENT_TOOLS = [
-  { name:'createCase', description:'צור תיק גבייה חדש במערכת',
+  { name:'createCase', description:'צור תיק חדש במערכת (גבייה או תיק כללי)',
     input_schema:{ type:'object', required:['name'], properties:{
       name:{type:'string',description:'שם התיק (לדוגמה: כהן נ׳ לוי)'},
+      caseType:{type:'string',enum:['debt','general'],description:'סוג התיק: debt=תיק גבייה (יש חייב וסכום חוב), general=תיק כללי. ברירת מחדל debt.'},
       clientName:{type:'string',description:'שם הלקוח המזמין – יחפש לפי שם קיים'},
-      debtorName:{type:'string',description:'שם החייב'},
-      debtorId:{type:'string',description:'ת.ז / ח.פ של החייב'},
-      debtorAddress:{type:'string',description:'כתובת החייב'},
-      debtDesc:{type:'string',description:'תיאור החוב / מקורו'},
-      amount:{type:'number',description:'סכום חוב בשקלים'},
+      debtorName:{type:'string',description:'שם החייב (בתיק גבייה) או הצד השני (בתיק כללי)'},
+      debtorId:{type:'string',description:'ת.ז / ח.פ של הצד השני'},
+      debtorAddress:{type:'string',description:'כתובת הצד השני'},
+      debtDesc:{type:'string',description:'תיאור החוב/מקורו (תיק גבייה) או תיאור התיק (תיק כללי)'},
+      amount:{type:'number',description:'סכום חוב בשקלים (רלוונטי בעיקר לתיק גבייה)'},
       feeType:{type:'string',enum:['percent','fixed','both','hourly'],description:'סוג שכ"ט'},
       feePct:{type:'number',description:'אחוז שכ"ט (כאשר feeType=percent)'},
-      stage:{type:'string',enum:['איסוף מסמכים','התראה ראשונה','גישור','כתב תביעה','דיון','הוצאה לפועל','סגור'],description:'שלב טיפול'}
+      stage:{type:'string',description:'שלב טיפול. לתיק גבייה: איסוף מסמכים/התראה ראשונה/גישור/כתב תביעה/דיון/הוצאה לפועל/סגור. לתיק כללי: פתיחה/בטיפול/ממתין לצד ג׳/דיון/סגור.'}
     }}
   },
   { name:'createClient', description:'צור לקוח חדש במערכת',
@@ -2285,9 +2672,11 @@ async function agentExecTool(name, input) {
           const cl = db.clients.find(c=>c.name.includes(q)||q.includes(c.name));
           if (cl) clientId = cl.id;
         }
+        const caType = input.caseType==='general' ? 'general' : 'debt';
+        const caStages = CASE_STAGES[caType];
         const obj = {
-          id:uid(), name:input.name, client:clientId,
-          amount:input.amount||0, stage:input.stage||'איסוף מסמכים', status:'active',
+          id:uid(), name:input.name, client:clientId, caseType:caType,
+          amount:input.amount||0, stage:(input.stage&&caStages.includes(input.stage))?input.stage:caStages[0], status:'active',
           number:'', notes:'', court:'', courtNumber:'',
           debtorName:input.debtorName||'', debtorId:input.debtorId||'',
           debtorAddress:input.debtorAddress||'', debtorPhone:'', debtorEmail:'', debtorType:'יחיד',
@@ -2333,7 +2722,7 @@ async function agentExecTool(name, input) {
         const cl = db.clients.find(x=>x.id===c.client)||{};
         const { filePath: fpPoa, filename: fnPoa } = await fillLegalTemplate('poa', {
           grantorName:cl.name||'', grantorId:cl.idNum||'',
-          matter:`גבייה מ${c.debtorName||'החייב'} בסך ₪${(c.amount||0).toLocaleString()}${c.debtDesc?' – '+c.debtDesc:''}`
+          matter:c.debtorName?`גבייה מ${c.debtorName} בסך ₪${(c.amount||0).toLocaleString()}${c.debtDesc?' – '+c.debtDesc:''}`:`ייצוג בעניין ${c.name}`
         }, c);
         notify('ייפוי כוח נפתח!');
         await Platform.openFile(fpPoa, fnPoa);
@@ -2503,7 +2892,7 @@ async function agentExecTool(name, input) {
         ].join('\n');
       }
       case 'getRecommendations': {
-        const stRec={'איסוף מסמכים':'לאסוף מסמכי חוב ולשלוח מכתב התראה ראשון','התראה ראשונה':'לבדוק אם חלפו 14-30 יום ולשקול פנייה משפטית או גישור','גישור':'לתאם ישיבת גישור; אם נכשל – לעבור לכתב תביעה','כתב תביעה':'להגיש כתב תביעה לבית המשפט המוסמך','דיון':'להתכונן לדיון ולוודא כל המסמכים מוכנים','הוצאה לפועל':'לעקוב אחר הליכי הוצל"פ ולדרוש עיקולים','סגור':'תיק סגור'};
+        const stRec={'איסוף מסמכים':'לאסוף מסמכי חוב ולשלוח מכתב התראה ראשון','התראה ראשונה':'לבדוק אם חלפו 14-30 יום ולשקול פנייה משפטית או גישור','גישור':'לתאם ישיבת גישור; אם נכשל – לעבור לכתב תביעה','כתב תביעה':'להגיש כתב תביעה לבית המשפט המוסמך','דיון':'להתכונן לדיון ולוודא כל המסמכים מוכנים','הוצאה לפועל':'לעקוב אחר הליכי הוצל"פ ולדרוש עיקולים','סגור':'תיק סגור','פתיחה':'לוודא שכל פרטי התיק והמסמכים הראשוניים נאספו','בטיפול':'לבדוק מה הצעד הבא הנדרש ולתעד ביומן הטיפול','ממתין לצד ג\'':'לעקוב אחר תגובת הצד השלישי ולתזכר במידת הצורך'};
         const todayRec=localDateISO(new Date());
         let recList;
         if (input.caseId&&input.caseId!=='all'){const rc=db.cases.find(x=>x.id===input.caseId);if(!rc) return 'תיק לא נמצא.';recList=[rc];}
@@ -2822,7 +3211,7 @@ async function agentUploadFile() {
   const statusEl = agentAddStatus('מנתח מסמך...');
   try {
     let userContent;
-    const extractPrompt = 'חלץ מהמסמך את כל הפרטים הרלוונטיים לתיק גבייה: שם לקוח, שם חייב, מספרי זהות/ח.פ, סכומים חוב, כתובות, תיאור החוב/עסקה. השב בעברית בפורמט ברור עם כותרות. אם הפרטים חסרים – ציין זאת.';
+    const extractPrompt = 'חלץ מהמסמך את כל הפרטים הרלוונטיים לתיק: שם לקוח, שם צד שכנגד/חייב, מספרי זהות/ח.פ, סכומים (אם רלוונטי), כתובות, תיאור העניין/החוב. השב בעברית בפורמט ברור עם כותרות. אם הפרטים חסרים – ציין זאת.';
     if (['jpg','jpeg','png','gif','webp'].includes(ext)) {
       const mt = ext==='jpg'||ext==='jpeg'?'image/jpeg':ext==='png'?'image/png':ext==='gif'?'image/gif':'image/webp';
       const b64 = Buffer.from(buffer).toString('base64');

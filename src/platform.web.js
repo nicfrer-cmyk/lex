@@ -441,6 +441,32 @@ window.Platform = {
     });
   },
 
+  // Same shape as pickFile() but resolves an array (possibly empty if cancelled),
+  // one {buffer,filename} per selected file, in the order the OS file picker
+  // returned them (FileList preserves selection order).
+  pickFiles() {
+    return new Promise((resolve) => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.multiple = true;
+      input.style.display = 'none';
+      const cleanup = () => { if (input.parentNode) input.parentNode.removeChild(input); };
+      input.onchange = async () => {
+        const files = Array.from(input.files || []);
+        cleanup();
+        if (!files.length) { resolve([]); return; }
+        const results = await Promise.all(files.map(file => new Promise((res) => {
+          const reader = new FileReader();
+          reader.onload = () => res({ buffer: Array.from(new Uint8Array(reader.result)), filename: file.name, filePath: file.name });
+          reader.readAsArrayBuffer(file);
+        })));
+        resolve(results);
+      };
+      document.body.appendChild(input);
+      input.click();
+    });
+  },
+
   async readTemplate(templateName) {
     try {
       const { officeId } = await currentOffice();
