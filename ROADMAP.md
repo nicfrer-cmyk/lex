@@ -1,6 +1,34 @@
 # LexTrack — pending decisions / next steps
 
-Last updated 2026-07-06 (evening). Payment processor: Meshulam/Grow (existing account). Plan: ₪97/month, 20GB storage, 14-day free trial, no card required at signup — payment only required once the trial actually ends (product decision, 2026-07-05).
+Last updated 2026-07-21. Payment processor: Meshulam/Grow (existing account). Plan: ₪97/month, 20GB storage, 14-day free trial, no card required at signup — payment only required once the trial actually ends (product decision, 2026-07-05).
+
+## 2026-07-21 — general legal CRM repositioning, batch upload, e-filing prep, document viewer/editing, full audit + polish
+
+Two work sessions, both pushed live:
+
+**Session A — repositioning + 4 new/changed features:**
+- **General legal CRM, not collection-only.** New `case.caseType` ('debt'|'general') drives which stage list and field labels show (`CASE_STAGES`/`getCaseStages()` — was a hardcoded 7-value collection pipeline in ~5 places). Debtor name is no longer a hard-required field. Finance/dashboard/AI-agent copy relabeled neutrally. Fully backward-compatible — existing cases default to `caseType:'debt'`.
+- **Case-detail redesign**: יומן טיפול (diary) is now the default/first tab with edit/delete; דיונים moved later; docs tab got sort (added/last-opened/type) + type filter.
+- **New נט המשפט e-filing tab** per case: mark files as main/attachment, reorder/auto-number, generate per-attachment cover pages + a TOC docx (>5 attachments) per the Courts Administrator's actual document-format directive, keeping attachments as separate files (per Israel Bar guidance — never merged into one PDF).
+- **Batch document upload**: pick many files at once, step through each with a live preview (PDF/image/docx) + editable name/category/case, plus a one-click "add all as-is."
+- Removed the redundant "מסמכים משפטיים" status card from case-detail (the "⋮ עוד" menu already generates the same documents — was taking up space for a workflow the owner doesn't use, by his own call).
+- New "ניתוח משרד" (office analytics) tab: period selector, 6 KPIs, two weekly trend charts, a "needs attention" list (stuck/neglected cases, overdue tasks, upcoming hearings), and office performance stats. Needed two new fields (`case.closedAt`, `task.completedAt`) that don't exist for pre-existing closed cases/completed tasks — those won't show up retroactively in the stats, only from now on.
+- Fixed a bug from earlier this same session: the dashboard's "stage breakdown" card was showing all ~10 possible stages (debt+general combined) unconditionally, pushing the whole dashboard into needing a scroll — now only shows stages that actually have a case in them.
+
+**Session B — document viewer/editing + full audit + UX pass:**
+- **Documents now open in an in-app viewer** (PDF/image inline, docx via mammoth) instead of forcing an immediate download. Every document has a "⋮" menu: open/preview, rename, duplicate, download, **update version**, email, WhatsApp, delete.
+- **Editing loop, honestly scoped**: a browser tab cannot detect that a separate native app (Word) closed a file it doesn't control — no browser exposes that. So "open → edit → save → back in the system" is a real two-step loop: "פתח לעריכה" downloads and opens the file in whatever app is associated with it (typically Word); "עדכן גרסה" (always shown right next to it) re-uploads the saved file onto the *same* document row (same id/name/category/case — no duplicate). This is explained to the user in-app, not just here.
+- **Full bug-audit sweep** (3 parallel reviewers: frontend logic, HTML/UX/mobile, database security/RLS) over everything built this session. Real bugs found and fixed, most severe first:
+  - Diary edit-in-progress state (`diaryEditIndex`) was a global that didn't track *which case* it belonged to — editing an entry in case A, then navigating away without saving and adding a new note in case B, could silently overwrite an unrelated entry in B. Fixed (now tracks case id too, and resets on every case-detail render, which already wipes the visible edit state anyway).
+  - Same variable also desynced if a lower-index diary entry was deleted while a higher-index edit was in progress — fixed.
+  - The in-case docs tab's sort/filter was a global, not scoped per case — switching cases could leave a filter silently hiding documents in the new case with only an easy-to-miss dropdown value as evidence. Now resets when switching to a different case.
+  - Re-running "הכן להגשה" (prepare e-filing bundle) after adding one more attachment left the *previous* run's cover-page/TOC files sitting in the docs list alongside the new ones, indistinguishable — real risk of e-filing the wrong cover page. Fixed: old generated set is purged before regenerating.
+  - Power-of-attorney "subject" text was hardcoded as debt-collection wording ("גבייה מ...") gated only on whether a debtor-name field was filled — since a *general*-type case reuses that same field for "צד קשור," a general matter could generate a POA that literally says "debt collection from X." Fixed to gate on `caseType` explicitly.
+  - Two mobile bugs: the per-document "⋮" menu (reused in many more places than its original single use) anchored the wrong edge and could render off-screen on a phone; the e-filing tab's per-item row (role select + 4 buttons) overflowed unwrapped on a phone — both fixed, the e-filing row now also collapses into a "⋮" menu.
+  - Case-detail grew to 7 tabs; wrapping (the default) pushed content down by 2-3 lines on mobile — now a single horizontally-scrollable row instead.
+  - Added a lightweight audit stamp (`lastSharedAt`/`lastSharedVia`) when generating a share link, since it's a week-long-valid unauthenticated bearer URL.
+  - Independent RLS/security re-check: no cross-tenant leak, no RLS recursion, no `auth.users` permission trap in any of this session's new Platform methods (`getViewUrl`/`getShareUrl`/`downloadFileBytes`/`pickFiles`) — every one only ever operates on a `filePath` sourced from the office's own already-loaded data, never user-supplied, with Storage RLS as a second backstop either way.
+- Everything verified in real Chromium via Playwright (not just jsdom) — including at a real 390×844 phone viewport — with `saveDB` stubbed to avoid touching the live Supabase project (no separate dev/staging environment exists for this account).
 
 ## Status
 

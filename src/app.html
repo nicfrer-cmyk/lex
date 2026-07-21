@@ -65,6 +65,7 @@ body{font-family:'Heebo',sans-serif;background:var(--bg);color:var(--text);heigh
 .card-title{font-size:11px;font-weight:600;color:var(--text3);margin-bottom:14px;text-transform:uppercase;letter-spacing:0.08em}
 .stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
 .stats-grid-5{grid-template-columns:repeat(5,1fr)}
+.stats-grid-6{grid-template-columns:repeat(6,1fr)}
 .filter-select{width:110px;padding:6px 10px;font-size:12px}
 .filter-select-wide{width:130px}
 .stat{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px;box-shadow:var(--shadow-sm)}
@@ -225,6 +226,12 @@ textarea.form-input{resize:vertical;min-height:80px}
    edge instead grows it leftward, into the screen, where there's actually room. */
 .overflow-menu{position:absolute;top:calc(100% + 4px);right:0;background:var(--bg2);border:1px solid var(--border2);border-radius:var(--radius);box-shadow:var(--shadow-md);display:none;flex-direction:column;min-width:170px;z-index:120;overflow:hidden}
 .overflow-menu.open{display:flex}
+/* The reasoning above only holds when the trigger sits at the RIGHT edge of its row
+   (an RTL flex row's first child). docItemHtml's per-document "⋮" is the LAST child of
+   a plain-flex .doc-item, which puts it at the LEFT edge instead — right:0 there grows
+   the menu further left, off the viewport, the exact bug described above just on the
+   opposite side. Used wherever a trigger is a row's trailing (visually left) element. */
+.overflow-menu-wrap.anchor-left .overflow-menu{right:auto;left:0}
 .overflow-menu button{background:none;border:none;text-align:right;padding:10px 14px;font-size:13px;cursor:pointer;font-family:'Heebo',sans-serif;color:var(--text);white-space:nowrap}
 .overflow-menu button:hover{background:var(--bg3)}
 /* ===== AI AGENT ===== */
@@ -298,6 +305,14 @@ textarea.form-input{resize:vertical;min-height:80px}
   /* Stack every multi-column grid to one column */
   .stats-grid,.two-col,.three-col,.client-grid,.form-row{grid-template-columns:1fr}
   .stats-grid{grid-template-columns:repeat(2,1fr)}
+
+  /* Case-detail grew to 7 tabs — wrapping them (the desktop default) pushed the tab
+     content down by 2-3 extra lines' worth of vertical space on every phone. A
+     horizontally-scrollable single row (swipeable, like most mobile tab bars) keeps
+     it compact instead; flex-shrink:0 stops individual labels from getting squeezed. */
+  .tabs{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  .tabs::-webkit-scrollbar{display:none}
+  .tab{flex-shrink:0}
 
   /* Modals: near-full-screen instead of a centered box that feels cramped */
   .modal{width:100%;max-width:100vw;padding:18px;border-radius:var(--radius-lg) var(--radius-lg) 0 0;max-height:92vh}
@@ -456,6 +471,9 @@ textarea.form-input{resize:vertical;min-height:80px}
     <div class="nav-item" onclick="nav('docs',this)">
       <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 1h7l3 3v11H3z"/><path d="M10 1v3h3M6 8h5M6 11h3"/></svg>מסמכים
     </div>
+    <div class="nav-item" onclick="nav('analytics',this)">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 14V8M6 14V4M10 14V9M14 14V2"/></svg>ניתוח משרד
+    </div>
     <div class="nav-item" id="nav-templates-item" onclick="nav('templates',this)" style="display:none">
       <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="1" width="12" height="14" rx="1"/><path d="M5 5h6M5 8h6M5 11h3"/></svg>תבניות
     </div>
@@ -493,13 +511,13 @@ textarea.form-input{resize:vertical;min-height:80px}
           <div class="stat"><div class="stat-label">משימות פתוחות</div><div class="stat-value" id="s-tasks" style="color:var(--warning)">0</div><div class="stat-sub" id="s-overdue-txt"></div></div>
           <div class="stat"><div class="stat-label">שעות החודש</div><div class="stat-value" id="s-hours" style="color:var(--accent2);font-size:20px">0:00</div><div class="stat-sub" id="s-hours-txt"></div></div>
         </div>
-        <div class="two-col">
-          <div class="card"><div class="card-title">תיקים – לפי שלב</div><div id="d-stages"></div></div>
-          <div class="card"><div class="card-title">משימות דחופות</div><div id="d-tasks"></div></div>
+        <div class="two-col" style="margin-bottom:16px">
+          <div class="card" style="margin-bottom:0"><div class="card-title">תיקים – לפי שלב</div><div id="d-stages" style="max-height:190px;overflow-y:auto"></div></div>
+          <div class="card" style="margin-bottom:0"><div class="card-title">משימות דחופות</div><div id="d-tasks" style="max-height:190px;overflow-y:auto"></div></div>
         </div>
         <div class="two-col">
-          <div class="card"><div class="card-title">דיונים קרובים</div><div id="d-events"></div></div>
-          <div class="card"><div class="card-title">תיקים אחרונים</div><div id="d-cases"></div></div>
+          <div class="card" style="margin-bottom:0"><div class="card-title">דיונים קרובים</div><div id="d-events" style="max-height:190px;overflow-y:auto"></div></div>
+          <div class="card" style="margin-bottom:0"><div class="card-title">תיקים אחרונים</div><div id="d-cases" style="max-height:190px;overflow-y:auto"></div></div>
         </div>
       </div>
     </div>
@@ -696,6 +714,45 @@ textarea.form-input{resize:vertical;min-height:80px}
           <div class="empty-main-icon">📄</div>
           <div class="empty-main-title">עדיין אין מסמכים</div>
           <div class="empty-main-sub">לחץ/י על "הוסף מסמך" למעלה כדי להעלות את המסמך הראשון</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- OFFICE ANALYTICS -->
+    <div id="panel-analytics" class="panel">
+      <div class="topbar">
+        <div class="topbar-title">ניתוח משרד</div>
+        <div class="topbar-actions">
+          <select class="form-input btn filter-select filter-select-wide" id="analytics-period" onchange="renderAnalytics()">
+            <option value="week">השבוע האחרון</option>
+            <option value="month">החודש האחרון</option>
+            <option value="quarter">3 החודשים האחרונים</option>
+            <option value="all">מאז ומעולם</option>
+          </select>
+        </div>
+      </div>
+      <div class="content">
+        <div class="stats-grid stats-grid-6">
+          <div class="stat"><div class="stat-label">תיקים חדשים</div><div class="stat-value" id="an-new-cases" style="font-size:20px">0</div></div>
+          <div class="stat"><div class="stat-label">תיקים שנסגרו</div><div class="stat-value" id="an-closed-cases" style="font-size:20px">0</div></div>
+          <div class="stat"><div class="stat-label">דיונים / אירועים</div><div class="stat-value" id="an-events" style="font-size:20px">0</div></div>
+          <div class="stat"><div class="stat-label">גבייה</div><div class="stat-value" id="an-collected" style="color:var(--success);font-size:18px">₪0</div></div>
+          <div class="stat"><div class="stat-label">שעות עבודה</div><div class="stat-value" id="an-hours" style="color:var(--accent2);font-size:20px">0:00</div></div>
+          <div class="stat"><div class="stat-label">משימות שהושלמו</div><div class="stat-value" id="an-tasks-done" style="font-size:20px">0</div></div>
+        </div>
+        <div class="two-col">
+          <div class="card"><div class="card-title">שעות עבודה – 8 שבועות אחרונים</div><div id="an-hours-chart"></div></div>
+          <div class="card"><div class="card-title">גבייה – 8 שבועות אחרונים</div><div id="an-collected-chart"></div></div>
+        </div>
+        <div class="two-col">
+          <div class="card">
+            <div class="card-title">לתשומת לב</div>
+            <div id="an-attention"></div>
+          </div>
+          <div class="card">
+            <div class="card-title">ביצועי משרד</div>
+            <div id="an-performance"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -987,7 +1044,7 @@ textarea.form-input{resize:vertical;min-height:80px}
 <div class="modal-overlay" id="modal-doc-batch">
   <div class="modal modal-wide">
     <div class="modal-header"><div class="modal-title" id="batch-doc-title">העלאה מרובה</div><button class="modal-close" onclick="closeBatchUpload()">×</button></div>
-    <div id="batch-doc-preview" style="min-height:180px;max-height:320px;overflow:auto;background:var(--bg3);border-radius:var(--radius);margin-bottom:12px;display:flex;align-items:center;justify-content:center;text-align:center"></div>
+    <div id="batch-doc-preview" style="min-height:140px;max-height:min(320px,42vh);overflow:auto;background:var(--bg3);border-radius:var(--radius);margin-bottom:12px;display:flex;align-items:center;justify-content:center;text-align:center"></div>
     <div class="form-group"><label class="form-label">שם המסמך *</label><input class="form-input" id="batch-doc-name" oninput="batchSyncField('name',this.value)"></div>
     <div class="form-row">
       <div class="form-group"><label class="form-label">קטגוריה</label>
@@ -1008,6 +1065,17 @@ textarea.form-input{resize:vertical;min-height:80px}
       <button class="btn" style="width:100%" onclick="addAllAsIs()">✓ הוסף הכל כפי שהם (ללא עריכה)</button>
       <button class="btn" style="width:100%" onclick="closeBatchUpload()">ביטול</button>
     </div>
+  </div>
+</div>
+
+<!-- MODAL DOC PREVIEW: opening a document now shows it in-app instead of forcing a
+     download — downloadDoc() remains the explicit escape hatch for actually saving
+     a copy to disk. -->
+<div class="modal-overlay" id="modal-doc-preview">
+  <div class="modal modal-wide">
+    <div class="modal-header"><div class="modal-title" id="doc-preview-title">תצוגת מסמך</div><button class="modal-close" onclick="closeModal('modal-doc-preview')">×</button></div>
+    <div id="doc-preview-body" style="min-height:200px"></div>
+    <div id="doc-preview-actions" style="margin-top:10px"></div>
   </div>
 </div>
 

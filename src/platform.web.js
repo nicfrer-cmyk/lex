@@ -419,6 +419,30 @@ window.Platform = {
     document.body.removeChild(a);
   },
 
+  // In-app preview (opened in an <iframe>/<img>, not downloaded): no `download` option,
+  // so Storage serves its default (inline) Content-Disposition. Short expiry is fine —
+  // the URL is consumed immediately by the preview modal, never stored/shared.
+  async getViewUrl(filePath) {
+    const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(filePath, 120);
+    if (error) throw error;
+    return data.signedUrl;
+  },
+
+  // For email/WhatsApp share links, which may sit unopened in an inbox/chat for a
+  // while — a week-long expiry so the link the recipient actually clicks still works.
+  async getShareUrl(filePath, displayName) {
+    const { data, error } = await supabase.storage.from(BUCKET)
+      .createSignedUrl(filePath, 60 * 60 * 24 * 7, { download: displayName || filePath.split('/').pop() });
+    if (error) throw error;
+    return data.signedUrl;
+  },
+
+  async downloadFileBytes(filePath) {
+    const { data, error } = await supabase.storage.from(BUCKET).download(filePath);
+    if (error) throw error;
+    return { buffer: await blobToByteArray(data) };
+  },
+
   pickFile() {
     return new Promise((resolve) => {
       const input = document.createElement('input');

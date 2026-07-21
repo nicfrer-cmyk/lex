@@ -28,9 +28,14 @@ let currentCaseId = null;
 let selectedFile = null;
 // In-case docs tab (ct-docs) sort/filter state — read by openCaseDetail() on every
 // re-render, set by the controls in that tab; kept as plain globals (not per-case)
-// since only one case-detail page is ever open at a time.
+// since only one case-detail page is ever open at a time. docsTabCaseId tracks which
+// case they currently apply to, so openCaseDetail() can reset them back to defaults
+// when switching to a DIFFERENT case (a filter silently hiding documents in a case the
+// user never applied it to, with only an easy-to-miss dropdown value as evidence, is
+// a real correctness risk in a legal document-tracking tool).
 let docsTabSort = 'added';
 let docsTabFilterExt = '';
+let docsTabCaseId = null;
 let currentLegalDocType = null;
 let casesView = localStorage.getItem('lextrack-view') || 'table';
 let currentClientId = null;
@@ -122,7 +127,7 @@ function refreshSidebar() {
 // ===== NAV =====
 let currentPanel = 'dashboard';
 function nav(id, el) {
-  if (id === 'finance' && currentRole === 'secretary') { id = 'dashboard'; el = null; }
+  if ((id === 'finance' || id === 'analytics') && currentRole === 'secretary') { id = 'dashboard'; el = null; }
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   document.getElementById('panel-'+id).classList.add('active');
@@ -141,6 +146,7 @@ function nav(id, el) {
   if(id==='calendar') renderCalendar();
   if(id==='finance') renderFinance();
   if(id==='docs') renderDocs();
+  if(id==='analytics') renderAnalytics();
   if(id==='templates' && typeof tmRender==='function') tmRender();
 }
 
@@ -378,13 +384,20 @@ function saveCase() {
   if(!name){notify('נא להזין שם תיק');return;}
   const eid=document.getElementById('case-edit-id').value;
   const old = eid ? db.cases.find(c=>c.id===eid) : {};
+  const newStatus=document.getElementById('case-status').value;
+  // Stamped the moment status becomes 'closed' (kept as-is on a re-save while still
+  // closed; cleared if reopened) — used for period-based "cases closed" analytics,
+  // which the status flag alone can't answer since it carries no timestamp.
+  const closedAt = newStatus==='closed'
+    ? (eid && old.status==='closed' ? (old.closedAt||new Date().toISOString()) : new Date().toISOString())
+    : null;
   const obj={
     id:eid||uid(), name,
     caseType:document.getElementById('case-type').value||'debt',
     client:document.getElementById('case-client').value,
     amount:parseFloat(document.getElementById('case-amount').value)||0,
     stage:document.getElementById('case-stage').value,
-    status:document.getElementById('case-status').value,
+    status:newStatus,
     number:document.getElementById('case-number').value.trim(),
     notes:document.getElementById('case-notes').value.trim(),
     court:document.getElementById('case-court').value.trim(),
@@ -407,7 +420,8 @@ function saveCase() {
     diary:eid?(old.diary||[]):[],
     legalDocs:eid?(old.legalDocs||{}):{},
     collected:eid?(old.collected||0):0,
-    caseSubNumber:eid?(old.caseSubNumber||''):''
+    caseSubNumber:eid?(old.caseSubNumber||''):'',
+    closedAt
   };
   // Generate a sub-number on first save, and also if a client gets attached later
   // via edit to a case that started with none — otherwise it silently never gets
@@ -622,6 +636,16 @@ function openCaseDetail(id) {
   currentCaseId=id;
   const c=db.cases.find(x=>x.id===id);
   if(!c) return;
+  // Any full re-render below rebuilds the diary textarea/button from scratch (wiping
+  // whatever the user had typed and resetting the button back to "הוסף") — so a
+  // pending edit can never actually be resumed past this point regardless of cause,
+  // and leaving diaryEditIndex/diaryEditCaseId set past it is exactly what let an
+  // in-progress edit for a DIFFERENT case silently overwrite the wrong entry.
+  diaryEditIndex=null; diaryEditCaseId=null;
+  // Docs-tab sort/filter are global (not per-case) by design so they persist across a
+  // same-case re-render (e.g. after adding a doc) — but must not silently carry over
+  // and hide documents when switching to a DIFFERENT case with no visible indicator.
+  if(docsTabCaseId!==id){ docsTabSort='added'; docsTabFilterExt=''; docsTabCaseId=id; }
   const cl=db.clients.find(x=>x.id===c.client);
   const caseTasks=db.tasks.filter(t=>t.caseId===id);
   const caseEfBundle=(db.efilingBundles&&db.efilingBundles[id])||{items:[]};
@@ -642,9 +666,6 @@ function openCaseDetail(id) {
   const pct=Math.round(((stageIdx+1)/stages.length)*100);
   const totalCollected=casePayments.filter(p=>p.type==='debt').reduce((s,p)=>s+p.amount,0);
   const expectedFee=Math.round(calcExpectedFee(c));
-  const atfStatus=c.legalDocs?.atf ? 'signed' : (c.legalDocs?.atfDraft ? 'draft' : 'none');
-  const poaStatus=c.legalDocs?.poa ? 'signed' : (c.legalDocs?.poaDraft ? 'draft' : 'none');
-  const statusLabels={none:'לא נוצר',draft:'טיוטה',signed:'נחתם'};
 
   document.getElementById('case-detail-body').innerHTML=`
     <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px">
@@ -707,23 +728,6 @@ function openCaseDetail(id) {
       ${c.feeNotes?`<div style="font-size:12px;color:var(--text3);margin-top:8px">${c.feeNotes}</div>`:''}
     </div>`:''}
 
-    <!-- Legal Documents Section -->
-    <div class="card" style="border-color:rgba(37,99,235,0.3);padding:10px 14px">
-      <div style="font-size:11px;font-weight:600;color:var(--accent2);margin-bottom:8px;letter-spacing:0.05em">מסמכים משפטיים</div>
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-        <span style="font-size:13px;min-width:110px">הסכם שכ"ט</span>
-        <span class="doc-status-badge doc-status-${atfStatus}" style="padding:2px 8px;font-size:11px">${atfStatus==='none'?'⚪':atfStatus==='draft'?'🟡':'🟢'} ${statusLabels[atfStatus]}</span>
-        <button class="btn btn-sm btn-primary" style="padding:2px 10px;font-size:12px" onclick="generateLegalDoc('attorney-fee')">צור</button>
-        ${atfStatus!=='none'?`<button class="btn btn-sm" style="padding:2px 10px;font-size:12px" onclick="markDocSigned('atf')">חתום</button>`:''}
-      </div>
-      <div style="display:flex;align-items:center;gap:8px">
-        <span style="font-size:13px;min-width:110px">ייפוי כוח</span>
-        <span class="doc-status-badge doc-status-${poaStatus}" style="padding:2px 8px;font-size:11px">${poaStatus==='none'?'⚪':poaStatus==='draft'?'🟡':'🟢'} ${statusLabels[poaStatus]}</span>
-        <button class="btn btn-sm btn-primary" style="padding:2px 10px;font-size:12px" onclick="generateLegalDoc('poa')">צור</button>
-        ${poaStatus!=='none'?`<button class="btn btn-sm" style="padding:2px 10px;font-size:12px" onclick="markDocSigned('poa')">חתום</button>`:''}
-      </div>
-    </div>
-
     ${c.notes?`<div class="card"><div class="card-title">הערות</div><div style="font-size:13px;color:var(--text2);line-height:1.7">${c.notes}</div></div>`:''}
 
     <!-- Tabs -->
@@ -781,12 +785,7 @@ function openCaseDetail(id) {
             <option value="img" ${docsTabFilterExt==='img'?'selected':''}>תמונה</option>
           </select>
         </div>
-        ${caseDocs.length?caseDocs.map(d=>`<div class="doc-item">
-          <div class="doc-icon ${d.ext}">${d.ext.toUpperCase()}</div>
-          <div style="flex:1"><div style="font-size:13px;font-weight:500;color:var(--navy)">${d.name}</div><div style="font-size:11px;color:var(--text3)">${d.date||''} ${d.notes?'· '+d.notes:''}</div></div>
-          ${d.filePath?`<button class="btn btn-sm" onclick="openFile('${d.id}','${d.filePath.replace(/\\/g,'/')}','${(d.origName||d.name||'').replace(/\\/g,'')}')">פתח</button>`:''}
-          <button class="btn btn-sm" style="color:var(--danger);border:none;padding:2px 6px" onclick="delDoc('${d.id}',true)">✕</button>
-        </div>`).join(''):'<div class="empty" style="padding:16px">אין מסמכים</div>'}
+        ${caseDocs.length?caseDocs.map(d=>docItemHtml(d,{inDetail:true})).join(''):'<div class="empty" style="padding:16px">אין מסמכים</div>'}
       </div>
 
       <!-- Payments -->
@@ -853,32 +852,26 @@ function openCaseDetail(id) {
   currentPanel='case-detail';
 }
 
-function markDocSigned(type) {
-  const c=db.cases.find(x=>x.id===currentCaseId);
-  if(!c) return;
-  if(!c.legalDocs) c.legalDocs={};
-  c.legalDocs[type]=true;
-  c.legalDocs[type+'SignedDate']=new Date().toLocaleDateString('he-IL');
-  saveDB();
-  openCaseDetail(currentCaseId);
-  notify(type==='atf'?'הסכם שכ"ט סומן כחתום ✓':'ייפוי כוח סומן כחתום ✓');
-}
-
 function monthHE(m){const a=['','ינו','פבר','מרץ','אפר','מאי','יוני','יולי','אוג','ספט','אוק','נוב','דצמ'];return a[+m]||'';}
 
 // Editing reuses the same textarea/button rather than a separate form — diaryEditIndex
 // tracks which entry (by index into the underlying, non-reversed c.diary array) is being
-// edited, if any. Indexing avoids needing to backfill ids onto diary entries that predate
-// this feature.
+// edited, if any, and diaryEditCaseId which case it belongs to. Both are reset on every
+// openCaseDetail() render (which always redraws the button back to its default "הוסף"
+// state) so the two can never drift apart — without diaryEditCaseId, editing an entry in
+// case A and then, WITHOUT saving, navigating straight to case B and adding a new note
+// there would silently overwrite whatever entry happened to sit at that same index in
+// case B's diary instead of adding a new one.
 let diaryEditIndex = null;
+let diaryEditCaseId = null;
 function addDiary(caseId) {
   const text=document.getElementById('diary-input').value.trim();
   if(!text) return;
   const c=db.cases.find(x=>x.id===caseId);
   if(!c.diary) c.diary=[];
-  if(diaryEditIndex!==null && c.diary[diaryEditIndex]) c.diary[diaryEditIndex].text=text;
+  if(diaryEditCaseId===caseId && diaryEditIndex!==null && c.diary[diaryEditIndex]) c.diary[diaryEditIndex].text=text;
   else c.diary.push({text, date:new Date().toLocaleString('he-IL')});
-  diaryEditIndex=null;
+  diaryEditIndex=null; diaryEditCaseId=null;
   saveDB(); openCaseDetail(caseId);
 }
 
@@ -886,6 +879,7 @@ function editDiary(caseId, idx) {
   const c=db.cases.find(x=>x.id===caseId);
   if(!c || !c.diary || !c.diary[idx]) return;
   diaryEditIndex=idx;
+  diaryEditCaseId=caseId;
   const input=document.getElementById('diary-input');
   input.value=c.diary[idx].text;
   input.focus();
@@ -898,7 +892,13 @@ async function delDiary(caseId, idx) {
   const c=db.cases.find(x=>x.id===caseId);
   if(!c || !c.diary) return;
   c.diary.splice(idx,1);
-  if(diaryEditIndex===idx) diaryEditIndex=null;
+  // Keep a still-pending edit pointed at the right entry if a LOWER-index one was just
+  // removed — otherwise the in-progress edit (already loaded into the textarea) would
+  // save onto whichever entry shifted into its old index instead of the one intended.
+  if(diaryEditCaseId===caseId && diaryEditIndex!==null){
+    if(diaryEditIndex===idx){ diaryEditIndex=null; diaryEditCaseId=null; }
+    else if(idx<diaryEditIndex) diaryEditIndex--;
+  }
   saveDB(); openCaseDetail(caseId);
 }
 
@@ -966,20 +966,26 @@ function efilingItemsHtml(caseId, items) {
   return items.map((it, i) => {
     if (it.role === 'nispach') nCount++;
     const label = it.role === 'nispach' ? `נספח ${nCount} – ${it.title || it.origName || ''}` : (it.title || it.origName || '');
+    // Collapsed into a ⋮ menu rather than a role-select + 4 buttons in a row — that
+    // many fixed-width controls next to each other doesn't fit an unwrapped flex row
+    // on a real phone screen, the same overflow problem docItemHtml's own ⋮ menu
+    // already solves for the document lists.
     return `<div class="doc-item">
       <div class="doc-icon ${it.ext || 'doc'}">${(it.ext || '').toUpperCase()}</div>
-      <div style="flex:1">
-        <div style="font-size:13px;font-weight:500;color:var(--navy)">${label}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:500;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${label}</div>
         <div style="font-size:11px;color:var(--text3)">${it.role === 'main' ? 'מסמך ראשי' : 'נספח'}</div>
       </div>
-      <select class="form-input btn filter-select" style="font-size:12px" onchange="setEfilingRole('${caseId}','${it.id}',this.value)">
-        <option value="main" ${it.role === 'main' ? 'selected' : ''}>מסמך ראשי</option>
-        <option value="nispach" ${it.role === 'nispach' ? 'selected' : ''}>נספח</option>
-      </select>
-      <button class="btn btn-sm" onclick="moveEfilingItem('${caseId}','${it.id}',-1)" ${i === 0 ? 'disabled' : ''}>↑</button>
-      <button class="btn btn-sm" onclick="moveEfilingItem('${caseId}','${it.id}',1)" ${i === items.length - 1 ? 'disabled' : ''}>↓</button>
-      ${it.filePath ? `<button class="btn btn-sm" onclick="efilingOpenFile('${(it.filePath || '').replace(/\\/g, '/')}','${(it.origName || it.title || '').replace(/\\/g, '')}')">פתח</button>` : ''}
-      <button class="btn btn-sm" style="color:var(--danger);border:none;padding:2px 6px" onclick="deleteEfilingItem('${caseId}','${it.id}')">✕</button>
+      <div class="overflow-menu-wrap anchor-left" onclick="event.stopPropagation()">
+        <button class="btn btn-sm" onclick="toggleOverflowMenu(this)">⋮</button>
+        <div class="overflow-menu">
+          ${it.filePath ? `<button onclick="closeAllOverflowMenus();efilingOpenFile('${(it.filePath || '').replace(/\\/g, '/')}','${(it.origName || it.title || '').replace(/\\/g, '')}')">👁 פתח</button>` : ''}
+          <button onclick="closeAllOverflowMenus();setEfilingRole('${caseId}','${it.id}','${it.role === 'main' ? 'nispach' : 'main'}')">${it.role === 'main' ? '🔀 סמן כנספח' : '🔀 סמן כמסמך ראשי'}</button>
+          <button onclick="closeAllOverflowMenus();moveEfilingItem('${caseId}','${it.id}',-1)" ${i === 0 ? 'disabled' : ''}>↑ הזז למעלה</button>
+          <button onclick="closeAllOverflowMenus();moveEfilingItem('${caseId}','${it.id}',1)" ${i === items.length - 1 ? 'disabled' : ''}>↓ הזז למטה</button>
+          <button onclick="closeAllOverflowMenus();deleteEfilingItem('${caseId}','${it.id}')" style="color:var(--danger)">🗑 הסר</button>
+        </div>
+      </div>
     </div>`;
   }).join('');
 }
@@ -1019,6 +1025,13 @@ async function prepareEfilingBundle(caseId) {
   if (!mainItems.length) { notify('סמן מסמך ראשי אחד לפחות'); return; }
   if (!attachments.length) { notify('הוסף נספח אחד לפחות'); return; }
   notify('מכין הגשה...');
+  // Re-preparing (e.g. after adding one more attachment) previously left every earlier
+  // run's cover/TOC docx files sitting in the docs list alongside the new, correct
+  // ones — indistinguishable from each other, with real risk of the wrong cover page
+  // getting e-filed. Drop this case's old generated set before building the new one;
+  // the underlying Storage objects are simply orphaned, matching how this codebase
+  // already treats Storage as append-only elsewhere.
+  db.docs = db.docs.filter(d => !(d.caseId === caseId && d.cat === 'הגשה לנט המשפט'));
   try {
     for (let i = 0; i < attachments.length; i++) {
       const item = attachments[i];
@@ -1143,7 +1156,7 @@ function generateLegalDoc(type) {
         <div class="form-group"><label class="form-label">ת.ז / ח.פ</label><input class="form-input" id="poa-grantor-id" value="${cl.idNum||''}"></div>
       </div>
       <div class="form-group"><label class="form-label">נושא</label>
-        <input class="form-input" id="poa-matter" value="${c.debtorName?'גביית חוב מ'+c.debtorName:c.name||''}">
+        <input class="form-input" id="poa-matter" value="${c.caseType!=='general'&&c.debtorName?'גביית חוב מ'+c.debtorName:c.name||''}">
       </div>
     `;
     openModal('modal-legal-gen');
@@ -1469,7 +1482,7 @@ function saveTask(){
 
 function toggleTask(id,inDetail=false){
   const t=db.tasks.find(x=>x.id===id);
-  if(t){t.done=!t.done;saveDB();}
+  if(t){t.done=!t.done;t.completedAt=t.done?new Date().toISOString():null;saveDB();}
   if(inDetail) openCaseDetail(currentCaseId);
   else renderTasks();
   if(currentPanel==='dashboard') renderDashboard();
@@ -1776,6 +1789,109 @@ function exportFinanceSummary(){
   document.body.removeChild(ta);
 }
 
+// ===== OFFICE ANALYTICS =====
+// Rolling windows rather than calendar-boundary ones (a "week" is the last 7 days, not
+// "since Sunday") — simpler to reason about and avoids an empty-looking chart right
+// after a calendar month/week flips over.
+function analyticsPeriodStart(period) {
+  if (period === 'all') return '0000-01-01';
+  const days = period === 'month' ? 30 : period === 'quarter' ? 90 : 7;
+  const d = new Date(); d.setDate(d.getDate() - days);
+  return localDateISO(d);
+}
+
+// Single-series bar chart, same hand-rolled div-bars approach as renderFinance()'s
+// fin-chart (no charting library in this project) — reused here for two independent
+// one-metric-per-week trends instead of one two-series chart, since hours and ₪ don't
+// share a meaningful scale.
+function weeklyBarChartHtml(buckets, values, color, formatValue) {
+  const maxVal = Math.max(...values, 1);
+  const BAR_H = 90;
+  return `
+    <div style="display:flex;align-items:flex-end;gap:6px;height:${BAR_H}px;border-bottom:1px solid var(--border)">
+      ${values.map((v,i)=>{
+        const h = Math.max(2, Math.round((v/maxVal)*BAR_H));
+        return `<div class="has-tooltip" data-tip="${buckets[i].label}: ${formatValue(v)}" style="flex:1;height:${h}px;background:${color};border-radius:3px 3px 0 0;opacity:0.85;cursor:default"></div>`;
+      }).join('')}
+    </div>
+    <div style="display:flex;gap:6px;margin-top:4px">
+      ${buckets.map(b=>`<div style="flex:1;text-align:center;font-size:9px;color:var(--text3)">${b.label}</div>`).join('')}
+    </div>`;
+}
+
+function lastNWeekBuckets(n) {
+  const buckets=[];
+  const today=new Date();
+  for (let i=n-1;i>=0;i--) {
+    const end=new Date(today); end.setDate(end.getDate()-i*7);
+    const start=new Date(end); start.setDate(start.getDate()-6);
+    buckets.push({ startISO: localDateISO(start), endISO: localDateISO(end), label: `${start.getDate()}/${start.getMonth()+1}` });
+  }
+  return buckets;
+}
+
+function renderAnalytics() {
+  const period = document.getElementById('analytics-period').value;
+  const startISO = analyticsPeriodStart(period);
+  const todayISO = localDateISO(new Date());
+
+  const newCases = db.cases.filter(c => heToISO(c.opened||'') >= startISO);
+  const closedCases = db.cases.filter(c => c.closedAt && localDateISO(new Date(c.closedAt)) >= startISO);
+  const eventsInPeriod = db.events.filter(e => (e.date||'') >= startISO && (e.date||'') <= todayISO);
+  const collectedInPeriod = db.payments.filter(p => p.type==='debt' && (p.date||'') >= startISO).reduce((s,p)=>s+p.amount,0);
+  const hoursInPeriodSecs = (db.timeEntries||[]).filter(t => heToISO(t.date||'') >= startISO).reduce((s,t)=>s+(t.duration||0),0);
+  const tasksCompletedInPeriod = db.tasks.filter(t => t.completedAt && localDateISO(new Date(t.completedAt)) >= startISO);
+
+  document.getElementById('an-new-cases').textContent = newCases.length;
+  document.getElementById('an-closed-cases').textContent = closedCases.length;
+  document.getElementById('an-events').textContent = eventsInPeriod.length;
+  document.getElementById('an-collected').textContent = '₪'+collectedInPeriod.toLocaleString();
+  const ah=Math.floor(hoursInPeriodSecs/3600), am=Math.floor((hoursInPeriodSecs%3600)/60);
+  document.getElementById('an-hours').textContent = `${ah}:${String(am).padStart(2,'0')}`;
+  document.getElementById('an-tasks-done').textContent = tasksCompletedInPeriod.length;
+
+  // ── Weekly trend charts (always last 8 weeks, independent of the period selector
+  // above — a single week's worth of weekly buckets wouldn't be a trend) ──
+  const weeks = lastNWeekBuckets(8);
+  const hoursByWeek = weeks.map(w => (db.timeEntries||[]).filter(t => { const iso=heToISO(t.date||''); return iso>=w.startISO && iso<=w.endISO; }).reduce((s,t)=>s+(t.duration||0),0)/3600);
+  const collectedByWeek = weeks.map(w => db.payments.filter(p => p.type==='debt' && (p.date||'')>=w.startISO && (p.date||'')<=w.endISO).reduce((s,p)=>s+p.amount,0));
+  document.getElementById('an-hours-chart').innerHTML = weeklyBarChartHtml(weeks, hoursByWeek, 'var(--accent2)', v=>v.toFixed(1)+' שעות');
+  document.getElementById('an-collected-chart').innerHTML = weeklyBarChartHtml(weeks, collectedByWeek, 'var(--success)', v=>'₪'+Math.round(v).toLocaleString());
+
+  // ── Needs attention (current state, not period-scoped — "is anything neglected
+  // right now" doesn't become less true just because the selected period is "today") ──
+  const activeCases = db.cases.filter(c=>c.status!=='closed');
+  const caseAge = c => { const ld = c.diary&&c.diary.length ? c.diary[c.diary.length-1].date : c.opened; return daysSinceHE(ld); };
+  const stuck = activeCases.filter(c => { const d=caseAge(c); return d!==null && d>=14 && d<30; });
+  const neglected = activeCases.filter(c => { const d=caseAge(c); return d!==null && d>=30; });
+  const overdueTasks = db.tasks.filter(t=>!t.done && t.due && t.due<todayISO);
+  const upcomingWeek = new Date(); upcomingWeek.setDate(upcomingWeek.getDate()+7);
+  const hearingsThisWeek = db.events.filter(e => e.date>=todayISO && e.date<=localDateISO(upcomingWeek));
+  document.getElementById('an-attention').innerHTML = `
+    <div class="fin-row" style="cursor:pointer" onclick="nav('cases',document.querySelectorAll('.nav-item')[1])"><div>⚠️ תיקים תקועים (14-29 יום ללא עדכון)</div><b style="color:var(--warning)">${stuck.length}</b></div>
+    <div class="fin-row" style="cursor:pointer" onclick="nav('cases',document.querySelectorAll('.nav-item')[1])"><div>🔴 תיקים מוזנחים (30+ יום ללא עדכון)</div><b style="color:var(--danger)">${neglected.length}</b></div>
+    <div class="fin-row" style="cursor:pointer" onclick="nav('tasks',document.querySelectorAll('.nav-item')[3])"><div>⏰ משימות באיחור</div><b style="color:var(--danger)">${overdueTasks.length}</b></div>
+    <div class="fin-row" style="cursor:pointer" onclick="nav('calendar',document.querySelectorAll('.nav-item')[4])"><div>📅 דיונים בשבוע הקרוב</div><b style="color:var(--accent2)">${hearingsThisWeek.length}</b></div>
+  `;
+
+  // ── Office performance ──
+  const resDays = closedCases.map(c=>{
+    const openISO = heToISO(c.opened||'');
+    if (!openISO) return null;
+    const days = Math.round((new Date(localDateISO(new Date(c.closedAt))) - new Date(openISO))/86400000);
+    return days>=0 ? days : null;
+  }).filter(x=>x!==null);
+  const avgResDays = resDays.length ? Math.round(resDays.reduce((a,b)=>a+b,0)/resDays.length) : null;
+  const totalExpectedFee = activeCases.reduce((s,c)=>s+calcExpectedFee(c),0);
+  const totalCollectedFee = db.cases.reduce((s,c)=>s+calcCollectedFee(c),0);
+  document.getElementById('an-performance').innerHTML = `
+    <div class="fin-row"><div>ממוצע ימי טיפול לתיק שנסגר בתקופה</div><b>${avgResDays!==null?avgResDays+' ימים':'—'}</b></div>
+    <div class="fin-row"><div>תיקים פעילים כרגע</div><b>${activeCases.length}</b></div>
+    <div class="fin-row"><div>שכ"ט צפוי (תיקים פעילים)</div><b style="color:var(--warning)">₪${Math.round(totalExpectedFee).toLocaleString()}</b></div>
+    <div class="fin-row"><div>שכ"ט שנגבה (סה"כ)</div><b style="color:var(--success)">₪${Math.round(totalCollectedFee).toLocaleString()}</b></div>
+  `;
+}
+
 // ===== DOCS =====
 async function pickFile(){
   const result=await Platform.pickFile();
@@ -1799,12 +1915,6 @@ async function saveDoc(){
   saveDB();closeModal('modal-doc');notify('מסמך נשמר! ✓');renderDocs();selectedFile=null;
 }
 
-async function openFile(docId,p,displayName){
-  const d=db.docs.find(x=>x.id===docId);
-  if(d){ d.lastOpenedAt=new Date().toISOString(); saveDB(); }
-  await Platform.openFile(p,displayName);
-}
-
 function renderDocs(filter=''){
   const list=document.getElementById('docs-list');
   const empty=document.getElementById('docs-empty');
@@ -1814,15 +1924,179 @@ function renderDocs(filter=''){
   const cats=[...new Set(docs.map(d=>d.cat))];
   list.innerHTML=cats.map(cat=>`<div class="card">
     <div class="card-title">${cat}</div>
-    ${docs.filter(d=>d.cat===cat).map(d=>`<div class="doc-item">
-      <div class="doc-icon ${d.ext}">${d.ext.toUpperCase()}</div>
-      <div style="flex:1"><div style="font-size:13px;font-weight:500;color:var(--navy)">${d.name}</div><div style="font-size:11px;color:var(--text3)">${d.date||''} ${d.notes?'· '+d.notes:''}</div></div>
-      ${d.filePath?`<button class="btn btn-sm" onclick="openFile('${d.id}','${d.filePath.replace(/\\/g,'/')}','${(d.origName||d.name||'').replace(/\\/g,'')}')">פתח</button>`:''}
-      <button class="btn btn-sm" style="color:var(--danger);border:none;padding:2px 6px" onclick="delDoc('${d.id}')">✕</button>
-    </div>`).join('')}
+    ${docs.filter(d=>d.cat===cat).map(d=>docItemHtml(d)).join('')}
   </div>`).join('');
 }
 function delDoc(id,inDetail=false){db.docs=db.docs.filter(d=>d.id!==id);saveDB();if(inDetail)openCaseDetail(currentCaseId);else renderDocs();}
+
+// Shared row markup for both the global docs panel and the in-case docs tab. Clicking
+// the row opens the in-app preview (previewDoc); the ⋮ menu holds everything else —
+// this is what replaced the old behavior of "פתח" forcing an immediate browser
+// download of every document just to look at it.
+function docItemHtml(d, opts={}) {
+  const inDetail = !!opts.inDetail;
+  return `<div class="doc-item" ${d.filePath?`onclick="previewDoc('${d.id}')"`:''}>
+    <div class="doc-icon ${d.ext}">${(d.ext||'').toUpperCase()}</div>
+    <div style="flex:1;min-width:0">
+      <div style="font-size:13px;font-weight:500;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${d.name}</div>
+      <div style="font-size:11px;color:var(--text3)">${d.date||''} ${d.notes?'· '+d.notes:''}</div>
+    </div>
+    <div class="overflow-menu-wrap anchor-left" onclick="event.stopPropagation()">
+      <button class="btn btn-sm" onclick="toggleOverflowMenu(this)">⋮</button>
+      <div class="overflow-menu">
+        ${d.filePath?`<button onclick="closeAllOverflowMenus();previewDoc('${d.id}')">👁 פתח / הצג</button>`:''}
+        <button onclick="closeAllOverflowMenus();renameDoc('${d.id}')">✏ שנה שם</button>
+        <button onclick="closeAllOverflowMenus();duplicateDoc('${d.id}')">📋 שכפל</button>
+        ${d.filePath?`<button onclick="closeAllOverflowMenus();downloadDoc('${d.id}')">⬇ הורדה למחשב</button>`:''}
+        <button onclick="closeAllOverflowMenus();uploadNewVersion('${d.id}')">🔄 עדכן גרסה (אחרי עריכה)</button>
+        ${d.filePath?`<button onclick="closeAllOverflowMenus();shareDocVia('${d.id}','email')">📧 שלח בדוא"ל</button>`:''}
+        ${d.filePath?`<button onclick="closeAllOverflowMenus();shareDocVia('${d.id}','whatsapp')">💬 שלח בוואטסאפ</button>`:''}
+        <button onclick="closeAllOverflowMenus();delDoc('${d.id}'${inDetail?',true':''})" style="color:var(--danger)">🗑 מחק</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+// In-app viewer: PDFs/images render directly from a short-lived inline signed URL;
+// .docx goes through mammoth (already bundled — see the batch-upload preview, which
+// this mirrors); anything else (old binary .doc, Excel, etc.) has no in-browser
+// renderer available, so it falls back to an explicit download button rather than
+// silently failing.
+//
+// Editing: a browser tab has no way to detect that a SEPARATE native app (Word,
+// Excel) saved and closed a file it doesn't control — there's no API for that, in
+// any browser. So "open it, edit it, have it land back in the system" is built as a
+// real two-step loop instead of a fake one-click promise: "פתח לעריכה" downloads the
+// file (the OS opens it in Word/Excel/whatever is associated with that extension),
+// and "עדכן גרסה" — always visible right next to it — re-uploads the saved file onto
+// the SAME document row (same id/name/category/case link, just new bytes+date), so
+// there's never a stray duplicate copy floating around.
+async function previewDoc(docId) {
+  const d = db.docs.find(x => x.id === docId);
+  if (!d || !d.filePath) return;
+  d.lastOpenedAt = new Date().toISOString();
+  saveDB();
+  document.getElementById('doc-preview-title').textContent = d.origName || d.name;
+  openModal('modal-doc-preview');
+  const box = document.getElementById('doc-preview-body');
+  const actions = document.getElementById('doc-preview-actions');
+  box.innerHTML = '<div class="empty">טוען...</div>';
+  actions.innerHTML = '';
+  const editableActionsHtml = `
+    <div class="alert alert-info" style="font-size:12px">
+      לעריכה: "פתח לעריכה" יוריד את הקובץ ויפתח אותו בתוכנה המשויכת (לדוגמה Word) — ערוך ושמור שם כרגיל, ואז חזור לכאן ולחץ "עדכן גרסה" ובחר את הקובץ שנשמר, כדי שהגרסה המעודכנת תוחלף כאן במערכת.
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-primary btn-sm" onclick="downloadDoc('${docId}')">✏ פתח לעריכה</button>
+      <button class="btn btn-sm" onclick="uploadNewVersion('${docId}')">🔄 עדכן גרסה (אחרי עריכה)</button>
+    </div>`;
+  try {
+    if (d.ext === 'pdf') {
+      const url = await Platform.getViewUrl(d.filePath);
+      box.innerHTML = `<iframe src="${url}" style="width:100%;height:70vh;border:none"></iframe>`;
+      actions.innerHTML = `<div style="display:flex;gap:8px"><button class="btn btn-sm" onclick="downloadDoc('${docId}')">⬇ הורד</button><button class="btn btn-sm" onclick="uploadNewVersion('${docId}')">🔄 עדכן גרסה</button></div>`;
+    } else if (d.ext === 'img') {
+      const url = await Platform.getViewUrl(d.filePath);
+      box.innerHTML = `<img src="${url}" style="max-width:100%;max-height:70vh;display:block;margin:0 auto">`;
+      actions.innerHTML = `<div style="display:flex;gap:8px"><button class="btn btn-sm" onclick="downloadDoc('${docId}')">⬇ הורד</button><button class="btn btn-sm" onclick="uploadNewVersion('${docId}')">🔄 עדכן גרסה</button></div>`;
+    } else if (/\.docx$/i.test(d.origName || d.name || '') && window.mammoth) {
+      const { buffer } = await Platform.downloadFileBytes(d.filePath);
+      const result = await window.mammoth.convertToHtml({ arrayBuffer: new Uint8Array(buffer).buffer });
+      box.innerHTML = `<div style="padding:12px;text-align:right;font-size:13px;line-height:1.7;max-height:60vh;overflow-y:auto">${result.value || '<i>מסמך ריק</i>'}</div>`;
+      actions.innerHTML = editableActionsHtml;
+    } else {
+      box.innerHTML = `<div class="empty">אין תצוגה מקדימה עבור סוג קובץ זה</div>`;
+      actions.innerHTML = editableActionsHtml;
+    }
+  } catch (e) {
+    box.innerHTML = `<div class="empty">שגיאה בטעינת המסמך: ${e.message}</div>`;
+  }
+}
+
+async function downloadDoc(docId) {
+  const d = db.docs.find(x => x.id === docId);
+  if (!d || !d.filePath) return;
+  d.lastOpenedAt = new Date().toISOString();
+  saveDB();
+  try { await Platform.openFile(d.filePath, d.origName || d.name); }
+  catch (e) { notify('שגיאה בהורדה: ' + e.message); }
+}
+
+// Completes the edit loop: swaps this SAME db.docs row onto a freshly-uploaded file
+// (new Storage object — old bytes are simply orphaned, not deleted, matching how this
+// codebase already treats Storage as append-only elsewhere) rather than creating a
+// second document, so name/category/case-link/history all stay put across versions.
+async function uploadNewVersion(docId) {
+  const d = db.docs.find(x => x.id === docId);
+  if (!d) return;
+  const result = await Platform.pickFile();
+  if (!result) return;
+  notify('מעלה גרסה מעודכנת...');
+  try {
+    const filePath = await Platform.saveFile({ buffer: result.buffer, filename: result.filename });
+    d.filePath = filePath;
+    d.origName = result.filename;
+    d.ext = getExt(result.filename);
+    d.date = new Date().toLocaleDateString('he-IL');
+    d.lastOpenedAt = null;
+    saveDB();
+    notify('הגרסה עודכנה ✓');
+    if (currentPanel === 'docs') renderDocs();
+    else if (currentPanel === 'case-detail') openCaseDetail(currentCaseId);
+    if (document.getElementById('modal-doc-preview').classList.contains('open')) previewDoc(docId);
+  } catch (e) {
+    notify('שגיאה בהעלאת הגרסה: ' + e.message);
+  }
+}
+
+function renameDoc(docId) {
+  const d = db.docs.find(x => x.id === docId);
+  if (!d) return;
+  const newName = prompt('שם חדש למסמך:', d.name);
+  if (!newName || !newName.trim()) return;
+  d.name = newName.trim();
+  saveDB();
+  if (currentPanel === 'docs') renderDocs();
+  else if (currentPanel === 'case-detail') openCaseDetail(currentCaseId);
+}
+
+function duplicateDoc(docId) {
+  const d = db.docs.find(x => x.id === docId);
+  if (!d) return;
+  // Points at the same Storage object rather than re-uploading bytes — the file is
+  // immutable in Storage, so two db.docs rows sharing one filePath is safe.
+  db.docs.unshift({ ...d, id: uid(), name: d.name + ' (עותק)', date: new Date().toLocaleDateString('he-IL'), lastOpenedAt: undefined });
+  saveDB();
+  notify('המסמך שוכפל ✓');
+  if (currentPanel === 'docs') renderDocs();
+  else if (currentPanel === 'case-detail') openCaseDetail(currentCaseId);
+}
+
+async function shareDocVia(docId, channel) {
+  const d = db.docs.find(x => x.id === docId);
+  if (!d || !d.filePath) return;
+  try {
+    const url = await Platform.getShareUrl(d.filePath, d.origName || d.name);
+    // A minimal audit trail — the link itself is a week-long-valid, unauthenticated
+    // bearer URL (anyone holding it can open the file), so recording that one was
+    // minted, when, and for which document is worth the two extra fields even without
+    // a full sharing log.
+    d.lastSharedAt = new Date().toISOString();
+    d.lastSharedVia = channel;
+    saveDB();
+    const label = d.origName || d.name;
+    if (channel === 'email') {
+      const subject = encodeURIComponent(label);
+      const body = encodeURIComponent(`שלום,\n\nמצורף קישור למסמך "${label}":\n${url}\n\n(הקישור בתוקף לשבוע ימים)`);
+      window.open(`mailto:?subject=${subject}&body=${body}`, '_blank');
+    } else if (channel === 'whatsapp') {
+      const text = encodeURIComponent(`${label}: ${url}`);
+      window.open(`https://wa.me/?text=${text}`, '_blank');
+    }
+  } catch (e) {
+    notify('שגיאה ביצירת קישור לשיתוף: ' + e.message);
+  }
+}
 
 // ===== BATCH DOCUMENT UPLOAD =====
 // A second, parallel entry point to the single-file modal-doc flow above — picks many
@@ -1882,24 +2156,29 @@ function renderBatchStep() {
   renderBatchPreview(f);
 }
 
+let batchPreviewToken = 0; // guards against a slow (mammoth) preview from an earlier
+// step landing after the user has already clicked next/prev past it
 async function renderBatchPreview(f) {
   if (batchPreviewUrl) { URL.revokeObjectURL(batchPreviewUrl); batchPreviewUrl = null; }
   const box = document.getElementById('batch-doc-preview');
+  const myToken = ++batchPreviewToken;
   box.innerHTML = '<div class="empty">טוען תצוגה מקדימה...</div>';
   try {
     if (f.ext === 'pdf') {
       batchPreviewUrl = URL.createObjectURL(new Blob([new Uint8Array(f.buffer)], { type: 'application/pdf' }));
-      box.innerHTML = `<iframe src="${batchPreviewUrl}" style="width:100%;height:320px;border:none"></iframe>`;
+      box.innerHTML = `<iframe src="${batchPreviewUrl}" style="width:100%;height:100%;min-height:140px;border:none"></iframe>`;
     } else if (f.ext === 'img') {
       batchPreviewUrl = URL.createObjectURL(new Blob([new Uint8Array(f.buffer)]));
-      box.innerHTML = `<img src="${batchPreviewUrl}" style="max-width:100%;max-height:320px;display:block;margin:0 auto">`;
+      box.innerHTML = `<img src="${batchPreviewUrl}" style="max-width:100%;max-height:100%;display:block;margin:0 auto">`;
     } else if (/\.docx$/i.test(f.filename) && window.mammoth) {
       const result = await window.mammoth.convertToHtml({ arrayBuffer: new Uint8Array(f.buffer).buffer });
+      if (myToken !== batchPreviewToken) return; // a later step's preview has since taken over this box
       box.innerHTML = `<div style="padding:12px;text-align:right;font-size:13px;line-height:1.6;width:100%">${result.value || '<i>מסמך ריק</i>'}</div>`;
     } else {
       box.innerHTML = `<div class="empty">📄 ${f.filename}<br><span style="font-size:11px">אין תצוגה מקדימה עבור סוג קובץ זה</span></div>`;
     }
   } catch (e) {
+    if (myToken !== batchPreviewToken) return;
     box.innerHTML = '<div class="empty">שגיאה בהצגת תצוגה מקדימה</div>';
   }
 }
@@ -1963,17 +2242,21 @@ function renderDashboard(){
   document.getElementById('s-tasks').textContent=openT;
   document.getElementById('s-overdue-txt').textContent=overdue?`${overdue} באיחור`:'';
 
-  const stages=[...new Set([...CASE_STAGES.debt,...CASE_STAGES.general])];
-  const stageCounts=stages.reduce((o,s)=>{o[s]=db.cases.filter(c=>c.stage===s).length;return o;},{});
-  document.getElementById('d-stages').innerHTML=stages.map(s=>`<div class="fin-row">
+  const allStages=[...new Set([...CASE_STAGES.debt,...CASE_STAGES.general])];
+  const stageCounts=allStages.reduce((o,s)=>{o[s]=db.cases.filter(c=>c.stage===s).length;return o;},{});
+  // Only stages that actually have a case in them — with both a debt and a general
+  // stage list now in play (10 possible values combined), showing every stage
+  // unconditionally pushed this card's height well past one screen for no reason.
+  const stagesShown=allStages.filter(s=>stageCounts[s]>0);
+  document.getElementById('d-stages').innerHTML=stagesShown.length?stagesShown.map(s=>`<div class="fin-row">
     <div style="font-size:13px;color:var(--text2)">${s}</div>
     <div style="display:flex;align-items:center;gap:8px">
       <div style="width:80px;height:4px;background:var(--bg4);border-radius:2px">
-        <div style="width:${stageCounts[s]?Math.min(100,stageCounts[s]/Math.max(1,db.cases.length)*100*3):0}%;height:4px;background:var(--accent);border-radius:2px"></div>
+        <div style="width:${Math.min(100,stageCounts[s]/Math.max(1,db.cases.length)*100*3)}%;height:4px;background:var(--accent);border-radius:2px"></div>
       </div>
       <span style="font-size:13px;font-weight:600;color:var(--navy);min-width:16px">${stageCounts[s]}</span>
     </div>
-  </div>`).join('');
+  </div>`).join(''):'<div class="empty">אין תיקים עדיין</div>';
 
   const urgentTasks=db.tasks.filter(t=>!t.done&&(t.priority==='urgent'||(t.due&&t.due<=today))).slice(0,5);
   document.getElementById('d-tasks').innerHTML=urgentTasks.length?urgentTasks.map(t=>`<div class="task-item">
@@ -2722,7 +3005,7 @@ async function agentExecTool(name, input) {
         const cl = db.clients.find(x=>x.id===c.client)||{};
         const { filePath: fpPoa, filename: fnPoa } = await fillLegalTemplate('poa', {
           grantorName:cl.name||'', grantorId:cl.idNum||'',
-          matter:c.debtorName?`גבייה מ${c.debtorName} בסך ₪${(c.amount||0).toLocaleString()}${c.debtDesc?' – '+c.debtDesc:''}`:`ייצוג בעניין ${c.name}`
+          matter:c.caseType!=='general'&&c.debtorName?`גבייה מ${c.debtorName} בסך ₪${(c.amount||0).toLocaleString()}${c.debtDesc?' – '+c.debtDesc:''}`:`ייצוג בעניין ${c.name}`
         }, c);
         notify('ייפוי כוח נפתח!');
         await Platform.openFile(fpPoa, fnPoa);
@@ -3260,7 +3543,8 @@ async function bootApp() {
     // under the current single-JSON-blob-per-office data model.
     if (currentRole === 'secretary') {
       document.querySelectorAll('.nav-item').forEach(n => {
-        if (n.getAttribute('onclick') === "nav('finance',this)") n.style.display = 'none';
+        const onclick = n.getAttribute('onclick');
+        if (onclick === "nav('finance',this)" || onclick === "nav('analytics',this)") n.style.display = 'none';
       });
     }
   } catch (e) { /* role lookup failing shouldn't block the rest of the app */ }
