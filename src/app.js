@@ -2075,7 +2075,7 @@ function eventRow(e) {
     <div style="flex:1">
       <div style="font-weight:500;color:var(--navy)">${e.title}</div>
       <div style="font-size:11px;color:var(--text3)">${e.type||''} ${e.location?'| '+e.location:''} ${e.time?'| '+e.time:''}</div>
-      ${c?`<div style="font-size:11px;color:var(--accent2);cursor:pointer" onclick="openCaseDetail('${c.id}')">${c.name}${c.number?' · #'+c.number:''}</div>`:''}
+      ${c?`<div style="font-size:11px;color:var(--accent2);cursor:pointer;display:flex;align-items:center;gap:5px" onclick="openCaseDetail('${c.id}')">${c.name}${c.caseSubNumber?`<span style="font-size:10px;background:var(--accent-dim);border-radius:4px;padding:1px 5px;font-weight:700">${c.caseSubNumber}</span>`:''}</div>`:''}
     </div>
     <button class="btn btn-sm" style="color:var(--danger);border:none;padding:2px 6px" onclick="delEvent('${e.id}')">✕</button>
   </div>`;
@@ -2913,7 +2913,7 @@ function renderDashboard(){
     <div class="prio-dot prio-${t.priority||'normal'}"></div>
     <div style="flex:1">
       <div class="task-text" style="font-size:13px">${t.text}</div>
-      ${c?`<div style="font-size:11px;color:var(--accent2);cursor:pointer" onclick="openCaseDetail('${c.id}')">${c.name}${c.number?' · #'+c.number:''}</div>`:''}
+      ${c?`<div style="font-size:11px;color:var(--accent2);cursor:pointer;display:flex;align-items:center;gap:5px" onclick="openCaseDetail('${c.id}')">${c.name}${c.caseSubNumber?`<span style="font-size:10px;background:var(--accent-dim);border-radius:4px;padding:1px 5px;font-weight:700">${c.caseSubNumber}</span>`:''}</div>`:''}
     </div>
     <div class="task-meta ${t.due&&t.due<today?'urgent':''}">${t.due||''}</div>
   </div>`;
@@ -2924,7 +2924,7 @@ function renderDashboard(){
     <div style="flex:1">
       <div style="display:flex;align-items:center;gap:6px">
         <div style="font-weight:500;color:var(--navy);font-size:13px">${c.name}</div>
-        ${c.number?`<span style="font-size:10px;color:var(--text3)">#${c.number}</span>`:''}
+        ${c.caseSubNumber?`<span style="font-size:10px;color:var(--accent2);background:var(--accent-dim);border-radius:4px;padding:1px 5px;font-weight:700;flex-shrink:0">${c.caseSubNumber}</span>`:''}
       </div>
       <div style="font-size:11px;color:var(--text3)">${c.debtorName||''} ${c.amount?'| ₪'+c.amount.toLocaleString():''}</div>
     </div>
