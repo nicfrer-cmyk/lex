@@ -211,6 +211,7 @@ function openClientQuickAdd() {
 
 function closeModal(id) {
   document.getElementById(id).classList.remove('open');
+  if(id==='modal-doc-preview' && docPreviewBlobUrl){ URL.revokeObjectURL(docPreviewBlobUrl); docPreviewBlobUrl=null; }
   if(id==='modal-case') document.getElementById('case-edit-id').value='';
   if(id==='modal-client') {
     document.getElementById('client-edit-id').value='';
@@ -909,7 +910,7 @@ async function delDiary(caseId, idx) {
 // items in bundle.items, so reordering can never desync numbers from what's displayed.
 // db.efilingBundles is a brand-new top-level key (see loadDB()'s defaulting), so it
 // can't affect any existing case/office data.
-function efilingOpenFile(p, name) { Platform.openFile(p, name); }
+function efilingOpenFile(p, ext, name) { previewRawFile(p, ext, name); }
 
 async function addEfilingFile(caseId) {
   const result = await Platform.pickFile();
@@ -979,7 +980,7 @@ function efilingItemsHtml(caseId, items) {
       <div class="overflow-menu-wrap anchor-left" onclick="event.stopPropagation()">
         <button class="btn btn-sm" onclick="toggleOverflowMenu(this)">⋮</button>
         <div class="overflow-menu">
-          ${it.filePath ? `<button onclick="closeAllOverflowMenus();efilingOpenFile('${(it.filePath || '').replace(/\\/g, '/')}','${(it.origName || it.title || '').replace(/\\/g, '')}')">👁 פתח</button>` : ''}
+          ${it.filePath ? `<button onclick="closeAllOverflowMenus();efilingOpenFile('${(it.filePath || '').replace(/\\/g, '/')}','${it.ext || ''}','${(it.origName || it.title || '').replace(/\\/g, '')}')">👁 פתח</button>` : ''}
           <button onclick="closeAllOverflowMenus();setEfilingRole('${caseId}','${it.id}','${it.role === 'main' ? 'nispach' : 'main'}')">${it.role === 'main' ? '🔀 סמן כנספח' : '🔀 סמן כמסמך ראשי'}</button>
           <button onclick="closeAllOverflowMenus();moveEfilingItem('${caseId}','${it.id}',-1)" ${i === 0 ? 'disabled' : ''}>↑ הזז למעלה</button>
           <button onclick="closeAllOverflowMenus();moveEfilingItem('${caseId}','${it.id}',1)" ${i === items.length - 1 ? 'disabled' : ''}>↓ הזז למטה</button>
@@ -1957,12 +1958,47 @@ function docItemHtml(d, opts={}) {
   </div>`;
 }
 
-// In-app viewer: PDFs/images render directly from a short-lived inline signed URL;
-// .docx goes through mammoth (already bundled — see the batch-upload preview, which
-// this mirrors); anything else (old binary .doc, Excel, etc.) has no in-browser
-// renderer available, so it falls back to an explicit download button rather than
-// silently failing.
-//
+// In-app viewer. PDFs/images and .docx (via mammoth, already bundled — see the
+// batch-upload preview, which this mirrors) all render from bytes fetched via
+// Platform.downloadFileBytes() and shown through a local blob: URL — NOT a signed
+// URL fed straight into an <iframe>. That was the first version of this feature, and
+// it turned out to still just download the file for a real uploaded PDF: a signed
+// URL's Content-Type comes from what's stored on the Storage object, and every
+// upload before this session set none at all (fixed separately in Platform.saveFile,
+// but that only helps files uploaded AFTER the fix — see uploadNewVersion() for the
+// one-time re-upload path for older files); a signed URL embedded in an <iframe> can
+// also be silently blocked by response-level framing restrictions the storage
+// provider sets, independent of Content-Type entirely. Fetching the bytes ourselves
+// sidesteps both failure modes at once — the browser renders exactly the MIME type
+// we hand it, from same-origin content we already have in hand.
+let docPreviewBlobUrl = null;
+async function renderPreviewBody(filePath, ext, filename) {
+  const box = document.getElementById('doc-preview-body');
+  box.innerHTML = '<div class="empty">טוען...</div>';
+  if (docPreviewBlobUrl) { URL.revokeObjectURL(docPreviewBlobUrl); docPreviewBlobUrl = null; }
+  try {
+    if (ext === 'pdf') {
+      const { buffer } = await Platform.downloadFileBytes(filePath);
+      docPreviewBlobUrl = URL.createObjectURL(new Blob([new Uint8Array(buffer)], { type: 'application/pdf' }));
+      box.innerHTML = `<iframe src="${docPreviewBlobUrl}" style="width:100%;height:70vh;border:none"></iframe>`;
+    } else if (ext === 'img') {
+      const { buffer } = await Platform.downloadFileBytes(filePath);
+      docPreviewBlobUrl = URL.createObjectURL(new Blob([new Uint8Array(buffer)]));
+      box.innerHTML = `<img src="${docPreviewBlobUrl}" style="max-width:100%;max-height:70vh;display:block;margin:0 auto">`;
+    } else if (/\.docx$/i.test(filename || '') && window.mammoth) {
+      const { buffer } = await Platform.downloadFileBytes(filePath);
+      const result = await window.mammoth.convertToHtml({ arrayBuffer: new Uint8Array(buffer).buffer });
+      box.innerHTML = `<div style="padding:12px;text-align:right;font-size:13px;line-height:1.7;max-height:60vh;overflow-y:auto">${result.value || '<i>מסמך ריק</i>'}</div>`;
+    } else {
+      box.innerHTML = `<div class="empty">אין תצוגה מקדימה עבור סוג קובץ זה</div>`;
+    }
+    return true;
+  } catch (e) {
+    box.innerHTML = `<div class="empty">שגיאה בטעינת המסמך: ${e.message}</div>`;
+    return false;
+  }
+}
+
 // Editing: a browser tab has no way to detect that a SEPARATE native app (Word,
 // Excel) saved and closed a file it doesn't control — there's no API for that, in
 // any browser. So "open it, edit it, have it land back in the system" is built as a
@@ -1978,39 +2014,32 @@ async function previewDoc(docId) {
   saveDB();
   document.getElementById('doc-preview-title').textContent = d.origName || d.name;
   openModal('modal-doc-preview');
-  const box = document.getElementById('doc-preview-body');
   const actions = document.getElementById('doc-preview-actions');
-  box.innerHTML = '<div class="empty">טוען...</div>';
   actions.innerHTML = '';
-  const editableActionsHtml = `
-    <div class="alert alert-info" style="font-size:12px">
-      לעריכה: "פתח לעריכה" יוריד את הקובץ ויפתח אותו בתוכנה המשויכת (לדוגמה Word) — ערוך ושמור שם כרגיל, ואז חזור לכאן ולחץ "עדכן גרסה" ובחר את הקובץ שנשמר, כדי שהגרסה המעודכנת תוחלף כאן במערכת.
-    </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn btn-primary btn-sm" onclick="downloadDoc('${docId}')">✏ פתח לעריכה</button>
-      <button class="btn btn-sm" onclick="uploadNewVersion('${docId}')">🔄 עדכן גרסה (אחרי עריכה)</button>
-    </div>`;
-  try {
-    if (d.ext === 'pdf') {
-      const url = await Platform.getViewUrl(d.filePath);
-      box.innerHTML = `<iframe src="${url}" style="width:100%;height:70vh;border:none"></iframe>`;
-      actions.innerHTML = `<div style="display:flex;gap:8px"><button class="btn btn-sm" onclick="downloadDoc('${docId}')">⬇ הורד</button><button class="btn btn-sm" onclick="uploadNewVersion('${docId}')">🔄 עדכן גרסה</button></div>`;
-    } else if (d.ext === 'img') {
-      const url = await Platform.getViewUrl(d.filePath);
-      box.innerHTML = `<img src="${url}" style="max-width:100%;max-height:70vh;display:block;margin:0 auto">`;
-      actions.innerHTML = `<div style="display:flex;gap:8px"><button class="btn btn-sm" onclick="downloadDoc('${docId}')">⬇ הורד</button><button class="btn btn-sm" onclick="uploadNewVersion('${docId}')">🔄 עדכן גרסה</button></div>`;
-    } else if (/\.docx$/i.test(d.origName || d.name || '') && window.mammoth) {
-      const { buffer } = await Platform.downloadFileBytes(d.filePath);
-      const result = await window.mammoth.convertToHtml({ arrayBuffer: new Uint8Array(buffer).buffer });
-      box.innerHTML = `<div style="padding:12px;text-align:right;font-size:13px;line-height:1.7;max-height:60vh;overflow-y:auto">${result.value || '<i>מסמך ריק</i>'}</div>`;
-      actions.innerHTML = editableActionsHtml;
-    } else {
-      box.innerHTML = `<div class="empty">אין תצוגה מקדימה עבור סוג קובץ זה</div>`;
-      actions.innerHTML = editableActionsHtml;
-    }
-  } catch (e) {
-    box.innerHTML = `<div class="empty">שגיאה בטעינת המסמך: ${e.message}</div>`;
+  const ok = await renderPreviewBody(d.filePath, d.ext, d.origName || d.name);
+  if (!ok) return;
+  if (d.ext === 'pdf' || d.ext === 'img') {
+    actions.innerHTML = `<div style="display:flex;gap:8px"><button class="btn btn-sm" onclick="downloadDoc('${docId}')">⬇ הורד</button><button class="btn btn-sm" onclick="uploadNewVersion('${docId}')">🔄 עדכן גרסה</button></div>`;
+  } else {
+    actions.innerHTML = `
+      <div class="alert alert-info" style="font-size:12px">
+        לעריכה: "פתח לעריכה" יוריד את הקובץ ויפתח אותו בתוכנה המשויכת (לדוגמה Word) — ערוך ושמור שם כרגיל, ואז חזור לכאן ולחץ "עדכן גרסה" ובחר את הקובץ שנשמר, כדי שהגרסה המעודכנת תוחלף כאן במערכת.
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-primary btn-sm" onclick="downloadDoc('${docId}')">✏ פתח לעריכה</button>
+        <button class="btn btn-sm" onclick="uploadNewVersion('${docId}')">🔄 עדכן גרסה (אחרי עריכה)</button>
+      </div>`;
   }
+}
+
+// Same in-app viewer, for a raw {filePath,ext} that isn't a db.docs row (the e-filing
+// tab's attachments) — no doc id, so no lastOpenedAt stamp and no edit/version loop,
+// just the read-only preview.
+function previewRawFile(filePath, ext, displayName) {
+  document.getElementById('doc-preview-title').textContent = displayName || '';
+  openModal('modal-doc-preview');
+  document.getElementById('doc-preview-actions').innerHTML = '';
+  renderPreviewBody(filePath, ext, displayName);
 }
 
 async function downloadDoc(docId) {
