@@ -182,8 +182,17 @@ function fromSafeKey(key) {
   return decodeURIComponent(escape(atob(b64)));
 }
 
+// Was hardcoded `false` and never read anywhere — a leftover placeholder from before
+// this app settled on Capacitor's "remote URL" mode (see capacitor.config.json), where
+// the Android app is just this same site loaded in a WebView, so there never ended up
+// being a separate native platform.js to set it from. Computed for real now because
+// app.js needs it to hide desktop-only affordances (e.g. the ms-word:ofe "open in Word,
+// linked to the site" button — that custom protocol has no handler on Android/iOS, so
+// showing it there is a dead button, not a working one) instead of showing them broken.
+const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || navigator.maxTouchPoints > 1;
+
 window.Platform = {
-  isMobile: false,
+  isMobile: IS_MOBILE,
 
   // ---- auth ----
   // profile ({ fullName, officeName, phone, address }) comes from the full signup

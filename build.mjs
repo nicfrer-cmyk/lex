@@ -62,6 +62,16 @@ fs.copyFileSync(path.join(root, 'node_modules/docx/dist/index.umd.cjs'), path.jo
 fs.copyFileSync(path.join(root, 'node_modules/pizzip/dist/pizzip.min.js'), path.join(vendorDir, 'pizzip.min.js'));
 fs.copyFileSync(path.join(root, 'node_modules/mammoth/mammoth.browser.min.js'), path.join(vendorDir, 'mammoth.browser.min.js'));
 
+// pdf.js — the "legacy" build (broader browser/webview compatibility, see the doc
+// preview's renderPdfPages()) ships as ES modules only, loaded via dynamic import(),
+// not a plain <script> tag like the other vendor files above. cmaps/standard_fonts are
+// pdf.js's own recommended bundle for correctly rendering PDFs whose fonts aren't fully
+// embedded (common in scanned/exported court-system documents this app handles).
+fs.copyFileSync(path.join(root, 'node_modules/pdfjs-dist/legacy/build/pdf.min.mjs'), path.join(vendorDir, 'pdf.min.mjs'));
+fs.copyFileSync(path.join(root, 'node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs'), path.join(vendorDir, 'pdf.worker.min.mjs'));
+fs.cpSync(path.join(root, 'node_modules/pdfjs-dist/cmaps'), path.join(vendorDir, 'cmaps'), { recursive: true });
+fs.cpSync(path.join(root, 'node_modules/pdfjs-dist/standard_fonts'), path.join(vendorDir, 'standard_fonts'), { recursive: true });
+
 // platform.web.js needs real bundling: @supabase/supabase-js, buffer, docxtemplater.
 await esbuild.build({
   entryPoints: [path.join(src, 'platform.web.js')],

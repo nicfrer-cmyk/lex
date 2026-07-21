@@ -2184,7 +2184,7 @@ function docItemHtml(d, opts={}) {
         <button onclick="closeAllOverflowMenus();openDocCasePicker('${d.id}','move')">↔ העבר לתיק אחר</button>
         <button onclick="closeAllOverflowMenus();openDocCasePicker('${d.id}','copy')">📋 שכפל לתיק</button>
         ${d.filePath?`<button onclick="closeAllOverflowMenus();downloadDoc('${d.id}')">⬇ הורדה למחשב</button>`:''}
-        ${d.filePath&&/\.docx$/i.test(d.origName||d.name||'')?`<button onclick="closeAllOverflowMenus();openInWordLinked('${d.id}')">🔗 פתח ב-Word (מקושר לאתר)</button>`:''}
+        ${d.filePath&&!Platform.isMobile&&/\.docx$/i.test(d.origName||d.name||'')?`<button onclick="closeAllOverflowMenus();openInWordLinked('${d.id}')">🔗 פתח ב-Word (מקושר לאתר)</button>`:''}
         <button onclick="closeAllOverflowMenus();uploadNewVersion('${d.id}')">🔄 עדכן גרסה (אחרי עריכה)</button>
         ${d.filePath?`<button onclick="closeAllOverflowMenus();shareDocVia('${d.id}','email')">📧 שלח בדוא"ל</button>`:''}
         ${d.filePath?`<button onclick="closeAllOverflowMenus();shareDocVia('${d.id}','whatsapp')">💬 שלח בוואטסאפ</button>`:''}
@@ -2207,16 +2207,68 @@ function docItemHtml(d, opts={}) {
 // provider sets, independent of Content-Type entirely. Fetching the bytes ourselves
 // sidesteps both failure modes at once — the browser renders exactly the MIME type
 // we hand it, from same-origin content we already have in hand.
+// PDF rendering: a real canvas-per-page render via pdf.js, NOT an <iframe src="blob:">
+// (the previous approach). Desktop Chrome/Edge/Firefox have a built-in PDF viewer
+// plugin that renders an embedded blob: PDF inside an iframe just fine, but mobile
+// browsers — and, critically, the Android WebView this app's mobile wrapper uses (see
+// capacitor.config.json's remote-URL mode) — have no such plugin for iframe/embed
+// content, so the exact same iframe just renders blank there. Confirmed as the cause
+// of "I don't see the document on my phone": a canvas is plain JS-driven pixels, so it
+// renders identically everywhere, independent of any browser's native PDF support.
+let pdfjsLibPromise = null;
+function loadPdfJs() {
+  if (!pdfjsLibPromise) {
+    pdfjsLibPromise = import('./vendor/pdf.min.mjs').then((lib) => {
+      lib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.mjs';
+      return lib;
+    });
+  }
+  return pdfjsLibPromise;
+}
+
+// myToken guards against a second preview (a different document, or the same one via
+// uploadNewVersion()'s re-open) starting while this one's pages are still rendering —
+// without it, two overlapping page-render loops would both append canvases into the
+// same box and interleave two documents' pages together.
+async function renderPdfPages(box, buffer, myToken) {
+  const pdfjsLib = await loadPdfJs();
+  const pdf = await pdfjsLib.getDocument({
+    data: new Uint8Array(buffer),
+    cMapUrl: 'vendor/cmaps/', cMapPacked: true,
+    standardFontDataUrl: 'vendor/standard_fonts/',
+  }).promise;
+  if (myToken !== docPreviewToken) return;
+  box.innerHTML = '';
+  const targetWidth = Math.min(box.clientWidth || 600, 900);
+  const dpr = window.devicePixelRatio || 1;
+  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+    const page = await pdf.getPage(pageNum);
+    if (myToken !== docPreviewToken) return;
+    const scale = targetWidth / page.getViewport({ scale: 1 }).width;
+    const viewport = page.getViewport({ scale: scale * dpr });
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    canvas.style.cssText = `width:100%;display:block;margin-bottom:${pageNum < pdf.numPages ? 8 : 0}px;box-shadow:0 1px 4px rgba(15,23,41,0.15)`;
+    box.appendChild(canvas);
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+    if (myToken !== docPreviewToken) return;
+  }
+}
+
 let docPreviewBlobUrl = null;
+let docPreviewToken = 0;
 async function renderPreviewBody(filePath, ext, filename) {
+  const myToken = ++docPreviewToken;
   const box = document.getElementById('doc-preview-body');
   box.innerHTML = '<div class="empty">טוען...</div>';
+  box.style.cssText = 'min-height:200px;max-height:70vh;overflow-y:auto';
   if (docPreviewBlobUrl) { URL.revokeObjectURL(docPreviewBlobUrl); docPreviewBlobUrl = null; }
   try {
     if (ext === 'pdf') {
       const { buffer } = await Platform.downloadFileBytes(filePath);
-      docPreviewBlobUrl = URL.createObjectURL(new Blob([new Uint8Array(buffer)], { type: 'application/pdf' }));
-      box.innerHTML = `<iframe src="${docPreviewBlobUrl}" style="width:100%;height:70vh;border:none"></iframe>`;
+      if (myToken !== docPreviewToken) return true;
+      await renderPdfPages(box, buffer, myToken);
     } else if (ext === 'img') {
       const { buffer } = await Platform.downloadFileBytes(filePath);
       docPreviewBlobUrl = URL.createObjectURL(new Blob([new Uint8Array(buffer)]));
@@ -2230,6 +2282,7 @@ async function renderPreviewBody(filePath, ext, filename) {
     }
     return true;
   } catch (e) {
+    if (myToken !== docPreviewToken) return true;
     box.innerHTML = `<div class="empty">שגיאה בטעינת המסמך: ${e.message}</div>`;
     return false;
   }
