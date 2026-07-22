@@ -1933,9 +1933,20 @@ async function buildWithTemplate(type, data, caseObj) {
 // returns a flat {placeholder: text} JSON object merged into the existing template,
 // exactly like ATF/POA already are.
 
+// Court vs. Execution Office framing. Same distinction the AI agent's draftDocument
+// tool already makes (ddIsHp there) — a case's "בית משפט / לשכת הוצל"פ" field is one
+// free-text box that can hold either, so a template that always says "ראש ההוצאה
+// לפועל" reads as flatly wrong on a case actually headed to a court. draftDocument
+// detects this from a caller-supplied document-type string; here there isn't one, so
+// the same keyword check runs against the case's own court field instead.
+function isExecutionOfficeCase(caseObj) {
+  return /הוצל|הוצאה לפועל|הוצ"פ/.test(caseObj.court || '');
+}
+
 // Case fields a spec's systemFields entries may reference. תאריך is always supplied
 // regardless of whether a spec lists it, so every request template can use it for
-// free without declaring it.
+// free without declaring it. גורם_שיפוטי/תפקיד_מבקש/תפקיד_משיב let a template stay
+// correct for both venues instead of hardcoding one.
 const REQUEST_SYSTEM_FIELD_MAP = {
   'שם_זוכה': (c, client) => (client && client.name) || '',
   'שם_חייב': c => c.debtorName || '',
@@ -1944,6 +1955,9 @@ const REQUEST_SYSTEM_FIELD_MAP = {
   'מספר_תיק_הוצלפ': c => c.courtNumber || '',
   'סכום_חוב': c => c.amount != null ? String(c.amount) : '',
   'תאריך': () => new Date().toLocaleDateString('he-IL'),
+  'גורם_שיפוטי': c => isExecutionOfficeCase(c) ? 'ראש ההוצאה לפועל' : 'בית המשפט הנכבד',
+  'תפקיד_מבקש': c => isExecutionOfficeCase(c) ? 'הזוכה' : 'התובע',
+  'תפקיד_משיב': c => isExecutionOfficeCase(c) ? 'החייב' : 'הנתבע',
 };
 
 // Tags a .docx template actually contains, read via Docxtemplater's own tag scan —
