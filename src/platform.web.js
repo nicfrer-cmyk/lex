@@ -669,6 +669,18 @@ window.Platform = {
     return `${officeId}/templates/${toSafeKey(folderName)}/${toSafeKey(filename)}`;
   },
 
+  // Raw bytes for any file under templates/<folderName>/ — unlike readLibraryDoc()
+  // (which mammoth-extracts .docx to text for AI context), this is used where the
+  // caller needs the actual bytes: a .spec.json's text, or a .docx template buffer
+  // to feed into Docxtemplater for the "הכן בקשה" merge/validation flow.
+  async tmReadFileBytes(folderName, filename) {
+    const { officeId } = await currentOffice();
+    const path = `${officeId}/templates/${toSafeKey(folderName)}/${toSafeKey(filename)}`;
+    const { data, error } = await supabase.storage.from(BUCKET).download(path);
+    if (error) throw error;
+    return { buffer: await blobToByteArray(data) };
+  },
+
   // ---- client-side error logging (see client_errors table / fix8.sql) ----
   async logClientError({ message, stack, url }) {
     // Never let logging an error throw another one — if we don't have a resolved

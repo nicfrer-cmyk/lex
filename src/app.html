@@ -192,6 +192,8 @@ textarea.form-input{resize:vertical;min-height:80px}
 .alert{padding:10px 14px;border-radius:var(--radius);font-size:13px;margin-bottom:12px}
 .alert-warning{background:rgba(217,119,6,0.1);border:1px solid rgba(217,119,6,0.3);color:var(--warning)}
 .alert-info{background:rgba(37,99,235,0.1);border:1px solid rgba(37,99,235,0.3);color:var(--accent2)}
+.alert-danger{background:rgba(220,38,38,0.1);border:1px solid rgba(220,38,38,0.3);color:var(--danger)}
+.alert-success{background:rgba(22,163,74,0.1);border:1px solid rgba(22,163,74,0.3);color:var(--success)}
 /* Tooltip */
 .has-tooltip{position:relative}
 .has-tooltip:hover::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 6px);right:0;background:var(--navy);border:1px solid var(--navy);border-radius:6px;padding:6px 10px;font-size:11px;color:#fff;white-space:nowrap;z-index:10;pointer-events:none;box-shadow:var(--shadow-md)}
@@ -1201,6 +1203,22 @@ textarea.form-input{resize:vertical;min-height:80px}
     <div class="modal-footer">
       <button class="btn btn-primary" onclick="downloadLegalDoc()">⬇ הורד Word</button>
       <button class="btn" onclick="closeModal('modal-legal-gen')">סגור</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: הכן בקשה — pick a request type (a docx+spec.json pair from the "תבניות"
+     library), fill any spec-declared user inputs, then generate. The AI only ever
+     fills predefined text fields in an existing docx template — see generateRequest()
+     in app.js. -->
+<div class="modal-overlay" id="modal-request-gen">
+  <div class="modal modal-wide">
+    <div class="modal-header">
+      <div class="modal-title">הכן בקשה</div>
+      <button class="modal-close" onclick="closeModal('modal-request-gen')">×</button>
+    </div>
+    <div id="rq-body">
+      <div class="empty">טוען סוגי בקשה...</div>
     </div>
   </div>
 </div>

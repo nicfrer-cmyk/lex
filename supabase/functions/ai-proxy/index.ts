@@ -1,12 +1,13 @@
 // LexTrack Phase 1 — server-side Anthropic proxy.
 //
 // Replaces the old client-side `fetch('https://api.anthropic.com/v1/messages', ...)`
-// calls in src/app.js. The client sends just the Anthropic Messages API body
-// ({ model, max_tokens, system, tools, messages }); this function adds the real
-// API key (a server secret, never shipped to the browser), enforces a per-office
-// monthly action quota, forwards the request, logs usage, and returns Anthropic's
-// JSON response unchanged so app.js's existing response-parsing code doesn't
-// need to change.
+// calls in src/app.js. The client sends the Anthropic Messages API body
+// ({ model, max_tokens, system, tools, messages }) plus an optional `feature` string
+// (e.g. 'request-gen') used only for the ai_usage log, never forwarded to Anthropic;
+// this function adds the real API key (a server secret, never shipped to the
+// browser), enforces a per-office monthly action quota, forwards the request, logs
+// usage, and returns Anthropic's JSON response unchanged so app.js's existing
+// response-parsing code doesn't need to change.
 //
 // Deploy: `supabase functions deploy ai-proxy`
 // Secret: `supabase secrets set ANTHROPIC_API_KEY=sk-ant-...` (the business's own key)
@@ -134,6 +135,10 @@ Deno.serve(async (req) => {
       input_tokens: data.usage.input_tokens,
       output_tokens: data.usage.output_tokens,
       cost_usd: costUsd,
+      // Optional caller-supplied tag (e.g. 'request-gen') so cost can be broken down
+      // by feature later — undefined/omitted just stores null, same as every row
+      // logged before this field existed.
+      feature: typeof body.feature === 'string' ? body.feature.slice(0, 64) : null,
     });
   }
 

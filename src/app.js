@@ -938,6 +938,7 @@ function openCaseDetail(id) {
         <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:center">
           <button class="btn btn-sm" onclick="addDocForCase('${id}')">+ מסמך</button>
           <button class="btn btn-sm" onclick="openBatchUpload('${id}')">📎 העלאה מרובה</button>
+          <button class="btn btn-sm btn-primary" onclick="openRequestGenModal('${id}')">✍ הכן בקשה</button>
           <select class="form-input btn filter-select" style="font-size:12px" onchange="docsTabSort=this.value;openCaseDetail('${id}')">
             <option value="added" ${docsTabSort==='added'?'selected':''}>מיון: נוסף לאחרונה</option>
             <option value="opened" ${docsTabSort==='opened'?'selected':''}>מיון: נפתח לאחרונה</option>
@@ -1919,6 +1920,322 @@ async function buildWithTemplate(type, data, caseObj) {
   } catch(e) {
     notify('שגיאה: ' + e.message);
     console.error(e);
+  }
+}
+
+// ===== REQUEST GENERATION (הכן בקשה) =====
+// A "request type" is a matched pair of files sitting in the same "תבניות" library
+// folder used above: <baseName>.docx (an ordinary docxtemplater template — same
+// {{...}} syntax, same merge path as fillLegalTemplate) + <baseName>.spec.json
+// (tells this flow which placeholders are system-filled from case data, which are
+// AI-written, which need a one-off user prompt, and which model/library folder to
+// use). The AI is never shown the docx and never produces formatting — it only ever
+// returns a flat {placeholder: text} JSON object merged into the existing template,
+// exactly like ATF/POA already are.
+
+// Case fields a spec's systemFields entries may reference. תאריך is always supplied
+// regardless of whether a spec lists it, so every request template can use it for
+// free without declaring it.
+const REQUEST_SYSTEM_FIELD_MAP = {
+  'שם_זוכה': (c, client) => (client && client.name) || '',
+  'שם_חייב': c => c.debtorName || '',
+  'תז_חייב': c => c.debtorId || '',
+  'לשכת_הוצלפ': c => c.court || '',
+  'מספר_תיק_הוצלפ': c => c.courtNumber || '',
+  'סכום_חוב': c => c.amount != null ? String(c.amount) : '',
+  'תאריך': () => new Date().toLocaleDateString('he-IL'),
+};
+
+// Tags a .docx template actually contains, read via Docxtemplater's own tag scan —
+// no render() call, so this works whether or not real values are on hand yet
+// (used both to validate a spec/docx pair and, later, to catch a bad merge early).
+function extractDocxPlaceholders(buffer) {
+  const PizZip = __req('pizzip');
+  const Docxtemplater = __req('docxtemplater');
+  const zip = new PizZip(Buffer.from(buffer));
+  const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true, delimiters: { start: '{{', end: '}}' } });
+  const text = doc.getFullText();
+  const tags = new Set();
+  const re = /\{\{([^}]+)\}\}/g;
+  let m;
+  while ((m = re.exec(text))) tags.add(m[1].trim());
+  return tags;
+}
+
+// Scans the "תבניות" folder for every .spec.json, pairs it with its .docx, parses
+// and validates both the JSON shape and that every field the spec promises actually
+// has a matching {{tag}} in the docx (and vice versa). Never throws — a broken pair
+// comes back as one more entry with specError set, so one bad template can't take
+// the whole picker (or the template-manager screen) down with it.
+async function loadRequestSpecs() {
+  const folders = await Platform.tmListTree();
+  const lib = folders.find(f => f.name === 'תבניות');
+  const files = lib ? lib.files : [];
+  const specFiles = files.filter(f => /\.spec\.json$/i.test(f));
+  const docxFiles = new Set(files.filter(f => /\.docx$/i.test(f)));
+  const pairedDocx = new Set();
+  const results = [];
+
+  for (const specFile of specFiles) {
+    const baseName = specFile.replace(/\.spec\.json$/i, '');
+    const docxFile = baseName + '.docx';
+    // Mark this docx as "spoken for" as soon as a same-named spec.json exists, even
+    // if that spec turns out to be broken — otherwise a malformed spec.json makes its
+    // docx show up twice below: once with the real JSON error, once as a spurious
+    // "missing spec" orphan.
+    pairedDocx.add(docxFile);
+    const entry = { baseName, specFile, docxFile, spec: null, specError: null, docxOk: false, missingInDocx: [], extraInDocx: [] };
+    try {
+      const { buffer } = await Platform.tmReadFileBytes('תבניות', specFile);
+      const spec = JSON.parse(new TextDecoder('utf-8').decode(new Uint8Array(buffer)));
+      if (!spec.displayName || typeof spec.displayName !== 'string') throw new Error('חסר displayName');
+      if (!Array.isArray(spec.systemFields)) throw new Error('systemFields חייב להיות מערך');
+      if (!Array.isArray(spec.aiFields)) throw new Error('aiFields חייב להיות מערך');
+      for (const f of spec.aiFields) {
+        if (!f.placeholder || !f.instruction) throw new Error('כל aiField חייב placeholder ו-instruction');
+      }
+      if (spec.userInputs && !Array.isArray(spec.userInputs)) throw new Error('userInputs חייב להיות מערך');
+      entry.spec = spec;
+    } catch (e) {
+      entry.specError = 'JSON לא תקין: ' + e.message;
+      results.push(entry);
+      continue;
+    }
+    if (!docxFiles.has(docxFile)) {
+      entry.specError = `חסר קובץ תבנית תואם "${docxFile}"`;
+      results.push(entry);
+      continue;
+    }
+    try {
+      const { buffer } = await Platform.tmReadFileBytes('תבניות', docxFile);
+      const tags = extractDocxPlaceholders(buffer);
+      const specFields = [...entry.spec.systemFields, ...entry.spec.aiFields.map(f => f.placeholder), ...(entry.spec.userInputs || []).map(u => u.key)];
+      entry.missingInDocx = specFields.filter(k => !tags.has(k));
+      entry.extraInDocx = [...tags].filter(k => k !== 'תאריך' && !specFields.includes(k));
+      entry.docxOk = entry.missingInDocx.length === 0;
+    } catch (e) {
+      entry.specError = 'שגיאה בקריאת קובץ ה-docx: ' + e.message;
+    }
+    results.push(entry);
+  }
+
+  // .docx files sitting in "תבניות" with no matching .spec.json — surfaced so the
+  // template-manager screen can flag them, but they never reach the "הכן בקשה" picker.
+  for (const docxFile of docxFiles) {
+    if (pairedDocx.has(docxFile) || docxFile === 'טמפלט_הסכם_שכר_טרחה.docx' || docxFile === 'טמפלט_ייפוי_כוח.docx') continue;
+    results.push({ baseName: docxFile.replace(/\.docx$/i, ''), specFile: null, docxFile, spec: null, specError: 'חסר מפרט (spec.json)', docxOk: false, missingInDocx: [], extraInDocx: [] });
+  }
+  return results;
+}
+
+// Loosely normalizes whatever a spec author wrote in "model" to this app's actual
+// model-string constants (see chooseModel() above) — the spec format only needs to
+// express "fast/templated" vs "deep/reasoned", not the exact API string.
+function mapRequestModel(specModel) {
+  return (specModel || '').includes('sonnet') ? 'claude-sonnet-4-6' : 'claude-haiku-4-5-20251001';
+}
+
+let rqCurrentCaseId = null;
+let rqSpecs = [];
+let rqBusy = false;
+
+async function openRequestGenModal(caseId) {
+  rqCurrentCaseId = caseId;
+  openModal('modal-request-gen');
+  const body = document.getElementById('rq-body');
+  body.innerHTML = '<div class="empty">טוען סוגי בקשה...</div>';
+  try {
+    rqSpecs = (await loadRequestSpecs()).filter(s => s.docxOk);
+  } catch (e) {
+    body.innerHTML = `<div class="empty">שגיאה בטעינת סוגי בקשה: ${escapeHtml(e.message)}</div>`;
+    return;
+  }
+  if (!rqSpecs.length) {
+    body.innerHTML = '<div class="empty">אין עדיין סוגי בקשה זמינים. הוסף/י זוג תבנית docx + מפרט spec.json תקין דרך מסך "תבניות".</div>';
+    return;
+  }
+  renderRqPicker();
+}
+
+function renderRqPicker() {
+  const body = document.getElementById('rq-body');
+  body.innerHTML = `
+    <div class="form-group">
+      <label class="form-label">סוג הבקשה</label>
+      <select class="form-input" id="rq-type-select" onchange="rqOnTypeChange()">
+        ${rqSpecs.map((s, i) => `<option value="${i}">${escapeHtml(s.spec.displayName)}</option>`).join('')}
+      </select>
+    </div>
+    <div id="rq-inputs"></div>
+    <div id="rq-status" style="margin:10px 0;font-size:13px;color:var(--text3)"></div>
+    <div id="rq-result"></div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" id="rq-generate-btn" onclick="rqGenerate()">✍ הפק</button>
+      <button class="btn" onclick="closeModal('modal-request-gen')">סגור</button>
+    </div>`;
+  rqOnTypeChange();
+}
+
+function rqOnTypeChange() {
+  const idx = Number(document.getElementById('rq-type-select').value);
+  const spec = rqSpecs[idx].spec;
+  const wrap = document.getElementById('rq-inputs');
+  const inputs = spec.userInputs || [];
+  wrap.innerHTML = inputs.map((u, i) => {
+    const id = `rq-input-${i}`;
+    if (u.type === 'select') {
+      return `<div class="form-group"><label class="form-label">${escapeHtml(u.label || u.key)}</label>
+        <select class="form-input" id="${id}">${(u.options || []).map(o => `<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`).join('')}</select></div>`;
+    }
+    const type = ['text', 'number', 'date'].includes(u.type) ? u.type : 'text';
+    return `<div class="form-group"><label class="form-label">${escapeHtml(u.label || u.key)}${u.required ? ' *' : ''}</label>
+      <input class="form-input" id="${id}" type="${type}"></div>`;
+  }).join('');
+  document.getElementById('rq-result').innerHTML = '';
+  document.getElementById('rq-status').textContent = '';
+}
+
+async function rqGenerate() {
+  if (rqBusy) return;
+  const idx = Number(document.getElementById('rq-type-select').value);
+  const { spec, docxFile } = rqSpecs[idx];
+  const caseObj = db.cases.find(c => c.id === rqCurrentCaseId);
+  if (!caseObj) { notify('תיק לא נמצא'); return; }
+
+  const inputs = spec.userInputs || [];
+  const inputValues = {};
+  for (let i = 0; i < inputs.length; i++) {
+    const u = inputs[i];
+    const el = document.getElementById(`rq-input-${i}`);
+    const val = el ? el.value.trim() : '';
+    if (u.required && !val) { notify(`נא למלא "${u.label || u.key}"`); return; }
+    inputValues[u.key] = val;
+  }
+
+  const client = caseObj.client ? db.clients.find(c => c.id === caseObj.client) : null;
+  const systemValues = {};
+  const missing = [];
+  for (const key of spec.systemFields) {
+    const resolver = REQUEST_SYSTEM_FIELD_MAP[key];
+    const val = resolver ? resolver(caseObj, client) : '';
+    systemValues[key] = val;
+    if (!val && key !== 'תאריך') missing.push(key);
+  }
+  if (missing.length) {
+    document.getElementById('rq-result').innerHTML =
+      `<div class="alert alert-danger">חסרים בתיק השדות הבאים: ${missing.map(escapeHtml).join(', ')}. השלם/י אותם בפרטי התיק ונסה/י שוב.</div>`;
+    return;
+  }
+  systemValues['תאריך'] = REQUEST_SYSTEM_FIELD_MAP['תאריך']();
+
+  if (!caseObj.diary || !caseObj.diary.length) {
+    if (!await customConfirm('ליומן הטיפול אין רשומות — פרק העובדות ייכתב על בסיס נתוני התיק בלבד. להמשיך?')) return;
+  }
+
+  rqBusy = true;
+  document.getElementById('rq-generate-btn').disabled = true;
+  document.getElementById('rq-result').innerHTML = '';
+  const statusEl = document.getElementById('rq-status');
+  try {
+    statusEl.textContent = 'אוסף נתוני תיק...';
+    const diaryText = (caseObj.diary || []).map(d => `[${d.date}] ${d.text}`).join('\n') || '(אין רשומות ביומן)';
+
+    // Few-shot style examples — same library folders + reader the existing
+    // draftDocument agent tool already uses (Platform.listFolderDocs/readLibraryDoc),
+    // just simpler selection (first couple of docs, not keyword-scored).
+    let fewShotText = '';
+    if (spec.fewShotCategory) {
+      try {
+        const docsRes = await Platform.listFolderDocs({ folderName: spec.fewShotCategory });
+        if (Array.isArray(docsRes) && docsRes.length) {
+          const texts = [];
+          for (const f of docsRes.slice(0, 2)) {
+            const r = await Platform.readLibraryDoc({ folderName: spec.fewShotCategory, fileName: f });
+            if (r && !r.error && r.text) texts.push(`### ${f}\n${r.text.substring(0, 4000)}`);
+          }
+          if (texts.length) fewShotText = '## דוגמאות סגנון מהספרייה:\n' + texts.join('\n\n---\n\n') + '\n\n';
+        }
+      } catch (e) { /* no library examples — proceed without failing, per spec */ }
+    }
+
+    statusEl.textContent = 'כותב את פרקי הבקשה...';
+    const fieldsBlock = spec.aiFields.map(f => `- "${f.placeholder}": ${f.instruction}${f.maxSentences ? ` (עד ${f.maxSentences} משפטים)` : ''}`).join('\n');
+    const prompt = `${fewShotText}## נתוני התיק:\n${Object.entries(systemValues).map(([k, v]) => `${k}: ${v}`).join('\n')}\n\n## יומן הטיפול בתיק (כרונולוגי):\n${diaryText}\n\n${Object.keys(inputValues).length ? `## פרטים נוספים:\n${Object.entries(inputValues).map(([k, v]) => `${k}: ${v}`).join('\n')}\n\n` : ''}## המשימה:
+כתוב את השדות הבאים עבור "${spec.displayName}":
+${fieldsBlock}
+
+## פורמט פלט חובה:
+החזר אך ורק אובייקט JSON תקין שמפתחותיו הם בדיוק שמות השדות שלמעלה (${spec.aiFields.map(f => `"${f.placeholder}"`).join(', ')}), בלי טקסט לפני או אחרי, בלי backticks.`;
+
+    const system = 'אתה עוזר משפטי במשרד עורכי דין ישראלי המתמחה בהוצאה לפועל. אתה כותב פרקים לבקשות המוגשות ללשכת ההוצאה לפועל. כתוב בעברית משפטית תקנית, בגוף שלישי. הסתמך אך ורק על העובדות שסופקו — אסור להמציא עובדות, תאריכים, סכומים או סעיפי חוק. החזר אך ורק JSON תקין, בלי טקסט לפני או אחרי, בלי backticks.';
+
+    const model = mapRequestModel(spec.model);
+    const messages = [{ role: 'user', content: prompt }];
+    let aiValues = null;
+    let lastErr = null;
+    for (let attempt = 0; attempt < 2 && !aiValues; attempt++) {
+      const data = await Platform.callAI({ model, max_tokens: 3000, system, messages, useCaching: true, feature: 'request-gen' });
+      if (data.error) {
+        lastErr = (data.error && data.error.message) ? data.error.message : (typeof data.error === 'string' ? data.error : JSON.stringify(data.error));
+        break;
+      }
+      const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+      const cleaned = text.replace(/^```json\s*/i, '').replace(/^```\s*/, '').replace(/```\s*$/, '').trim();
+      try {
+        const parsed = JSON.parse(cleaned);
+        const emptyKeys = spec.aiFields.map(f => f.placeholder).filter(k => !parsed[k] || !String(parsed[k]).trim());
+        if (emptyKeys.length) throw new Error('חסרים שדות בתשובה: ' + emptyKeys.join(', '));
+        aiValues = parsed;
+      } catch (e) {
+        lastErr = e.message;
+        messages.push({ role: 'assistant', content: text });
+        messages.push({ role: 'user', content: `התשובה הקודמת לא הייתה JSON תקין (${e.message}). החזר שוב אך ורק אובייקט JSON תקין עם המפתחות ${spec.aiFields.map(f => `"${f.placeholder}"`).join(', ')}, בלי טקסט נוסף ובלי backticks.` });
+      }
+    }
+    if (!aiValues) {
+      statusEl.textContent = '';
+      document.getElementById('rq-result').innerHTML = `<div class="alert alert-danger">שגיאה בהפקת התוכן מה-AI: ${escapeHtml(lastErr || 'תשובה לא תקינה')}. לא נוצר קובץ.</div>`;
+      return;
+    }
+
+    statusEl.textContent = 'ממזג מסמך...';
+    const { buffer: templateBuf } = await Platform.tmReadFileBytes('תבניות', docxFile);
+    const placeholders = { ...systemValues, ...inputValues, ...aiValues };
+    const PizZip = __req('pizzip');
+    const Docxtemplater = __req('docxtemplater');
+    const zip = new PizZip(Buffer.from(templateBuf));
+    const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true, delimiters: { start: '{{', end: '}}' } });
+    doc.render(placeholders);
+    const outBuf = doc.getZip().generate({ type: 'nodebuffer' });
+
+    const dateStr = new Date().toLocaleDateString('he-IL');
+    const label = caseObj.caseSubNumber || caseObj.name || '';
+    const filename = `${spec.displayName} – ${label} – ${dateStr}.docx`.replace(/[\\/:*?"<>|]/g, '_');
+    const filePath = await Platform.saveFile({ buffer: Array.from(outBuf), filename });
+
+    db.docs.unshift({ id: uid(), name: spec.displayName, cat: 'תביעות וכתבי בי דין', caseId: rqCurrentCaseId, notes: '', date: dateStr, ext: 'doc', filePath, origName: filename });
+    caseObj.diary.push({ text: `הופקה "${spec.displayName}" באמצעות המערכת`, date: new Date().toLocaleString('he-IL') });
+    saveDB();
+
+    statusEl.textContent = '';
+    // Phase 1 deliberately dropped the per-call dollar-cost display for end users
+    // (see ai-proxy/index.ts) — this mirrors the rest of the app's quota-based
+    // framing (agent-session-cost etc.) instead of reintroducing a $ figure.
+    let quotaNote = '';
+    try { quotaNote = ` (נוצלו ${await Platform.getAIUsageThisMonth()} פעולות AI החודש)`; } catch (e) { /* non-critical */ }
+    document.getElementById('rq-result').innerHTML =
+      `<div class="alert alert-success">המסמך "${escapeHtml(filename)}" נוצר ונשמר לתיק${quotaNote}.</div>
+       <button class="btn btn-primary" onclick="Platform.openFile('${filePath}','${filename.replace(/'/g, "\\'")}')">⬇ פתח שוב</button>`;
+    await Platform.openFile(filePath, filename);
+    if (currentPanel === 'case-detail' && currentCaseId === rqCurrentCaseId) reopenCaseDetailKeepingTab(rqCurrentCaseId);
+  } catch (e) {
+    statusEl.textContent = '';
+    document.getElementById('rq-result').innerHTML = `<div class="alert alert-danger">שגיאה: ${escapeHtml(e.message)}</div>`;
+    console.error(e);
+  } finally {
+    rqBusy = false;
+    const btn = document.getElementById('rq-generate-btn');
+    if (btn) btn.disabled = false;
   }
 }
 
