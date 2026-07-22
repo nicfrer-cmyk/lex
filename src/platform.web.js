@@ -189,7 +189,15 @@ function fromSafeKey(key) {
 // app.js needs it to hide desktop-only affordances (e.g. the ms-word:ofe "open in Word,
 // linked to the site" button — that custom protocol has no handler on Android/iOS, so
 // showing it there is a dead button, not a working one) instead of showing them broken.
-const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || navigator.maxTouchPoints > 1;
+//
+// iPadOS Safari has requested the desktop site by default since iPadOS 13, so its
+// userAgent just says "Macintosh" like a real Mac — the standard workaround is pairing
+// that with navigator.maxTouchPoints (real Macs report 0; trackpads aren't touchscreens
+// and don't set this). Using maxTouchPoints alone, without requiring the Mac-like UA
+// too, was wrong: it also matched any touchscreen Windows/Linux laptop or monitor,
+// which silently hid this button on real desktops with Word actually installed.
+const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+  || (/Macintosh/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
 
 window.Platform = {
   isMobile: IS_MOBILE,
