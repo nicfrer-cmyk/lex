@@ -14,14 +14,27 @@ async function tmRender() {
       <div class="legal-section">
         <div class="legal-section-title">${escapeHtml(f.name)}</div>
         ${f.files.length ? f.files.map(name => `
-          <div class="doc-item">
+          <div class="doc-item" onclick="tmOpenFile('${f.name.replace(/'/g,"\\'")}','${name.replace(/'/g,"\\'")}')">
             <div class="doc-icon doc">${(name.split('.').pop()||'').slice(0,3).toUpperCase()}</div>
             <div style="flex:1">${escapeHtml(name)}</div>
-            <button class="btn btn-sm btn-danger" onclick="tmDeleteFile('${f.name.replace(/'/g,"\\'")}','${name.replace(/'/g,"\\'")}')">מחק</button>
+            <button class="btn btn-sm" onclick="event.stopPropagation();tmOpenFile('${f.name.replace(/'/g,"\\'")}','${name.replace(/'/g,"\\'")}')">👁 פתח</button>
+            <button class="btn btn-sm btn-danger" onclick="event.stopPropagation();tmDeleteFile('${f.name.replace(/'/g,"\\'")}','${name.replace(/'/g,"\\'")}')">מחק</button>
           </div>`).join('') : '<div class="empty">תיקייה ריקה</div>'}
       </div>`).join('');
   } catch (e) {
     wrap.innerHTML = '<div class="empty">שגיאה בטעינה: ' + e.message + '</div>';
+  }
+}
+
+// Reuses the app's existing read-only doc viewer (previewRawFile/renderPreviewBody in
+// app.js — same one the e-filing tab uses for files with no db.docs row) instead of
+// building a second preview UI just for templates.
+async function tmOpenFile(folderName, filename) {
+  try {
+    const filePath = await Platform.tmFilePath(folderName, filename);
+    previewRawFile(filePath, getExt(filename), filename);
+  } catch (e) {
+    notify('שגיאה בפתיחה: ' + e.message);
   }
 }
 

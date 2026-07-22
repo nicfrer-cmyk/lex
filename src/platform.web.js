@@ -660,6 +660,15 @@ window.Platform = {
     if (error) throw error;
   },
 
+  // Bucket-relative key for a template file — same derivation as tmDeleteFile/
+  // tmImportFile — so the template-manager screen can hand it to the same
+  // downloadFileBytes()-backed preview the rest of the app already uses, without
+  // reaching past the Platform façade into officeId/toSafeKey internals itself.
+  async tmFilePath(folderName, filename) {
+    const { officeId } = await currentOffice();
+    return `${officeId}/templates/${toSafeKey(folderName)}/${toSafeKey(filename)}`;
+  },
+
   // ---- client-side error logging (see client_errors table / fix8.sql) ----
   async logClientError({ message, stack, url }) {
     // Never let logging an error throw another one — if we don't have a resolved
