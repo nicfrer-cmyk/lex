@@ -1972,7 +1972,16 @@ function extractDocxPlaceholders(buffer) {
   const tags = new Set();
   const re = /\{\{([^}]+)\}\}/g;
   let m;
-  while ((m = re.exec(text))) tags.add(m[1].trim());
+  while ((m = re.exec(text))) {
+    // A "list" aiField (see REQUEST_SYSTEM_FIELD_MAP callers) renders as a
+    // docxtemplater loop — {{#tag}}/{{/tag}} open/close markers plus a bare {{.}}
+    // per-item reference — not three different placeholder names. Normalize back
+    // to the plain tag (or drop {{.}}) so validation compares like with like.
+    let tag = m[1].trim();
+    if (tag.startsWith('#') || tag.startsWith('/') || tag.startsWith('^')) tag = tag.slice(1).trim();
+    if (!tag || tag === '.') continue;
+    tags.add(tag);
+  }
   return tags;
 }
 
@@ -2173,7 +2182,11 @@ async function rqGenerate() {
     }
 
     statusEl.textContent = 'כותב את פרקי הבקשה...';
-    const fieldsBlock = spec.aiFields.map(f => `- "${f.placeholder}": ${f.instruction}${f.maxSentences ? ` (עד ${f.maxSentences} משפטים)` : ''}`).join('\n');
+    // A field marked "list" becomes several separately-numbered paragraphs in the docx
+    // (one per fact/argument, matching how real Israeli motions are drafted) via
+    // docxtemplater's {{#field}}...{{/field}} loop — so it needs a JSON array of short
+    // strings back, not one prose blob. Plain fields still get a single string.
+    const fieldsBlock = spec.aiFields.map(f => `- "${f.placeholder}"${f.list ? ' (מערך JSON של מחרוזות — כל איבר הוא סעיף עובדתי/משפטי נפרד, ללא מספור עצמי)' : ''}: ${f.instruction}${f.maxSentences ? ` (עד ${f.maxSentences} ${f.list ? 'סעיפים' : 'משפטים'})` : ''}`).join('\n');
     const prompt = `${fewShotText}## נתוני התיק:\n${Object.entries(systemValues).map(([k, v]) => `${k}: ${v}`).join('\n')}\n\n## יומן הטיפול בתיק (כרונולוגי):\n${diaryText}\n\n${Object.keys(inputValues).length ? `## פרטים נוספים:\n${Object.entries(inputValues).map(([k, v]) => `${k}: ${v}`).join('\n')}\n\n` : ''}## המשימה:
 כתוב את השדות הבאים עבור "${spec.displayName}":
 ${fieldsBlock}
@@ -2181,7 +2194,7 @@ ${fieldsBlock}
 ## פורמט פלט חובה:
 החזר אך ורק אובייקט JSON תקין שמפתחותיו הם בדיוק שמות השדות שלמעלה (${spec.aiFields.map(f => `"${f.placeholder}"`).join(', ')}), בלי טקסט לפני או אחרי, בלי backticks.`;
 
-    const system = 'אתה עוזר משפטי במשרד עורכי דין ישראלי המתמחה בהוצאה לפועל. אתה כותב פרקים לבקשות המוגשות ללשכת ההוצאה לפועל. כתוב בעברית משפטית תקנית, בגוף שלישי. הסתמך אך ורק על העובדות שסופקו — אסור להמציא עובדות, תאריכים, סכומים או סעיפי חוק. החזר אך ורק JSON תקין, בלי טקסט לפני או אחרי, בלי backticks.';
+    const system = 'אתה עוזר משפטי במשרד עורכי דין ישראלי המתמחה בהוצאה לפועל. אתה כותב פרקים לבקשות המוגשות ללשכת ההוצאה לפועל או לבית משפט. כתוב בעברית משפטית תקנית, בגוף שלישי. הסתמך אך ורק על העובדות שסופקו — אסור להמציא עובדות, תאריכים, סכומים או סעיפי חוק. החזר אך ורק JSON תקין, בלי טקסט לפני או אחרי, בלי backticks.';
 
     const model = mapRequestModel(spec.model);
     const messages = [{ role: 'user', content: prompt }];
@@ -2197,7 +2210,11 @@ ${fieldsBlock}
       const cleaned = text.replace(/^```json\s*/i, '').replace(/^```\s*/, '').replace(/```\s*$/, '').trim();
       try {
         const parsed = JSON.parse(cleaned);
-        const emptyKeys = spec.aiFields.map(f => f.placeholder).filter(k => !parsed[k] || !String(parsed[k]).trim());
+        const emptyKeys = spec.aiFields.map(f => {
+          const v = parsed[f.placeholder];
+          const bad = f.list ? !(Array.isArray(v) && v.length && v.every(s => String(s || '').trim())) : !(v && String(v).trim());
+          return bad ? f.placeholder : null;
+        }).filter(Boolean);
         if (emptyKeys.length) throw new Error('חסרים שדות בתשובה: ' + emptyKeys.join(', '));
         aiValues = parsed;
       } catch (e) {
