@@ -50,6 +50,9 @@ const html = appHtml.replace(
     // guards — so neither breaks if the other is missing, but this order is what
     // makes both halves actually work.
     'ai-center.js',
+    // automations.js נטען אחרי ai-center.js: הוא משתמש ב-aiSb/aiInvoke/
+    // aiUpdateChecked/aiJsAttr שלו, ובגלובלים של app.js.
+    'automations.js',
   ].map(s => `<script src="${s}?v=${buildVersion}"></script>`).join('\n')
 );
 fs.writeFileSync(path.join(outDir, 'index.html'), html, 'utf8');
@@ -61,6 +64,7 @@ fs.copyFileSync(path.join(src, 'app.js'), path.join(outDir, 'app.js'));
 fs.copyFileSync(path.join(src, 'auth.js'), path.join(outDir, 'auth.js'));
 fs.copyFileSync(path.join(src, 'template-manager.js'), path.join(outDir, 'template-manager.js'));
 fs.copyFileSync(path.join(src, 'ai-center.js'), path.join(outDir, 'ai-center.js'));
+fs.copyFileSync(path.join(src, 'automations.js'), path.join(outDir, 'automations.js'));
 // sw.js is registered via navigator.serviceWorker.register('/sw.js'), not a <script>
 // tag — must stay at the site root (not versioned/cache-busted) so its scope covers
 // the whole origin; a service worker can only control paths at or below its own URL.

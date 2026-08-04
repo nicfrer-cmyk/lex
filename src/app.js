@@ -186,6 +186,7 @@ function nav(id, el) {
   if(id==='analytics') renderAnalytics();
   if(id==='templates' && typeof tmRender==='function') tmRender();
   if(id==='ai-center' && typeof renderAiCenter==='function') renderAiCenter();
+  if(id==='automations' && typeof renderAutomations==='function') renderAutomations();
 }
 
 // ===== MOBILE DRAWER (sidebar-as-drawer on small screens) =====

@@ -655,6 +655,10 @@ textarea.form-input{resize:vertical;min-height:80px}
       <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="2.2"/><path d="M8 1v2.4M8 12.6V15M1 8h2.4M12.6 8H15M3.05 3.05l1.7 1.7M11.25 11.25l1.7 1.7M12.95 3.05l-1.7 1.7M4.75 11.25l-1.7 1.7"/></svg>מרכז AI
       <span class="nav-badge" id="ai-nav-badge" style="display:none"></span>
     </div>
+    <div class="nav-item" id="nav-automations-item" onclick="nav('automations',this)">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h5M9.6 4h4.4M2 8h8.6M2 12h5M9.6 12h4.4"/><circle cx="8.2" cy="4" r="1.4"/><circle cx="12.2" cy="8" r="1.4"/><circle cx="8.2" cy="12" r="1.4"/></svg>מרכז האוטומציות
+      <span class="nav-badge" id="auto-nav-badge" style="display:none"></span>
+    </div>
     <div style="margin-top:auto;padding:14px 18px;border-top:1px solid rgba(255,255,255,0.1)">
       <div style="font-size:11px;color:rgba(255,255,255,0.4)">LexTrack v2.0</div>
       <div style="font-size:11px;color:rgba(255,255,255,0.55);margin-top:2px" id="data-count"></div>
@@ -966,6 +970,20 @@ textarea.form-input{resize:vertical;min-height:80px}
          12 ה"מסכים" של המפרט (/ai-center/inbox, /agents, /runs וכו') הם טאבים
          פנימיים ולא routes — במערכת אין URL routing כלל: nav() ב-app.js:157 רק
          מחליף .active על פאנלים, בלי hash ובלי History API. -->
+    <div id="panel-automations" class="panel">
+      <div class="topbar">
+        <div class="topbar-title">מרכז האוטומציות</div>
+        <div class="topbar-actions">
+          <button class="btn btn-sm" onclick="renderAutomations()">↻ רענן</button>
+          <button class="btn btn-sm btn-danger" id="auto-pause-btn" onclick="autoTogglePause()">⏸ השהה הכל</button>
+        </div>
+      </div>
+      <div class="content">
+        <div class="tabs" id="auto-tabs"></div>
+        <div id="auto-body"></div>
+      </div>
+    </div>
+
     <div id="panel-ai-center" class="panel">
       <div class="topbar">
         <div class="topbar-title">מרכז שליטה AI</div>
@@ -1596,6 +1614,24 @@ textarea.form-input{resize:vertical;min-height:80px}
 </div>
 
 <!-- SCRIPTS: injected by build.mjs per target (electron vs www) -->
+
+
+  <!-- מרכז האוטומציות: בדיקה יבשה / פרטי הרצה -->
+  <div class="modal" id="modal-auto-dry">
+    <div class="modal-box" style="max-width:760px">
+      <div class="modal-head"><div class="modal-title">בדיקת אוטומציה</div>
+        <button class="modal-x" onclick="closeModal('modal-auto-dry')">&times;</button></div>
+      <div class="modal-body" id="auto-dry-body"></div>
+    </div>
+  </div>
+
+  <div class="modal" id="modal-auto-settings">
+    <div class="modal-box" style="max-width:640px">
+      <div class="modal-head"><div class="modal-title" id="auto-settings-title">הגדרות אוטומציה</div>
+        <button class="modal-x" onclick="closeModal('modal-auto-settings')">&times;</button></div>
+      <div class="modal-body" id="auto-settings-body"></div>
+    </div>
+  </div>
 
 </body>
 </html>
