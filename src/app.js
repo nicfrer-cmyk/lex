@@ -23,7 +23,11 @@ const CASE_STAGES = {
 };
 function getCaseStages(c) { return CASE_STAGES[c && c.caseType] || CASE_STAGES.debt; }
 
-let db = {cases:[], clients:[], tasks:[], events:[], docs:[], payments:[], trustTransactions:[], settings:{}, efilingBundles:{}};
+// `leads` נוספה עבור מרכז ה-AI (קליטת לידים מוואטסאפ/מייל/שיחות). היא כלולה
+// כאן ולא רק ב-loadDB() כי השורה הזו היא מה שמשרד *חדש* מקבל — הבלוק ב-loadDB
+// רץ רק כש-Platform.loadDB() החזיר נתונים, ולכן משרד חדש היה נשאר בלי המפתח
+// (בדיוק כפי שקורה היום ל-timeEntries ול-counters).
+let db = {cases:[], clients:[], tasks:[], events:[], docs:[], payments:[], leads:[], timeEntries:[], trustTransactions:[], settings:{}, efilingBundles:{}, counters:{nextClientNumber:1, caseCounters:{}}};
 let currentCaseId = null;
 let selectedFile = null;
 // In-case docs tab (ct-docs) sort/filter state — read by openCaseDetail() on every
@@ -59,6 +63,9 @@ async function loadDB() {
     if (!db.payments) db.payments = [];
     if (!db.trustTransactions) db.trustTransactions = [];
     if (!db.timeEntries) db.timeEntries = [];
+    // לידים — קולקציה שנוספה עם מרכז ה-AI. blob של משרד קיים נשמר לפניה,
+    // ולכן חייבת אתחול הגנתי כמו payments/trustTransactions למעלה.
+    if (!db.leads) db.leads = [];
     if (!db.settings) db.settings = {};
     if (!db.efilingBundles) db.efilingBundles = {};
     if (!db.counters) db.counters = { nextClientNumber: 1, caseCounters: {} };
@@ -178,6 +185,7 @@ function nav(id, el) {
   if(id==='docs') renderDocs();
   if(id==='analytics') renderAnalytics();
   if(id==='templates' && typeof tmRender==='function') tmRender();
+  if(id==='ai-center' && typeof renderAiCenter==='function') renderAiCenter();
 }
 
 // ===== MOBILE DRAWER (sidebar-as-drawer on small screens) =====
@@ -894,6 +902,11 @@ function openCaseDetail(id) {
     </div>`:''}
 
     ${c.notes?`<div class="card"><div class="card-title">הערות</div><div style="font-size:13px;color:var(--text2);line-height:1.7">${escapeHtml(c.notes)}</div></div>`:''}
+
+    <!-- פעולות AI בכרטיס התיק (מפרט מרכז ה-AI, סעיף 6.2).
+         נקודת הזרקה אחת ל-ai-center.js, במקום לפזר כפתורים בתוך הפונקציה
+         הענקית הזו. הבדיקה typeof מונעת שבירה אם הקובץ לא נטען מסיבה כלשהי. -->
+    ${typeof AiMatterActions==='function'?AiMatterActions(id):''}
 
     <!-- Tabs -->
     <div class="card">
@@ -2388,6 +2401,7 @@ function openClientDetail(id) {
   const clientTrustWithBalance=clientTrust.filter(x=>x.trust.all.length);
 
   document.getElementById('client-detail-body').innerHTML=`
+    ${typeof AiClientActions==='function'?AiClientActions(id):''}
     <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px">
       <div class="client-avatar" style="background:${cl.color||'rgba(37,99,235,0.15)'};color:${cl.textColor||'var(--accent2)'};width:56px;height:56px;font-size:18px;margin-bottom:0">
         ${escapeHtml(cl.initials||cl.name.substring(0,2).toUpperCase())}

@@ -44,6 +44,12 @@ const html = appHtml.replace(
     'app.js',
     'auth.js',
     'template-manager.js',
+    // ai-center.js must load AFTER app.js: it calls app.js's globals (db, saveDB,
+    // notify, escapeHtml, uid, openModal) at call time, and app.js in turn calls
+    // ai-center.js's AiMatterActions/renderAiCenter behind `typeof x === 'function'`
+    // guards — so neither breaks if the other is missing, but this order is what
+    // makes both halves actually work.
+    'ai-center.js',
   ].map(s => `<script src="${s}?v=${buildVersion}"></script>`).join('\n')
 );
 fs.writeFileSync(path.join(outDir, 'index.html'), html, 'utf8');
@@ -54,6 +60,7 @@ fs.copyFileSync(path.join(src, 'legal-content.js'), path.join(outDir, 'legal-con
 fs.copyFileSync(path.join(src, 'app.js'), path.join(outDir, 'app.js'));
 fs.copyFileSync(path.join(src, 'auth.js'), path.join(outDir, 'auth.js'));
 fs.copyFileSync(path.join(src, 'template-manager.js'), path.join(outDir, 'template-manager.js'));
+fs.copyFileSync(path.join(src, 'ai-center.js'), path.join(outDir, 'ai-center.js'));
 // sw.js is registered via navigator.serviceWorker.register('/sw.js'), not a <script>
 // tag — must stay at the site root (not versioned/cache-busted) so its scope covers
 // the whole origin; a service worker can only control paths at or below its own URL.
