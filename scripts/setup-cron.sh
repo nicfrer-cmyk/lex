@@ -50,7 +50,24 @@ select cron.schedule(
   \$\$
 );
 
--- בדיקה שהעבודה נרשמה:
+-- ------------------------------------------------------------------
+-- תזכורות Push לטלפון — דיון מחר, משימה להיום, תיק תקוע 14 יום.
+-- ------------------------------------------------------------------
+-- זה קיים במערכת מזמן (check-and-send-reminders) ומעולם לא רץ, מאותה
+-- סיבה בדיוק: אין מתזמן. **אין כאן AI ואין עלות** — שאילתה והתראה.
+-- 07:00 שעון ישראל = 04:00 UTC.
+select cron.schedule(
+  'lextrack-reminders', '0 4 * * *',
+  \$\$
+  select net.http_post(
+    url := 'https://$PROJECT_REF.supabase.co/functions/v1/check-and-send-reminders',
+    headers := jsonb_build_object('Content-Type', 'application/json'),
+    body := '{}'::jsonb
+  );
+  \$\$
+);
+
+-- בדיקה שהעבודות נרשמו:
 select jobname, schedule, active from cron.job;
 
 ────────────────────────────────────────────────────────────────────
