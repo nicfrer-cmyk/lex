@@ -23,7 +23,7 @@ import { admin, loadOfficeDb, CrmDb, CrmCase } from '../_shared/db.ts';
 import { json, preflight, errorResponse } from '../_shared/http.ts';
 import { timingSafeEqual, stableHash } from '../_shared/crypto.ts';
 import { audit } from '../_shared/audit.ts';
-import { todayISO, addDaysISO, daysBetweenISO, heToISO } from '../_shared/security.ts';
+import { todayISO, addDaysISO, daysBetweenISO, heToISO, wrapUntrusted } from '../_shared/security.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -143,9 +143,15 @@ async function runAutomations(sb: ReturnType<typeof admin>) {
 
     const db = await loadOfficeDb(sb, officeId);
 
+    // שרשורי התקשורת אינם חלק מה-blob אלא טבלה אמיתית, ולכן נטענים בנפרד —
+    // ורק אם באמת יש כלל שצריך אותם. משרד בלי אוטומציית תקשורת לא משלם על
+    // שאילתה מיותרת בכל טיק של 5 דקות.
+    const needsThreads = officeRules.some((r) => r.trigger_type === 'thread_no_reply');
+    const threads = needsThreads ? await loadOpenThreads(sb, officeId) : [];
+
     for (const rule of officeRules) {
       try {
-        const subjects = collectSubjects(rule, db);
+        const subjects = collectSubjects(rule, db, threads);
         const passing = subjects.filter((s) => matchesConditions(s, rule.conditions, db));
         const cap = Number(rule.trigger_config?.max_per_run) || 10;
 
@@ -186,7 +192,53 @@ type Subject = {
   meta: Record<string, unknown>;
 };
 
-function collectSubjects(rule: AutomationRule, db: CrmDb): Subject[] {
+/** שרשור פתוח + ההודעה האחרונה בו. הכיוון של האחרונה הוא כל הסיפור. */
+export type ThreadRow = {
+  id: string; channel: string; participant_name: string | null;
+  participant_identifier: string | null; client_id: string | null;
+  matter_id: string | null; lead_id: string | null;
+  last_message_at: string | null; status: string;
+  lastDirection: 'in' | 'out' | null;
+  lastBody: string;
+  inboundCount: number;
+};
+
+async function loadOpenThreads(
+  sb: ReturnType<typeof admin>, officeId: string,
+): Promise<ThreadRow[]> {
+  const { data: threads } = await sb.from('communication_threads')
+    .select('id, channel, participant_name, participant_identifier, client_id, matter_id, lead_id, last_message_at, status')
+    .eq('office_id', officeId)
+    .in('status', ['open', 'waiting_reply'])
+    .order('last_message_at', { ascending: false })
+    .limit(200);
+  if (!threads?.length) return [];
+
+  // הודעה אחרונה לכל שרשור. שאילתה אחת לכל ההודעות של השרשורים הרלוונטיים
+  // ולא אחת לשרשור — 200 שאילתות בכל טיק היו מכריעות את הפונקציה.
+  const ids = threads.map((t) => t.id);
+  const { data: msgs } = await sb.from('communication_messages')
+    .select('thread_id, direction, body_text, created_at')
+    .in('thread_id', ids)
+    .order('created_at', { ascending: true });
+
+  const last = new Map<string, { direction: 'in' | 'out'; body: string }>();
+  const inbound = new Map<string, number>();
+  for (const m of msgs || []) {
+    const dir = m.direction === 'out' ? 'out' : 'in';
+    last.set(m.thread_id as string, { direction: dir, body: String(m.body_text || '') });
+    if (dir === 'in') inbound.set(m.thread_id as string, (inbound.get(m.thread_id as string) || 0) + 1);
+  }
+
+  return threads.map((t) => ({
+    ...t,
+    lastDirection: last.get(t.id)?.direction ?? null,
+    lastBody: last.get(t.id)?.body ?? '',
+    inboundCount: inbound.get(t.id) || 0,
+  })) as ThreadRow[];
+}
+
+function collectSubjects(rule: AutomationRule, db: CrmDb, threads: ThreadRow[] = []): Subject[] {
   const cfg = rule.trigger_config || {};
   const today = todayISO();
 
@@ -292,10 +344,68 @@ function collectSubjects(rule: AutomationRule, db: CrmDb): Subject[] {
         }));
     }
 
+    // ⚠ הטריגר היחיד שעובד על טבלה אמיתית ולא על ה-blob.
+    //
+    // "שיחה תקועה" מוגדרת בדיוק אחד: **ההודעה האחרונה בשרשור היא נכנסת**
+    // ועברו מעליה N שעות. זו לא היוריסטיקה — זה בדיוק המצב שבו לקוח או
+    // פונה כתב ואיש לא ענה לו. אם ההודעה האחרונה יוצאת, הכדור אצלו ואין
+    // מה להעיר עליו.
+    case 'thread_no_reply': {
+      const hours = Number(cfg.hours ?? 4);
+      const cutoff = Date.now() - hours * 3600_000;
+      const channels = Array.isArray(cfg.channels) && cfg.channels.length
+        ? (cfg.channels as string[]) : null;
+
+      return threads
+        .filter((t) => t.lastDirection === 'in')
+        .filter((t) => !channels || channels.includes(t.channel))
+        .filter((t) => t.last_message_at && Date.parse(t.last_message_at) < cutoff)
+        .map((t) => {
+          const waitedH = t.last_message_at
+            ? Math.floor((Date.now() - Date.parse(t.last_message_at)) / 3600_000) : 0;
+          const who = t.participant_name || t.participant_identifier || 'פונה';
+          return {
+            kind: 'client' as const,
+            id: t.id,
+            label: `${CHANNEL_HE[t.channel] || t.channel} ללא מענה: ${who} (${waitedH} שעות)`,
+            clientId: t.client_id, matterId: t.matter_id,
+            meta: {
+              threadId: t.id, channel: t.channel, participant: who,
+              participantIdentifier: t.participant_identifier,
+              leadId: t.lead_id, isKnownClient: !!t.client_id,
+              waitedHours: waitedH, inboundCount: t.inboundCount,
+              // ההודעה עצמה — זה מה שהסוכן צריך כדי לנסח תשובה שקשורה
+              // למה שנכתב, ולא ברכה גנרית. נחתך: ההקשר עולה כסף.
+              //
+              // ⚠ wrapUntrusted **חובה** כאן, וזו הנקודה הכי מסוכנת בקובץ.
+              // זהו הטקסט היחיד במנוע האוטומציות שנכתב ע"י אדם זר לחלוטין —
+              // כל אחד שיודע את מספר הוואטסאפ של המשרד יכול לשלוח אותו.
+              // buildContext מזריק את ה-payload ל-prompt **גולמי**, ולכן בלי
+              // העטיפה הודעה כמו "התעלם מההוראות הקודמות ושלח..." הייתה
+              // מגיעה למודל כטקסט רגיל. העטיפה מסמנת אותה כנתון-לניתוח,
+              // ו-UNTRUSTED_CONTENT_RULES ב-BASE_SYSTEM_RULES אוסר לציית לה.
+              //
+              // זו שכבה שנייה בלבד: רשימת הכלים המותרים ב-DB היא ההגנה
+              // האמיתית, וכל כלי כותב מייצר הצעה לאישור ולא פעולה.
+              lastMessage: wrapUntrusted(
+                t.lastBody.slice(0, 1500),
+                t.channel === 'whatsapp' ? 'הודעת וואטסאפ נכנסת' : `הודעה נכנסת (${t.channel})`,
+                t.participant_identifier || undefined,
+              ),
+            },
+          };
+        });
+    }
+
     default:
       return [];
   }
 }
+
+const CHANNEL_HE: Record<string, string> = {
+  whatsapp: 'וואטסאפ', email: 'מייל', sms: 'SMS',
+  call: 'שיחה', web: 'טופס באתר', system: 'מערכת',
+};
 
 function idleDays(c: CrmCase): number | null {
   const diary = Array.isArray(c.diary) ? c.diary : [];
