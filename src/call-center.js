@@ -2381,9 +2381,54 @@ function ccSubscribeRealtime() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'call_actions' }, (p) => {
         const row = p.new || p.old;
         if (ccCurrentCallId && row && row.call_id === ccCurrentCallId) ccRefreshCallDetail();
+        // ⚠ החיבור בין הישות שנוצרה לבין המסך.
+        //
+        // משימה, ליד או פגישה שהסוכן יצר נכתבים ל-blob **בשרת**. הדפדפן
+        // מחזיק עותק בזיכרון שנטען קודם, ולכן בלי הטעינה הזו הפריט קיים
+        // במסד ואינו מופיע בשום מסך — בדיוק המצב שבו "הבקשה נרשמה
+        // בהצלחה" ואיש לא רואה אותה.
+        if (row && row.status === 'success' &&
+            ['task', 'lead', 'event', 'matter', 'client'].includes(row.entity_type)) {
+          ccReloadCrmData(row.entity_type);
+        }
       })
       .subscribe();
   } catch (e) { /* Realtime לא זמין — המסך עדיין עובד עם רענון ידני */ }
+}
+
+/**
+ * טוען מחדש את ה-blob אחרי שהסוכן יצר ישות, ומרענן את המסך הרלוונטי.
+ *
+ * ⚠ מושהה ומאוגד: תור שיחה יוצר לעיתים שלוש פעולות ברצף (ליד, משימה,
+ * הערה), וטעינה מלאה לכל אחת הייתה מושכת את הבלוב שלוש פעמים ומרצדת
+ * את המסך. חלון קצר מאחד אותן לטעינה אחת.
+ */
+let _ccReloadTimer = null;
+function ccReloadCrmData(entityType) {
+  if (_ccReloadTimer) clearTimeout(_ccReloadTimer);
+  _ccReloadTimer = setTimeout(async () => {
+    _ccReloadTimer = null;
+    try {
+      // loadDB מרענן את db, את refreshSidebar ואת חותמת הגרסה שעליה
+      // saveDB מסתמכת — כך שגם שמירה של המשתמש מיד אחר כך לא תדרוס
+      // את מה שנוצר.
+      await loadDB();
+    } catch (e) {
+      return;   // טעינה שנכשלה אינה סיבה לשבור את המסך
+    }
+    if (entityType === 'task') notify('☎ נוצרה משימה משיחה');
+
+    // מרעננים רק מסך שמציג את מה שהשתנה. רענון גורף היה מוחק טופס
+    // שהמשתמש באמצע מילויו בכל פעולה של הסוכן.
+    if (currentPanel === 'call-center' &&
+        ['dashboard', 'callbacks', 'calls'].includes(ccTab)) {
+      renderCallCenter();
+    } else if (currentPanel === 'tasks' && typeof renderTasks === 'function') {
+      renderTasks();
+    } else if (currentPanel === 'dashboard' && typeof renderDashboard === 'function') {
+      renderDashboard();
+    }
+  }, 600);
 }
 
 /** סמן בסיידבר: שיחות פעילות + שיחות שדורשות טיפול. */

@@ -6,6 +6,9 @@
 import { Buffer } from 'buffer';
 import Docxtemplater from 'docxtemplater';
 import { createClient } from '@supabase/supabase-js';
+// ⚠ המיזוג חי במודול נפרד כדי שיהיה ניתן לבדיקה ישירה ב-node --test.
+// זו הלוגיקה שמחליטה אילו נתונים שורדים כשהמשתמש והסוכן כותבים יחד.
+import { mergeRemoteAdditions, deepCopy } from './db-merge.js';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase-config.js';
 
 window.Buffer = Buffer;
@@ -85,44 +88,15 @@ const PLAN_STORAGE_LIMIT_GB = 20;
 // schema comments on why v1 doesn't support multi-office membership/switching).
 let _officeCache = null; // { officeId, role }
 
-// Sums file sizes under an office's storage folder. Supabase Storage's list() isn't
-// recursive, so this walks the two known shapes by hand: documents/ (flat) and
-// templates/<folder>/ (one level of subfolders) — mirrors tmListTree()'s traversal.
-// Supabase Storage's list() caps at 1000 entries per call with no indication a
-// truncated page was truncated — a plain single call silently undercounts (and, for
-// officeStorageUsageBytes, lets an office quietly blow past its 20GB cap) once a
-// folder holds more than 1000 objects. Loops with offset until a page comes back
-// shorter than the page size, which is the actual "no more results" signal.
-async function listAllStorageEntries(path) {
-  const pageSize = 1000;
-  let offset = 0;
-  let all = [];
-  while (true) {
-    const { data } = await supabase.storage.from(BUCKET).list(path, { limit: pageSize, offset });
-    all = all.concat(data || []);
-    if (!data || data.length < pageSize) break;
-    offset += pageSize;
-  }
-  return all;
-}
-async function officeStorageUsageBytes(officeId) {
-  let total = 0;
-  const docs = await listAllStorageEntries(`${officeId}/documents`);
-  docs.forEach(f => { if (f.id !== null) total += (f.metadata?.size || 0); });
-  const folders = await listAllStorageEntries(`${officeId}/templates`);
-  for (const folder of folders.filter(f => f.id === null)) {
-    const files = await listAllStorageEntries(`${officeId}/templates/${folder.name}`);
-    files.forEach(f => { if (f.id !== null) total += (f.metadata?.size || 0); });
-  }
-  return total;
-}
-async function enforceStorageQuota(officeId, incomingBytes) {
-  const used = await officeStorageUsageBytes(officeId);
-  const limitBytes = PLAN_STORAGE_LIMIT_GB * 1024 * 1024 * 1024;
-  if (used + incomingBytes > limitBytes) {
-    throw new Error(`חריגה ממכסת האחסון (${PLAN_STORAGE_LIMIT_GB}GB). מחק/י מסמכים ישנים או שדרג/י את המנוי.`);
-  }
-}
+// ---- מצב הבלוב שנטען, לשמירה בטוחה ----
+//
+// ⚠ שניהם נדרשים ל-saveDB, ואי אפשר להסתפק באחד:
+//   _dbUpdatedAt — חותמת הגרסה שנטענה. בלעדיה אין דרך לדעת שמישהו כתב.
+//   _dbBaseline  — מה בדיוק היה בבלוב אז. בלעדיו אי אפשר להבחין בין
+//                  "פריט שמישהו הוסיף" (לשמור) לבין "פריט שהמשתמש מחק"
+//                  (להשאיר מחוק), ומיזוג היה מחזיר לחיים כל מחיקה.
+let _dbUpdatedAt = null;
+let _dbBaseline = null;
 
 async function currentOffice() {
   if (_officeCache) return _officeCache;
@@ -467,16 +441,76 @@ window.Platform = {
   // ---- db (whole-object blob per OFFICE, see supabase-schema-phase1.sql) ----
   async loadDB() {
     const { officeId } = await currentOffice();
-    const { data, error } = await supabase.from('app_data').select('data').eq('office_id', officeId).maybeSingle();
+    const { data, error } = await supabase.from('app_data')
+      .select('data, updated_at').eq('office_id', officeId).maybeSingle();
     if (error) throw error;
+    // הגרסה שנטענה + עותק שלה. שניהם נדרשים לשמירה בטוחה — ראה saveDB.
+    _dbUpdatedAt = data ? data.updated_at : null;
+    _dbBaseline = data ? deepCopy(data.data) : null;
     return data ? data.data : null;
   },
 
+  /**
+   * שמירה עם בדיקת גרסה ומיזוג.
+   *
+   * ⚠ הגרסה הקודמת עשתה upsert של הבלוב כולו **בלי לבדוק אם הוא השתנה
+   * מאז שנטען**. זה נראה תמים כל עוד רק המשתמש כותב — אבל מאז שהסוכן
+   * הקולי כותב משימות מהשרת, כל שמירה מהדפדפן מחקה בשקט כל מה שנוצר
+   * מאז הטעינה. זה נמדד בפועל: 3 מתוך 4 בקשות חזרה שנוצרו מ-ElevenLabs
+   * נעלמו, והמשתמש ראה "אין משימות" בזמן ש-call_actions רשם הצלחה.
+   *
+   * זה אינו מנגנון חדש — זו אותה בדיקה אופטימית ש-saveOfficeDb כבר
+   * מבצעת בצד השרת (supabase/functions/_shared/db.ts), מוחלת סוף-סוף גם
+   * על נתיב הכתיבה של הדפדפן.
+   *
+   * המיזוג הוא three-way והוא מה שהופך את זה לבטוח בשני הכיוונים:
+   *   • פריט שנוסף בשרת ולא היה ב-baseline  → תוספת של מישהו אחר, נשמרת
+   *   • פריט שהיה ב-baseline ואינו מקומי     → המשתמש מחק אותו, נשאר מחוק
+   *   • כל השאר                              → העותק המקומי סמכותי
+   */
   async saveDB(dbObj) {
     const { officeId } = await currentOffice();
-    const { error } = await supabase.from('app_data').upsert({ office_id: officeId, data: dbObj }, { onConflict: 'office_id' });
-    if (error) throw error;
-    return true;
+
+    for (let attempt = 0; attempt < 4; attempt++) {
+      // אין גרסה ידועה (משרד חדש, או טעינה שלא עברה דרך loadDB) — נופלים
+      // ל-upsert. אין מה לדרוס: השורה טרם קיימת.
+      if (!_dbUpdatedAt) {
+        const { data, error } = await supabase.from('app_data')
+          .upsert({ office_id: officeId, data: dbObj }, { onConflict: 'office_id' })
+          .select('updated_at').maybeSingle();
+        if (error) throw error;
+        _dbUpdatedAt = data ? data.updated_at : null;
+        _dbBaseline = deepCopy(dbObj);
+        return true;
+      }
+
+      const { data, error } = await supabase.from('app_data')
+        .update({ data: dbObj })
+        .eq('office_id', officeId)
+        .eq('updated_at', _dbUpdatedAt)   // ← הבדיקה שהייתה חסרה
+        .select('updated_at');
+      if (error) throw error;
+
+      if (data && data.length) {
+        _dbUpdatedAt = data[0].updated_at;
+        _dbBaseline = deepCopy(dbObj);
+        return true;
+      }
+
+      // 0 שורות = מישהו כתב מאז הטעינה. קוראים מחדש, ממזגים את מה
+      // שהוא הוסיף לתוך העותק המקומי, ומנסים שוב.
+      const { data: fresh, error: readErr } = await supabase.from('app_data')
+        .select('data, updated_at').eq('office_id', officeId).maybeSingle();
+      if (readErr) throw readErr;
+
+      const added = mergeRemoteAdditions(dbObj, fresh && fresh.data, _dbBaseline);
+      _dbUpdatedAt = fresh ? fresh.updated_at : null;
+      if (added) console.info('[saveDB] מוזגו', added, 'פריטים שנוצרו במקביל');
+    }
+
+    // ⚠ נכשל ברעש. שמירה שנכשלת בשקט משאירה את המשתמש בטוח שהעבודה
+    // שלו נשמרה, וזה גרוע יותר מהודעת שגיאה.
+    throw new Error('הנתונים שונו במקביל ולא ניתן היה לשמור. רענן את הדף ונסה שוב.');
   },
 
   // ---- files (Supabase Storage, private bucket, path-scoped to the OFFICE) ----

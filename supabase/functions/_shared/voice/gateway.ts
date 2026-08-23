@@ -79,7 +79,12 @@ export async function executeToolForCall(
       result: {
         ok: true,
         message: String(payload.message || 'הפעולה כבר בוצעה בשיחה זו.'),
-        data: (payload.data || undefined) as Record<string, unknown> | undefined,
+        // ⚠ replayed נכפה ל-true ולא נלקח מהתשובה השמורה. השמורה נוצרה
+        // בהרצה **הראשונה**, שבה הערך היה false — והחזרתה כמות שהיא
+        // הייתה מדווחת "בוצע עכשיו" על פעולה שרק נשלפה מהרישום. זו
+        // בדיוק ההבחנה שהדגל קיים בשבילה, והיא נקראת ע"י המודל שמדבר
+        // עם המתקשר ("קבעתי לך") וע"י מסך הפעולות.
+        data: { ...((payload.data || {}) as Record<string, unknown>), replayed: true },
         entityType: prior.entity_type || undefined,
         entityId: prior.entity_id || undefined,
       },

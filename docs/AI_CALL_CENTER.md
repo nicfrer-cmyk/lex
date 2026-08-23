@@ -1312,3 +1312,84 @@ docker compose exec asterisk asterisk -rx "pjsip show registrations"
 npm test                              # 199 בדיקות
 node --test test/call-center.test.js  # 89 של המודול
 ```
+
+---
+
+## 30. ספק קול חיצוני (Webhook Tool)
+
+ספק חיצוני — ElevenLabs, Vapi, Retell וכל מי שמדבר HTTP — מתחבר דרך
+`voice-tool-webhook`, **לא** דרך `voice-gateway`.
+
+### למה ערוץ נפרד
+`voice-gateway` מאמת HMAC-SHA256 מעל `${timestamp}.${nonce}.${body}` עם
+nonce חד-פעמי. ספק שמאפשר להגדיר **כותרות סטטיות בלבד** אינו יכול לחתום
+גוף בקשה — כל בקשה משם הייתה נדחית ב-401.
+
+הפתרון אינו להחליש את `voice-gateway`, אלא לפתוח דלת אחת צרה:
+
+| | `voice-gateway` | `voice-tool-webhook` |
+|---|---|---|
+| אימות | HMAC + nonce + חלון זמן | `Bearer` סטטי |
+| שלמות הגוף | ✓ | ✗ |
+| הגנת replay | ✓ nonce | חלקית (אידמפוטנטיות) |
+| זיהוי לקוח | ✓ | **✗ חסום** |
+| מגבלת קצב | ✓ | ✓ |
+| סוד | `VOICE_GATEWAY_SECRET` | `VOICE_WEBHOOK_TOKEN` |
+
+### ⚠ מה חסום כאן, ולמה
+`lookup_client` ו-`lookup_lead` **אינם זמינים** בערוץ הזה. הם מחזירים
+האם מספר שייך ללקוח של המשרד ואת שמו — מי שמחזיק באסימון היה יכול
+לבדוק מספרים אחד-אחד ולמפות את רשימת הלקוחות. זו בדיוק הדליפה ששכבת
+הזהות (§23) נבנתה למנוע, והיא לא שווה את הנוחות.
+
+מותרים: `request_human_callback` · `create_lead` · `create_note` ·
+`check_calendar` · `create_appointment` — פעולות שהנזק המרבי מזיוף שלהן
+הוא רעש שנראה מיד, לא חשיפת מידע.
+
+### URL לכל כלי
+```
+POST https://<PROJECT-REF>.supabase.co/functions/v1/voice-tool-webhook/<tool_name>
+Authorization: Bearer <VOICE_WEBHOOK_TOKEN>
+```
+שם הכלי בנתיב ולא בגוף, כדי שלכל כלי אצל הספק יהיה URL משלו והמודל לא
+יוכל לבחור כלי אחר.
+
+### תמיד 200
+התשובה מוזנת חזרה למודל שמדבר עם המתקשר. `4xx/5xx` גורם לספקי קול
+לזרוק שגיאה גנרית או לנתק במקום לתת למודל משפט שהוא יכול לומר. הכישלון
+העסקי נמצא ב-`success` שבגוף.
+
+### מה נשמר
+אותו Tool Gateway, אותה בדיקת `agent_tools`, אותה שכבת פקודות, אותה
+אידמפוטנטיות, אותו רישום ב-`call_actions` ובציר הזמן. הפונקציה היא
+**דלת כניסה, לא מנגנון שני**.
+
+### ⚠ אל תמציא tool_call_id
+מפתח האידמפוטנטיות הוא `callId:type:(toolCallId || fingerprint)` — כשקיים
+`toolCallId`, תוכן הבקשה יוצא מהמפתח. זה נכון כשהוא מזהה אמיתי של קריאת
+כלי (ייחודי להפעלה), ושגוי כשהוא קבוע לכל השיחה: אז ניסיון שני שמביא את
+השם או את המועד המועדף נבלע כשכפול. כשהספק לא שולח מזהה — משאירים ריק,
+והמפתח נגזר מהתוכן.
+
+### התנהגות
+| מצב | תוצאה |
+|---|---|
+| בקשה חדשה | נוצרת בקשת חזרה · `replayed:false` |
+| שידור חוזר זהה | אותה בקשה מוחזרת · `replayed:true` |
+| אותה שיחה, מידע חדש | הבקשה הקיימת **מועשרת** (שם, מועד, דחיפות) |
+
+### מפסקים
+נבדקים `emergency_stop` ו-`ai_enabled`. **לא** `live_calls_enabled` —
+האחרון מתאר את צינור ה-Asterisk העצמאי (SIP, מדיה, TTS מקומי), ובערוץ
+הזה הטלפוניה וההקראה הן של הספק החיצוני.
+
+### הגדרה
+```bash
+supabase secrets set VOICE_WEBHOOK_TOKEN=$(openssl rand -hex 32)
+supabase secrets set VOICE_WEBHOOK_OFFICE_ID=<office-uuid>
+supabase functions deploy voice-tool-webhook --no-verify-jwt
+```
+⚠ `VOICE_WEBHOOK_OFFICE_ID` מגיע מהסביבה ולא מגוף הבקשה — אחרת מי
+שמחזיק באסימון היה יכול לכוון פעולות למשרד אחר. כשהוא לא מוגדר והתקנה
+מכילה יותר ממשרד אחד, הפונקציה מחזירה 503 עם רשימת המועמדים מדורגת לפי
+כמות הנתונים, כדי שהבחירה תהיה קביעה ולא ניחוש.

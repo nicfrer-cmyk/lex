@@ -229,3 +229,40 @@ export function guessCategory(transcript: string): string {
   }
   return 'כללי';
 }
+
+// ============================================================
+// נרמול דחיפות מטקסט חופשי
+// ============================================================
+
+/**
+ * ממפה דחיפות בטקסט חופשי לערך שסכימת הכלי מקבלת.
+ *
+ * ⚠ נמדד בייצור: ספק קול חיצוני שלח `urgency: "דחוף מאוד"`, הסכימה
+ * דחתה ("ערך לא מותר"), ו**בקשת החזרה אבדה כליל** — מתקשר עם עיקולים
+ * ביקש שיחזרו אליו ולא נרשם דבר. מודל שמדבר עברית יחזיר עברית, וזה
+ * צפוי; לדרוש ממנו enum באנגלית זו דרישה שתישבר שוב.
+ *
+ * ערך שאינו מזוהה מוחזר כ-undefined ולא כשגיאה, והכלי נופל לברירת
+ * המחדל שלו. דחיפות שגויה היא רעש; בקשה שאבדה היא לקוח שלא חזרו אליו.
+ */
+export function normalizeUrgency(raw: unknown): Urgency | undefined {
+  const v = String(raw ?? '').trim().toLowerCase();
+  if (!v) return undefined;
+  if (URGENCY_ORDER.includes(v as Urgency)) return v as Urgency;
+
+  // ⚠ הסדר כאן הוא כל הנכונות, ושתי המלכודות הן אותה מלכודת: ביטוי
+  // קצר שמוכל בתוך ביטוי ארוך יותר בעל משמעות הפוכה.
+  //
+  //   "לא דחוף"  מכיל "דחוף"  → בדיקת שלילה חייבת לקדום
+  //   "דחוף מאוד" מכיל "דחוף" → ההחמרה חייבת לקדום
+  //
+  // זו אותה מלכודת בדיוק ש-isHypothetical למעלה נבנה בשבילה, וכאן היא
+  // חוזרת על מחרוזת קצרה במקום על משפט.
+  if (/(לא\s*דחוף|לא\s*בהול|not\s*urgent|non[-\s]?urgent)/.test(v)) return 'low';
+  if (/(דחוף\s*מאוד|very\s*urgent|extremely\s*urgent)/.test(v)) return 'critical';
+  if (/(קריטי|בהול|מיידי|חירום|emergency|asap|immediate|critical)/.test(v)) return 'critical';
+  if (/(דחוף|גבוה|urgent|high)/.test(v)) return 'high';
+  if (/(רגיל|בינוני|normal|medium|standard)/.test(v)) return 'normal';
+  if (/(נמוך|low|minor)/.test(v)) return 'low';
+  return undefined;
+}

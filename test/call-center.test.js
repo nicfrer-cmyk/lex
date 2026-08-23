@@ -1909,3 +1909,151 @@ test('הודעה ייעודית דורסת את ההודעה הגנרית של �
   assert.equal(e.code, 'CRM_CONFLICT');
   assert.equal(e.technical, 'double booking');
 });
+
+// ============================================================
+// 22. שמירה בטוחה מהדפדפן — three-way merge
+// ============================================================
+//
+// ⚠ הבדיקות האלה מגנות על תקלה שנמדדה בייצור, לא על תרחיש תיאורטי:
+// 3 מתוך 4 בקשות חזרה שהסוכן הקולי יצר **נעלמו**. `Platform.saveDB`
+// כתב את הבלוב כולו ב-upsert בלי בדיקת גרסה, וכל שמירה מהדפדפן מחקה
+// בשקט את מה שנוצר מאז הטעינה. call_actions רשם "success" על משימות
+// שכבר לא היו קיימות, והמשתמש ראה מסך ריק.
+
+const MERGE = () => load('src/db-merge.js');
+
+test('פריט שהסוכן הוסיף בשרת שורד שמירה של המשתמש', async () => {
+  const { mergeRemoteAdditions } = await MERGE();
+
+  const baseline = { tasks: [{ id: 'old', text: 'משימה ותיקה' }], leads: [] };
+  // המשתמש ערך מקומית ואינו יודע על מה שנוצר מאז שטען.
+  const local = { tasks: [{ id: 'old', text: 'משימה ותיקה — נערכה' }], leads: [] };
+  // בשרת נוספו בינתיים בקשת חזרה וליד מהסוכן.
+  const remote = {
+    tasks: [
+      { id: 'cb1', text: 'חזרה דחופה ללקוח', callback: { status: 'waiting' } },
+      { id: 'old', text: 'משימה ותיקה' },
+    ],
+    leads: [{ id: 'l1', name: 'ישראל' }],
+  };
+
+  assert.equal(mergeRemoteAdditions(local, remote, baseline), 2);
+
+  const ids = local.tasks.map((t) => t.id);
+  assert.ok(ids.includes('cb1'), 'בקשת החזרה של הסוכן שרדה');
+  assert.ok(ids.includes('old'));
+  // ⚠ עריכת המשתמש לא נדרסה ע"י הגרסה שבשרת.
+  assert.equal(local.tasks.find((t) => t.id === 'old').text, 'משימה ותיקה — נערכה');
+  assert.equal(local.leads.length, 1);
+});
+
+test('מחיקה של המשתמש אינה מבוטלת ע"י המיזוג', async () => {
+  const { mergeRemoteAdditions } = await MERGE();
+  // ⚠ בלי baseline, "מה שיש בשרת ואין מקומית" היה מחזיר לחיים כל פריט
+  // שהמשתמש הרגע מחק. ה-baseline הוא מה שמבדיל בין תוספת של אחר לבין
+  // מחיקה שלי.
+  const baseline = { tasks: [{ id: 'a' }, { id: 'b' }] };
+  const local = { tasks: [{ id: 'a' }] };
+  const remote = { tasks: [{ id: 'a' }, { id: 'b' }] };
+
+  assert.equal(mergeRemoteAdditions(local, remote, baseline), 0);
+  assert.deepEqual(local.tasks.map((t) => t.id), ['a'], 'b נשאר מחוק');
+});
+
+test('מיזוג אינו מכפיל פריט שכבר קיים מקומית', async () => {
+  const { mergeRemoteAdditions } = await MERGE();
+  const baseline = { tasks: [] };
+  const local = { tasks: [{ id: 'x', text: 'מקומי' }] };
+  const remote = { tasks: [{ id: 'x', text: 'שרת' }] };
+  assert.equal(mergeRemoteAdditions(local, remote, baseline), 0);
+  assert.equal(local.tasks.length, 1);
+  assert.equal(local.tasks[0].text, 'מקומי', 'העותק המקומי סמכותי');
+});
+
+test('מיזוג עמיד לקולקציות חסרות ולפריטים בלי id', async () => {
+  const { mergeRemoteAdditions } = await MERGE();
+  const local = {};
+  // ⚠ בלוב של משרד ותיק עשוי לא להכיל קולקציה שנוספה מאוחר יותר,
+  // ופריט בלי id הוא נתון פגום שאסור לו להפיל שמירה.
+  const merged = mergeRemoteAdditions(
+    local,
+    { tasks: [{ id: 't1' }, { text: 'בלי id' }, null], leads: [{ id: 'l1' }] },
+    {});
+  assert.equal(merged, 2);
+  assert.deepEqual(local.tasks.map((t) => t.id), ['t1']);
+  assert.equal(mergeRemoteAdditions(null, {}, {}), 0);
+  assert.equal(mergeRemoteAdditions({}, null, {}), 0);
+});
+
+test('רק קולקציות מערך ממוזגות — settings ו-counters נשארים של המשתמש', async () => {
+  const { MERGEABLE_COLLECTIONS } = await MERGE();
+  // ⚠ הם אובייקטים ולא מערכים, ומיזוג לפי id חסר להם משמעות.
+  assert.ok(!MERGEABLE_COLLECTIONS.includes('settings'));
+  assert.ok(!MERGEABLE_COLLECTIONS.includes('counters'));
+  assert.ok(!MERGEABLE_COLLECTIONS.includes('efilingBundles'));
+  for (const c of ['tasks', 'leads', 'events', 'clients', 'cases']) {
+    assert.ok(MERGEABLE_COLLECTIONS.includes(c), c);
+  }
+});
+
+test('saveDB בודק גרסה ואינו כותב upsert עיוור', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'src/platform.web.js'), 'utf8');
+  const start = src.indexOf('async saveDB(dbObj)');
+  const body = src.slice(start, src.indexOf('\n  },', start));
+  // ⚠ זו השורה שהייתה חסרה, וחסרונה עלה ב-3 בקשות חזרה שנמחקו.
+  assert.ok(body.includes(".eq('updated_at', _dbUpdatedAt)"),
+    'saveDB חייב לבדוק את הגרסה שנטענה לפני שהוא כותב');
+  assert.ok(body.includes('mergeRemoteAdditions'), 'ועל התנגשות — למזג');
+  // נכשל ברעש: שמירה שנכשלת בשקט משאירה את המשתמש בטוח שנשמר.
+  assert.ok(/throw new Error/.test(body), 'כישלון סופי נזרק ולא נבלע');
+});
+
+// ============================================================
+// 23. נרמול דחיפות מספק חיצוני
+// ============================================================
+
+test('דחיפות בעברית ממופה ל-enum ואינה מפילה את הבקשה', async () => {
+  const { normalizeUrgency } = await URGENCY();
+
+  // ⚠ נמדד בייצור: ספק הקול שלח "דחוף מאוד", הסכימה דחתה, ובקשת החזרה
+  // של מתקשר אמיתי עם עיקולים אבדה כליל.
+  assert.equal(normalizeUrgency('דחוף מאוד'), 'critical');
+  assert.equal(normalizeUrgency('קריטי'), 'critical');
+  assert.equal(normalizeUrgency('בהול'), 'critical');
+  assert.equal(normalizeUrgency('דחוף'), 'high');
+  assert.equal(normalizeUrgency('גבוה'), 'high');
+  assert.equal(normalizeUrgency('רגיל'), 'normal');
+  assert.equal(normalizeUrgency('נמוך'), 'low');
+  assert.equal(normalizeUrgency('לא דחוף'), 'low');
+
+  // ערכי ה-enum עצמם עוברים כמות שהם.
+  for (const v of ['low', 'normal', 'high', 'critical']) {
+    assert.equal(normalizeUrgency(v), v);
+  }
+  assert.equal(normalizeUrgency('URGENT'), 'high');
+
+  // ⚠ ערך לא מזוהה מוחזר undefined ולא זורק — הכלי נופל לברירת המחדל.
+  // דחיפות שגויה היא רעש; בקשה שאבדה היא לקוח שלא חזרו אליו.
+  assert.equal(normalizeUrgency('בליבלי'), undefined);
+  assert.equal(normalizeUrgency(''), undefined);
+  assert.equal(normalizeUrgency(null), undefined);
+});
+
+test('ערך שנוצר מנרמול הדחיפות מתקבל ע"י סכימת הכלי', async () => {
+  const { normalizeUrgency } = await URGENCY();
+  const { execVoiceTool } = await TOOLS();
+  const { memoryCommandStore } = await COMMANDS();
+
+  // ⚠ הבדיקה סוגרת את הלולאה: לא מספיק שהנרמול מחזיר מחרוזת — היא
+  // חייבת לעבור את הסכימה שדחתה את המקור.
+  const ctx = await makeWritableCtx({ commandStore: memoryCommandStore() });
+  const out = await execVoiceTool('request_human_callback', {
+    reason: 'יש לו עיקולים ורוצה חוות דעת',
+    name: 'איתי',
+    urgency: normalizeUrgency('דחוף מאוד'),
+  }, ALLOW, ctx);
+
+  assert.equal(out.status, 'success', out.result.message);
+  assert.equal(ctx.db.tasks[0].callback.urgency, 'critical');
+  assert.equal(ctx.db.tasks[0].priority, 'urgent');
+});
