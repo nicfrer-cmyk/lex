@@ -53,6 +53,12 @@ const html = appHtml.replace(
     // automations.js נטען אחרי ai-center.js: הוא משתמש ב-aiSb/aiInvoke/
     // aiUpdateChecked/aiJsAttr שלו, ובגלובלים של app.js.
     'automations.js',
+    // call-center.js אחרון: הוא משתמש ב-aiSb/aiInvoke/aiUpdateChecked/aiJsAttr/
+    // aiOfficeId/aiFmtDate מ-ai-center.js, ב-Stat() מ-automations.js,
+    // ובגלובלים של app.js (db/saveDB/notify/escapeHtml/uid/customConfirm/nav).
+    // app.js קורא לו בחזרה מאחורי `typeof x === 'function'` (nav() ו-
+    // openClientDetail), כך שאף צד לא נשבר אם השני חסר.
+    'call-center.js',
   ].map(s => `<script src="${s}?v=${buildVersion}"></script>`).join('\n')
 );
 fs.writeFileSync(path.join(outDir, 'index.html'), html, 'utf8');
@@ -65,6 +71,7 @@ fs.copyFileSync(path.join(src, 'auth.js'), path.join(outDir, 'auth.js'));
 fs.copyFileSync(path.join(src, 'template-manager.js'), path.join(outDir, 'template-manager.js'));
 fs.copyFileSync(path.join(src, 'ai-center.js'), path.join(outDir, 'ai-center.js'));
 fs.copyFileSync(path.join(src, 'automations.js'), path.join(outDir, 'automations.js'));
+fs.copyFileSync(path.join(src, 'call-center.js'), path.join(outDir, 'call-center.js'));
 // sw.js is registered via navigator.serviceWorker.register('/sw.js'), not a <script>
 // tag — must stay at the site root (not versioned/cache-busted) so its scope covers
 // the whole origin; a service worker can only control paths at or below its own URL.

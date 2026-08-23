@@ -31,3 +31,13 @@ vapid-public-key.txt
 # Supabase CLI's local link/session cache (contains this machine's project link info,
 # not something to share via the repo)
 supabase/.temp/
+
+# שרת הקול — הסודות האמיתיים. התבנית (.env.example) כן נשמרת.
+services/voice-gateway/.env
+# הקובץ המרונדר מ-pjsip.conf.template מכיל סיסמת SIP אמיתית.
+services/voice-gateway/asterisk/pjsip.conf
+services/voice-gateway/asterisk/ari.conf.rendered
+
+# Python bytecode (נוצר בהרצת בדיקת החתימה החוצה-שפתית)
+__pycache__/
+*.pyc

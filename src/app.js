@@ -159,6 +159,10 @@ function refreshSidebar() {
   tb.style.display = openTasks > 0 ? 'inline' : 'none';
   tb.textContent = openTasks;
   document.getElementById('data-count').textContent = `${db.cases.length} תיקים · ${db.clients.length} לקוחות`;
+  // מרכז השיחות מדליק כאן את הסמן שלו ומתחבר ל-Realtime. שיחה נכנסת היא
+  // הדבר שהכי חשוב לראות דווקא ממסך אחר, ולכן זה לא ממתין לכניסה לפאנל.
+  // מוגן בדגל פנימי — הפונקציה נקראת אחרי כל שמירה.
+  if (typeof ccOnSidebarRefresh === 'function') ccOnSidebarRefresh();
 }
 
 // ===== NAV =====
@@ -187,6 +191,12 @@ function nav(id, el) {
   if(id==='templates' && typeof tmRender==='function') tmRender();
   if(id==='ai-center' && typeof renderAiCenter==='function') renderAiCenter();
   if(id==='automations' && typeof renderAutomations==='function') renderAutomations();
+  if(id==='call-center' && typeof renderCallCenter==='function') renderCallCenter();
+  // מרכז השיחות מריץ טיימר של שנייה למונה משך השיחות הפעילות. יציאה
+  // מהמסך עוצרת אותו — setInterval שממשיך לרוץ על פאנל מוסתר הוא בזבוז
+  // נטו. המנוי ל-Realtime דווקא נשאר פתוח, כדי שהסמן בסיידבר יתעדכן גם
+  // ממסך אחר; ccOnLeave לא נוגע בו.
+  if(id!=='call-center' && typeof ccOnLeave==='function') ccOnLeave();
 }
 
 // ===== MOBILE DRAWER (sidebar-as-drawer on small screens) =====
@@ -2403,6 +2413,7 @@ function openClientDetail(id) {
 
   document.getElementById('client-detail-body').innerHTML=`
     ${typeof AiClientActions==='function'?AiClientActions(id):''}
+    ${typeof CallsClientSection==='function'?CallsClientSection(id):''}
     <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px">
       <div class="client-avatar" style="background:${cl.color||'rgba(37,99,235,0.15)'};color:${cl.textColor||'var(--accent2)'};width:56px;height:56px;font-size:18px;margin-bottom:0">
         ${escapeHtml(cl.initials||cl.name.substring(0,2).toUpperCase())}

@@ -1,0 +1,96 @@
+; ============================================================================
+; PJSIP — תבנית. אין כאן credentials אמיתיים.
+; ============================================================================
+;
+; ה-entrypoint מרנדר את הקובץ הזה עם משתני הסביבה מ-.env אל
+; /etc/asterisk/pjsip.conf. התבנית נשמרת ב-git; הקובץ המרונדר לא.
+;
+;   envsubst < /etc/asterisk/lextrack/pjsip.conf.template > /etc/asterisk/pjsip.conf
+;
+; כל עוד SIP_HOST ריק, הרישום פשוט לא עולה ו-Asterisk ממשיך לרוץ. זהו
+; המצב הנוכחי והמכוון: הקו 0552745790 **אינו מחובר** לרשת הטלפוניה.
+; ============================================================================
+
+
+; ---------------------------------------------------------------------------
+; Transport
+; ---------------------------------------------------------------------------
+[transport-udp]
+type = transport
+protocol = ${SIP_TRANSPORT}
+bind = 0.0.0.0:${SIP_PORT}
+; ⚠ external_media_address / external_signaling_address — בלעדיהם, שרת
+; מאחורי NAT מפרסם את כתובתו הפנימית בתוך ה-SDP. הסימפטום אינו "השיחה
+; נכשלה" אלא "השיחה מתחברת ואין קול בכיוון אחד", וזו התקלה שהכי קשה
+; לאבחן בטלפוניה. אם SIP_EXTERNAL_IP ריק, השורות פשוט לא משפיעות.
+external_media_address = ${SIP_EXTERNAL_IP}
+external_signaling_address = ${SIP_EXTERNAL_IP}
+; טווחי רשת פנימיים — Asterisk צריך לדעת מי "מקומי" כדי לא לתרגם אותו.
+local_net = 10.0.0.0/8
+local_net = 172.16.0.0/12
+local_net = 192.168.0.0/16
+
+
+; ---------------------------------------------------------------------------
+; רישום מול הספק
+; ---------------------------------------------------------------------------
+[trunk-registration]
+type = registration
+transport = transport-udp
+outbound_auth = trunk-auth
+server_uri = sip:${SIP_HOST}:${SIP_PORT}
+client_uri = sip:${SIP_USERNAME}@${SIP_HOST}
+contact_user = ${SIP_USERNAME}
+retry_interval = 60
+forbidden_retry_interval = 600
+expiration = 3600
+line = yes
+endpoint = trunk
+
+[trunk-auth]
+type = auth
+auth_type = userpass
+username = ${SIP_USERNAME}
+password = ${SIP_PASSWORD}
+realm = ${SIP_REALM}
+
+
+; ---------------------------------------------------------------------------
+; ה-trunk
+; ---------------------------------------------------------------------------
+[trunk]
+type = endpoint
+transport = transport-udp
+context = lextrack-inbound
+; ⚠ סדר הקודקים הוא סדר העדפה. alaw/ulaw ראשונים כי כמעט כל ספק ישראלי
+; תומך בהם; opus אחרון כי הוא דורש טרנסקודינג שמוסיף השהיה, והשהיה
+; בשיחה עם AI מורגשת מיד.
+disallow = all
+allow = alaw
+allow = ulaw
+allow = opus
+outbound_auth = trunk-auth
+aors = trunk
+from_user = ${SIP_USERNAME}
+from_domain = ${SIP_REALM}
+; direct_media=no חובה: אנחנו חייבים שהאודיו יעבור דרך Asterisk כדי
+; להזרים אותו ל-Orchestrator. עם direct_media=yes הצדדים מדברים ישירות
+; וה-AI לא שומע דבר.
+direct_media = no
+rtp_symmetric = yes
+force_rport = yes
+rewrite_contact = yes
+; DTMF — לתפריטים עתידיים ("הקש 1 לחירום"). auto בוחר לפי מה שהספק מציע.
+dtmf_mode = auto
+; ניתוק שיחות תקועות. שיחה פתוחה שאיש לא מדבר בה עולה כסף.
+timers = yes
+
+[trunk]
+type = aor
+contact = sip:${SIP_HOST}:${SIP_PORT}
+qualify_frequency = 60
+
+[trunk]
+type = identify
+endpoint = trunk
+match = ${SIP_HOST}

@@ -1,0 +1,73 @@
+# Voice Gateway — שני שירותים ארוכי-חיים.
+#
+# ⚠ אינו נפרס ל-Netlify ואינו רץ כ-Serverless. שיחת טלפון היא חיבור מתמשך
+# של דקות עם זרם אודיו דו-כיווני, ו-Asterisk מחזיק רישום SIP חי — שניהם
+# בלתי אפשריים בסביבה שמתעוררת לבקשה ומתה אחריה.
+#
+# הרצה:  docker compose up -d
+
+name: lextrack-voice-gateway
+
+services:
+  asterisk:
+    # 22 = מהדורת LTS. תמיכה ארוכת טווח חשובה יותר מגרסה חדשה במערכת
+    # שאמורה לענות לטלפון של משרד עורכי דין.
+    image: andrius/asterisk:22-current
+    container_name: lextrack-asterisk
+    restart: unless-stopped
+    # ⚠ network_mode: host — לא בחירה סגנונית. SIP ו-RTP מטמיעים כתובות IP
+    # **בתוך** גוף החבילה (SDP), ו-NAT של Docker מתרגם את הכותרות אבל לא
+    # את התוכן. התוצאה הקלאסית: השיחה מתחברת ואין קול בכיוון אחד. מי
+    # שחייב bridge, חייב גם externip ב-pjsip ופתיחת טווח RTP מלא.
+    network_mode: host
+    volumes:
+      - ./asterisk:/etc/asterisk/lextrack:ro
+      - asterisk-spool:/var/spool/asterisk
+      - asterisk-logs:/var/log/asterisk
+    env_file: .env
+    environment:
+      # ה-entrypoint מרנדר את pjsip.conf.template עם הערכים האלה. הסודות
+      # לא נכתבים לקובץ שנשמר ב-git — התבנית היא מה שנשמר.
+      - SIP_HOST
+      - SIP_PORT
+      - SIP_USERNAME
+      - SIP_PASSWORD
+      - SIP_TRANSPORT
+      - SIP_REALM
+      - SIP_EXTERNAL_IP
+      - ARI_USERNAME
+      - ARI_PASSWORD
+      - ARI_APP_NAME
+      - PUBLIC_OFFICE_PHONE
+    healthcheck:
+      test: ["CMD-SHELL", "asterisk -rx 'core show uptime' >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+  orchestrator:
+    build: ./orchestrator
+    container_name: lextrack-voice-orchestrator
+    restart: unless-stopped
+    network_mode: host
+    env_file: .env
+    volumes:
+      # התור המקומי והקלטות חייבים לשרוד restart: בקשה ל-CRM שלא נשלחה
+      # עדיין היא פנייה של לקוח שטרם נרשמה.
+      - voice-spool:/var/spool/lextrack
+    depends_on:
+      asterisk:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health',timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  asterisk-spool:
+  asterisk-logs:
+  voice-spool:

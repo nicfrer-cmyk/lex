@@ -1,0 +1,10 @@
+# תמלול מקומי — נדרש רק כאשר STT_PROVIDER=faster_whisper
+#
+# התקנה:  docker compose build --build-arg WITH_STT=1
+# או ידנית:  pip install -r requirements-stt.txt
+#
+# משקלי המודל עצמם נמשכים בהרצה הראשונה ונשמרים ב-cache של HuggingFace.
+# שווה למפות אותו ל-volume כדי שלא יימשך שוב בכל restart.
+
+faster-whisper==1.1.1
+numpy==2.2.1

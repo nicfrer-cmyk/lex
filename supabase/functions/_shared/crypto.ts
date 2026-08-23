@@ -12,15 +12,24 @@
 // פורמט: base64(iv[12] || ciphertext+tag). IV אקראי חדש לכל הצפנה — שימוש
 // חוזר ב-IV עם GCM שובר את הביטחון של הצופן לחלוטין.
 
-const ENC_KEY_RAW = Deno.env.get('INTEGRATION_ENCRYPTION_KEY') || '';
+// נקרא בתוך getKey ולא ברמת המודול. הסיבה מעשית: timingSafeEqual ו-
+// hmacSha256Hex שבתחתית הקובץ נדרשים גם לאימות חתימת שרת הקול, והבדיקות
+// שלהם רצות ב-Node (`node --test`), שבו `Deno` אינו קיים. קריאה ברמת
+// המודול הייתה מפילה כל ייבוא של הקובץ מחוץ ל-Deno עוד לפני שורת קוד
+// אחת. ההתנהגות בזמן ריצה זהה לחלוטין — אותה בדיקה, אותה הודעה.
+function encKeyRaw(): string {
+  return (globalThis as { Deno?: { env: { get(k: string): string | undefined } } })
+    .Deno?.env.get('INTEGRATION_ENCRYPTION_KEY') || '';
+}
 
 async function getKey(): Promise<CryptoKey> {
-  if (!ENC_KEY_RAW) {
+  const raw = encKeyRaw();
+  if (!raw) {
     throw new Error('INTEGRATION_ENCRYPTION_KEY לא מוגדר — לא ניתן להצפין credentials');
   }
   // המפתח בסביבה הוא טקסט חופשי; SHA-256 עליו נותן בדיוק 32 בייט ל-AES-256
   // בלי לדרוש מבעל המשרד לייצר מפתח בפורמט מסוים.
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(ENC_KEY_RAW));
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw));
   return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
 }
 
