@@ -32,8 +32,10 @@ import {
 } from '../_shared/voice/signing.ts';
 import {
   startCall, handleUtterance, endCall, addSegment, logEvent,
+  postProcessCall, setVoiceState, type VoiceState,
 } from '../_shared/voice/orchestrator.ts';
 import { runStandaloneTool, listToolsForAgent } from '../_shared/voice/gateway.ts';
+import { VoiceError } from '../_shared/voice/errors.ts';
 
 const VOICE_SECRET = Deno.env.get('VOICE_GATEWAY_SECRET') || '';
 
@@ -102,13 +104,22 @@ Deno.serve(async (req) => {
       case 'call.segment':    return await onSegment(sb, officeId, body);
       case 'call.status':     return await onStatus(sb, officeId, body);
       case 'call.end':        return await onEnd(sb, officeId, body);
+      case 'call.event':      return await onCallEvent(sb, officeId, body);
+      case 'call.postprocess': return await onPostProcess(sb, officeId, body);
       case 'tools.list':      return await onToolsList(sb, officeId, body);
       case 'tool.execute':    return await onToolExecute(sb, officeId, body);
       case 'heartbeat':       return await onHeartbeat(sb, officeId, body);
+      case 'deadletter.report': return await onDeadLetterReport(sb, officeId, body);
       default:
         throw new AppError('unknown_action', `פעולה לא מוכרת: ${action || '(ריק)'}`, 400);
     }
   } catch (e) {
+    // VoiceError נושא retryable, וזה מה ששרת הקול קורא כדי להחליט אם
+    // להכניס את הבקשה לתור המקומי. שגיאה גנרית הייתה מאלצת אותו לנחש —
+    // ולנחש כאן פירושו או לאבד פנייה, או לנסות לנצח בקשה שלא תצליח.
+    if (e instanceof VoiceError) {
+      return json(e.toPayload(), e.httpStatus);
+    }
     return errorResponse(e);
   }
 });
@@ -128,11 +139,25 @@ async function onCallStart(
   // ⚠ הבדיקה היא לפני יצירת השיחה ולא אחריה: שיחה שנוצרה כבר יצרה ליד
   // ומשימה, ואין טעם להגביל אחרי שהנזק נעשה.
   const { data: settings } = await sb.from('call_center_settings')
-    .select('max_calls_per_hour_per_number, emergency_stop')
+    .select('max_calls_per_hour_per_number, emergency_stop, live_calls_enabled')
     .eq('office_id', officeId).maybeSingle();
 
   if (settings?.emergency_stop) {
-    return json({ error: 'מרכז השיחות מושבת (עצירת חירום)', code: 'emergency_stop' }, 423);
+    throw new VoiceError('EMERGENCY_STOP', 'emergency stop is on');
+  }
+
+  // המפסק הראשי. גם כשה-SIP מחובר ו-Asterisk עונה, שיחה אמיתית לא
+  // מטופלת עד שאדם מורשה הדליק את המתג במסך. תשתית שהתחברה אינה
+  // החלטה לענות ללקוחות בשם המשרד.
+  //
+  // שיחת סימולציה אינה עוברת כאן כלל — היא נכנסת דרך call-center עם JWT.
+  if (!settings?.live_calls_enabled) {
+    await audit(sb, {
+      officeId, actorType: 'webhook', action: 'voice_call_rejected_live_disabled',
+      severity: 'warning', after: { from: callerPhone }, req,
+    });
+    throw new VoiceError('LIVE_CALLS_DISABLED',
+      'live_calls_enabled=false - the call was not answered by the agent');
   }
 
   const limit = Number(settings?.max_calls_per_hour_per_number ?? 12);
@@ -142,7 +167,8 @@ async function onCallStart(
       officeId, actorType: 'webhook', action: 'voice_rate_limited',
       severity: 'warning', after: { phone: callerPhone, count: rl.count }, req,
     });
-    return json({ error: 'חריגה ממגבלת השיחות מהמספר הזה', code: 'rate_limited' }, 429);
+    throw new VoiceError('RATE_LIMITED',
+      `${rl.count} calls from ${callerPhone} in the current hour (limit ${limit})`);
   }
 
   const result = await startCall(sb, officeId, {
@@ -172,8 +198,18 @@ async function onUtterance(
   if (!callId) throw new AppError('missing_call_id', 'חסר מזהה שיחה', 400);
   if (!text) throw new AppError('empty_text', 'הטקסט ריק', 400);
 
+  // המדדים ש-STT ו-TTS מייצרים נמדדים בשרת הקול; ה-CRM לא יכול לתזמן
+  // אותם ואין טעם שינחש. הם מגיעים כאן ומצטרפים למה שנמדד בצד הזה.
+  const m = (body.metrics || {}) as Record<string, unknown>;
   const result = await handleUtterance(sb, officeId, callId, text, {
     confidence: body.confidence != null ? Number(body.confidence) : undefined,
+    metrics: {
+      turnIndex: m.turn_index != null ? Number(m.turn_index) : undefined,
+      sttLatencyMs: m.stt_latency_ms != null ? Number(m.stt_latency_ms) : undefined,
+      ttsFirstAudioMs: m.tts_first_audio_ms != null ? Number(m.tts_first_audio_ms) : undefined,
+      ttsTotalMs: m.tts_total_ms != null ? Number(m.tts_total_ms) : undefined,
+      interrupted: m.interrupted === true,
+    },
   });
   return json({ ok: true, ...result });
 }
@@ -227,9 +263,12 @@ async function onEnd(
     outcome: body.outcome ? String(body.outcome) : undefined,
     durationSeconds: body.duration_seconds != null ? Number(body.duration_seconds) : undefined,
   });
+  // מוחזר מיד. הסיכום המלא רץ אחרי הניתוק (call.postprocess), כי
+  // המתנה לסיכום לפני ניתוק משאירה את המתקשר בקו מול שקט.
   return json({
     ok: true, summary: result.summary, outcome: result.outcome,
     duration_seconds: result.session.duration_seconds,
+    post_call_queued: result.postCallQueued,
   });
 }
 
@@ -249,7 +288,10 @@ async function onToolExecute(
   if (!toolName) throw new AppError('missing_tool', 'חסר שם כלי', 400);
 
   const outcome = await runStandaloneTool(sb, officeId, callId, toolName,
-    (body.input || {}) as Record<string, unknown>);
+    (body.input || {}) as Record<string, unknown>, {
+      toolCallId: body.tool_call_id ? String(body.tool_call_id) : null,
+      schemaVersion: body.schema_version ? String(body.schema_version) : '1',
+    });
 
   // צורת תשובה מפורשת ולא spread: `outcome.result` מכיל בעצמו `ok`, ופיזור
   // אחרי שדה מפורש דורס אותו בשקט. כאן הערכים במקרה זהים, אבל שדה שנראה
@@ -265,6 +307,103 @@ async function onToolExecute(
   });
 }
 
+/**
+ * אירועי מכונת המצבים והמדידה משרת הקול.
+ *
+ * STT ו-TTS קורים שם, ולכן רק שם אפשר למדוד אותם. בלי הנתיב הזה, ציר
+ * הזמן היה מראה "המודל התחיל" ו"המודל סיים" בלי מה שקרה סביבם — וכשמישהו
+ * שואל למה השיחה נשמעה איטית, התשובה הייתה חסרה בדיוק במקום שבו היא
+ * בדרך כלל נמצאת.
+ */
+async function onCallEvent(
+  sb: ReturnType<typeof admin>, officeId: string, body: Record<string, unknown>,
+) {
+  const callId = String(body.call_id || '');
+  const eventType = String(body.event || '').toUpperCase();
+  if (!callId) throw new AppError('missing_call_id', 'חסר מזהה שיחה', 400);
+  if (!eventType) throw new AppError('missing_event', 'חסר סוג אירוע', 400);
+
+  // רשימה סגורה: ציר הזמן נקרא ע"י אדם, וסוגי אירוע חופשיים משרת חיצוני
+  // היו הופכים אותו לזרם טקסט שאי אפשר לסנן או לתרגם.
+  const KNOWN = new Set([
+    'LISTENING_STARTED', 'USER_SPEECH_STARTED', 'USER_SPEECH_ENDED',
+    'STT_STARTED', 'STT_COMPLETED', 'LLM_STARTED', 'LLM_FIRST_TOKEN',
+    'TOOL_STARTED', 'TOOL_COMPLETED', 'TTS_STARTED', 'TTS_FIRST_AUDIO',
+    'TTS_COMPLETED', 'BARGE_IN', 'SILENCE_TIMEOUT', 'AUDIO_LOST',
+  ]);
+  if (!KNOWN.has(eventType)) {
+    throw new AppError('unknown_event', `סוג אירוע לא מוכר: ${eventType}`, 400);
+  }
+
+  await logEvent(sb, officeId, callId, eventType,
+    (body.payload || {}) as Record<string, unknown>);
+
+  if (body.state) {
+    await setVoiceState(sb, officeId, callId, String(body.state) as VoiceState);
+  }
+
+  // הפרעה ושתיקה נספרות על השיחה — הן מדדי איכות, לא רק אירועים.
+  if (eventType === 'BARGE_IN' || eventType === 'SILENCE_TIMEOUT') {
+    const col = eventType === 'BARGE_IN' ? 'interruptions_count' : 'silence_events';
+    const { data: cur } = await sb.from('call_sessions')
+      .select(col).eq('id', callId).maybeSingle();
+    await sb.from('call_sessions')
+      .update({ [col]: (Number((cur as Record<string, unknown>)?.[col]) || 0) + 1 })
+      .eq('id', callId);
+  }
+
+  return json({ ok: true });
+}
+
+async function onPostProcess(
+  sb: ReturnType<typeof admin>, officeId: string, body: Record<string, unknown>,
+) {
+  const callId = String(body.call_id || '');
+  if (!callId) throw new AppError('missing_call_id', 'חסר מזהה שיחה', 400);
+  const r = await postProcessCall(sb, officeId, callId);
+  return json({ ok: true, ...r });
+}
+
+/**
+ * פעולה שמיצתה את כל הניסיונות בשרת הקול.
+ *
+ * נשמרת ב-CRM ולא רק בקובץ על השרת. פעולה שנכשלה סופית היא פנייה של
+ * לקוח שלא נרשמה, והמפרט אוסר לאבד אותה בשקט. מהרגע שהיא כאן, היא
+ * מופיעה במסך ומישהו יכול לטפל בה.
+ */
+async function onDeadLetterReport(
+  sb: ReturnType<typeof admin>, officeId: string, body: Record<string, unknown>,
+) {
+  const outboxId = String(body.outbox_id || '');
+  if (!outboxId) throw new AppError('missing_outbox_id', 'חסר מזהה פעולה', 400);
+
+  const { error } = await sb.from('voice_dead_letters').upsert({
+    office_id: officeId,
+    outbox_id: outboxId,
+    call_external_id: body.call_external_id ? String(body.call_external_id) : null,
+    call_id: body.call_id ? String(body.call_id) : null,
+    tool_call_id: body.tool_call_id ? String(body.tool_call_id) : null,
+    idempotency_key: body.idempotency_key ? String(body.idempotency_key) : null,
+    endpoint: body.endpoint ? String(body.endpoint) : null,
+    action: body.action_name ? String(body.action_name) : null,
+    payload: (body.payload || {}) as Record<string, unknown>,
+    attempt_count: Number(body.attempt_count) || 0,
+    last_error: body.last_error ? String(body.last_error).slice(0, 1000) : null,
+    error_code: body.error_code ? String(body.error_code) : null,
+    status: 'dead_letter',
+  }, { onConflict: 'office_id,outbox_id' });
+  if (error) throw new AppError('db_error', error.message, 500);
+
+  await audit(sb, {
+    officeId, actorType: 'system', action: 'voice_dead_letter_recorded',
+    entityType: 'voice_dead_letter', entityId: outboxId,
+    severity: 'warning',
+    after: { action: body.action_name, attempts: body.attempt_count },
+  });
+
+  return json({ ok: true });
+}
+
 async function onHeartbeat(
   sb: ReturnType<typeof admin>, officeId: string, body: Record<string, unknown>,
 ) {
@@ -273,15 +412,42 @@ async function onHeartbeat(
     last_heartbeat_at: new Date().toISOString(),
     version: body.version ? String(body.version) : null,
     components: (body.components || {}) as Record<string, unknown>,
+    // כאן מגיע ההבדל בין healthy לבין production_ready. ספק Mock מדווח
+    // healthy=true ו-production_ready=false, ומנוע המוכנות חוסם לפי
+    // השני. דיווח שמשמיט את ההבחנה היה מציג ירוק על מערכת אילמת.
+    providers: (body.providers || {}) as Record<string, unknown>,
+    transport: body.transport ? String(body.transport) : null,
     active_calls: Number(body.active_calls) || 0,
     queued_events: Number(body.queued_events) || 0,
+    outbox_pending: Number(body.outbox_pending) || 0,
+    outbox_dead_letter: Number(body.outbox_dead_letter) || 0,
+    live_calls_accepted: body.live_calls_accepted === true,
     last_error: body.last_error ? String(body.last_error).slice(0, 500) : null,
   }, { onConflict: 'office_id' });
   if (error) throw new AppError('db_error', error.message, 500);
+
+  // שרת הקול צריך לדעת אם מותר לו לענות. אין טעם שיענה לשיחה ואז יגלה
+  // שהיא נדחית — המתקשר כבר שמע צלצול.
+  const { data: settings } = await sb.from('call_center_settings')
+    .select('live_calls_enabled, emergency_stop, max_call_duration_seconds, ' +
+            'silence_timeout_ms, barge_in_enabled, recording_enabled')
+    .eq('office_id', officeId).maybeSingle();
 
   // ניקוי nonces ישנים כאן ולא ב-cron נפרד: שרת פעיל מנקה אחרי עצמו,
   // ושרת שאינו פעיל לא מייצר nonces חדשים.
   await pruneNonces(sb);
 
-  return json({ ok: true, server_time: new Date().toISOString() });
+  return json({
+    ok: true,
+    server_time: new Date().toISOString(),
+    // תצורה שהשרת אמור לאכוף מצידו. מקור אמת אחד — ההגדרות ב-CRM.
+    config: {
+      live_calls_enabled: Boolean(settings?.live_calls_enabled),
+      emergency_stop: Boolean(settings?.emergency_stop),
+      max_call_duration_seconds: settings?.max_call_duration_seconds ?? 600,
+      silence_timeout_ms: settings?.silence_timeout_ms ?? 8000,
+      barge_in_enabled: settings?.barge_in_enabled !== false,
+      recording_enabled: Boolean(settings?.recording_enabled),
+    },
+  });
 }

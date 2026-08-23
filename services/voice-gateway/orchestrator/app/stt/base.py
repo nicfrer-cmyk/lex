@@ -10,6 +10,8 @@ from __future__ import annotations
 import abc
 from dataclasses import dataclass
 
+from ..capabilities import ProviderStatus
+
 
 @dataclass
 class Transcript:
@@ -45,6 +47,11 @@ class STTProvider(abc.ABC):
     @abc.abstractmethod
     async def end_stream(self, call_id: str) -> None:
         """משחרר משאבים. חייב להיות בטוח לקריאה כפולה."""
+
+    def capabilities(self) -> ProviderStatus:
+        """מצב ויכולות, לדיווח ל-CRM. ⚠ Mock חייב להחזיר
+        ProviderStatus.mock() — ראה capabilities.py."""
+        return ProviderStatus(type='stt', name=self.name)
 
 
 class MockSTTProvider(STTProvider):
@@ -83,3 +90,9 @@ class MockSTTProvider(STTProvider):
 
     async def end_stream(self, call_id: str) -> None:
         self._injected.pop(call_id, None)
+
+    def capabilities(self) -> ProviderStatus:
+        # ⚠ בריא ולא מוכן לייצור. הוא אינו ממציא טקסט, ולכן שיחה
+        # אמיתית מעליו תניב תמלול ריק — כלומר סוכן שלא שומע דבר.
+        return ProviderStatus.mock(
+            'stt', 'mock', 'תמלול במצב הדגמה — לא יזהה דיבור אמיתי')

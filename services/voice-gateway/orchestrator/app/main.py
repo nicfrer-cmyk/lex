@@ -25,8 +25,11 @@ from typing import Any
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
-from .audio.socket import AudioSocketServer
 from .calls.manager import CallManager
+from .capabilities import ProviderStatus
+from .media.audiosocket import AudioSocketTransport
+from .media.base import MediaTransport
+from .media.websocket import WebSocketMediaTransport
 from .config import get_settings
 from .crm.client import CrmClient
 from .llm.base import LLMProvider, MockLLMProvider
@@ -92,6 +95,24 @@ def _build_tts() -> TTSProvider:
     return MockTTSProvider()
 
 
+def _build_transport() -> MediaTransport:
+    """בוחר ערוץ מדיה.
+
+    ⚠ WebSocket הוא שלד שמצהיר production_ready=False. בחירה בו לא
+    תיחסם כאן — היא תיחסם במנוע המוכנות, שם המשמעות ברורה למי שקורא
+    את המסך. חסימה שקטה כאן הייתה נראית כמו תקלה.
+    """
+    host = ('0.0.0.0' if settings.external_media_host in ('orchestrator', '')
+            else settings.external_media_host)
+    if settings.media_transport == 'websocket':
+        log.warning("media_transport_skeleton", extra={
+            "transport": "websocket",
+            "note": "שלד בלבד — שיחות לא יישמעו. ראה docs/AI_CALL_CENTER.md",
+        })
+        return WebSocketMediaTransport(host, settings.external_media_port)
+    return AudioSocketTransport(host, settings.external_media_port)
+
+
 def _build_telephony() -> TelephonyProvider:
     if not settings.ari_configured:
         return MockTelephonyProvider()
@@ -123,26 +144,25 @@ async def on_startup() -> None:
     llm = _build_llm(crm)
     tts = _build_tts()
 
-    manager = CallManager(settings, crm, telephony, stt, llm, tts)
-    audio = AudioSocketServer(
-        settings.external_media_host if settings.external_media_host != "orchestrator" else "0.0.0.0",
-        settings.external_media_port, manager.on_audio)
-    manager.bind_audio_sender(audio.send)
-
-    await audio.start()
+    transport = _build_transport()
+    manager = CallManager(settings, crm, telephony, stt, llm, tts, transport)
+    await transport.start(manager.on_audio)
 
     if not telephony.is_mock:
         await telephony.start(manager.on_ari_event)  # type: ignore[attr-defined]
 
     _state.update(crm=crm, telephony=telephony, stt=stt, llm=llm, tts=tts,
-                  manager=manager, audio=audio)
+                  manager=manager, transport=transport)
     _state["heartbeat_task"] = asyncio.create_task(_heartbeat_loop())
 
     log.info("startup_complete", extra={
         "version": VERSION,
         "telephony": telephony.name, "stt": stt.name,
-        "llm": llm.name, "tts": tts.name,
+        "llm": llm.name, "tts": tts.name, "transport": transport.name,
         "crm_configured": settings.crm_configured,
+        # ⚠ נרשם במפורש בעלייה. "המערכת עלתה" ו"המערכת יכולה לענות
+        # לטלפון" הם שני דברים שונים, וזו השורה שמבדילה ביניהם בלוג.
+        "production_ready": _readiness_summary()["ready"],
     })
 
 
@@ -162,9 +182,9 @@ async def on_shutdown() -> None:
     if telephony and not telephony.is_mock:
         await telephony.stop()
 
-    audio = _state.get("audio")
-    if audio:
-        await audio.stop()
+    transport = _state.get("transport")
+    if transport:
+        await transport.stop()
 
     crm: CrmClient | None = _state.get("crm")
     if crm:
@@ -188,7 +208,16 @@ async def _heartbeat_loop() -> None:
     manager: CallManager = _state["manager"]
     while True:
         try:
-            await crm.heartbeat(active_calls=manager.active_count, version=VERSION)
+            resp = await crm.heartbeat(
+                active_calls=manager.active_count, version=VERSION,
+                providers=_provider_snapshot(),
+                transport=_state["transport"].name,
+                live_calls_accepted=manager.live_calls_enabled)
+            # ⚠ התצורה מגיעה מה-CRM ולא נשמרת מקומית. מה שבעל המשרד
+            # שינה במסך נכנס לתוקף בדופק הבא, בלי deploy ובלי restart.
+            if isinstance(resp, dict) and resp.get("config"):
+                manager.apply_remote_config(resp["config"])
+
             drained = await crm.drain()
             if drained:
                 log.info("queue_drained", extra={"sent": drained})
@@ -199,6 +228,42 @@ async def _heartbeat_loop() -> None:
             # ממשיכות, והמסך יציג "מנותק" — וזה מדויק.
             log.warning("heartbeat_failed", extra={"error": str(exc)})
         await asyncio.sleep(settings.heartbeat_interval)
+
+
+def _provider_snapshot() -> dict:
+    """מצב כל הספקים, בצורה שמנוע המוכנות ב-CRM יודע לקרוא.
+
+    ⚠ ההבחנה בין healthy לבין production_ready עוברת מכאן. ספק Mock
+    מדווח healthy=true ו-production_ready=false, וה-CRM חוסם לפי השני —
+    ולכן אי אפשר להדליק שיחות אמיתיות על מערכת אילמת.
+    """
+    out: dict = {}
+    for key in ("stt", "llm", "tts", "telephony"):
+        provider = _state.get(key)
+        if provider is None:
+            continue
+        try:
+            out[key] = provider.capabilities().as_dict()
+        except Exception:  # noqa: BLE001
+            out[key] = ProviderStatus.unavailable(
+                key, getattr(provider, "name", "?"), "לא ניתן לקרוא מצב").as_dict()
+
+    transport = _state.get("transport")
+    if transport is not None:
+        out["media"] = transport.health().as_dict()
+    return out
+
+
+def _readiness_summary() -> dict:
+    """האם השרת מצידו מוכן. הפסק המחייב הוא של ה-CRM — כאן זו רק
+    תמונה מקומית ללוג ול-/health."""
+    providers = _provider_snapshot()
+    blocking = [
+        f"{k}: {v.get('message') or 'אינו מוכן לייצור'}"
+        for k, v in providers.items() if not v.get("production_ready")
+    ]
+    blocking += settings.problems() if not settings.crm_configured else []
+    return {"ready": not blocking, "blocking": blocking, "providers": providers}
 
 
 # ======================================================================
@@ -246,9 +311,31 @@ async def status() -> JSONResponse:
 
 @app.post("/drain")
 async def drain() -> JSONResponse:
-    """ניקוז ידני של התור — לשימוש אחרי תקלת רשת ממושכת."""
+    """ניקוז ידני של ה-Outbox — לשימוש אחרי תקלת רשת ממושכת."""
     crm: CrmClient | None = _state.get("crm")
     if crm is None:
         return JSONResponse({"error": "השירות לא אותחל"}, status_code=503)
-    sent = await crm.drain()
-    return JSONResponse({"sent": sent, "remaining": crm.queue_depth()})
+    sent = await crm.drain(limit=50)
+    return JSONResponse({"sent": sent, "outbox": await crm.counts()})
+
+
+@app.get("/outbox")
+async def outbox() -> JSONResponse:
+    """מה ממתין ומה נכשל סופית.
+
+    ⚠ פעולה ב-dead_letter היא פנייה של לקוח שלא נרשמה. היא מדווחת גם
+    ל-CRM (deadletter.report) כדי שתופיע במסך — אבל היא נשארת גם כאן,
+    כי היעלמות בשקט היא בדיוק מה שאסור.
+    """
+    crm: CrmClient | None = _state.get("crm")
+    if crm is None:
+        return JSONResponse({"error": "השירות לא אותחל"}, status_code=503)
+    dead = await crm.outbox.dead_letters()
+    return JSONResponse({
+        "counts": await crm.counts(),
+        "dead_letters": [
+            {"id": d.id, "action": d.action, "attempts": d.attempt_count,
+             "error": d.last_error, "call_id": d.call_id}
+            for d in dead
+        ],
+    })

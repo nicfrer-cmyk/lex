@@ -17,6 +17,8 @@ from __future__ import annotations
 import abc
 from dataclasses import dataclass
 
+from ..capabilities import ProviderStatus
+
 
 @dataclass
 class Audio:
@@ -45,6 +47,9 @@ class TTSProvider(abc.ABC):
         raise NotImplementedError
         yield b""  # pragma: no cover
 
+    def capabilities(self) -> ProviderStatus:
+        return ProviderStatus(type='tts', name=self.name)
+
 
 class MockTTSProvider(TTSProvider):
     """שקט באורך הנכון. מצהיר על עצמו."""
@@ -70,6 +75,15 @@ class MockTTSProvider(TTSProvider):
         for i in range(0, len(audio.pcm), chunk):
             yield audio.pcm[i:i + chunk]
 
+    def capabilities(self) -> ProviderStatus:
+        # ⚠ הדוגמה המובהקת ביותר להבחנה. הוא בריא לחלוטין: עונה, מהיר,
+        # לא קורס. הוא גם מחזיר שקט. דיווח production_ready=True כאן
+        # פירושו שבעל המשרד יחבר מספר אמיתי ויגלה מהלקוח הראשון שאיש
+        # לא שומע דבר.
+        return ProviderStatus.mock(
+            'tts', 'mock',
+            'הקראה במצב הדגמה — מייצרת שקט. המתקשר לא ישמע דבר.')
+
 
 class LocalTTSProvider(TTSProvider):
     """מנוע TTS מקומי מאחורי HTTP.
@@ -91,6 +105,8 @@ class LocalTTSProvider(TTSProvider):
         self._base = base_url.rstrip("/")
         self._voice = voice
         self._timeout = timeout
+        self._healthy = True
+        self._last_error = ''
 
     async def synthesize(self, text: str, *, voice: str | None = None,
                          sample_rate: int = 16000) -> Audio:
@@ -101,7 +117,11 @@ class LocalTTSProvider(TTSProvider):
                 "text": text, "voice": voice or self._voice, "sample_rate": sample_rate,
             })
             if resp.status_code >= 400:
-                raise TTSUnavailable(f"מנוע ההקראה החזיר {resp.status_code}")
+                self._healthy = False
+                self._last_error = f"מנוע ההקראה החזיר {resp.status_code}"
+                raise TTSUnavailable(self._last_error)
+            self._healthy = True
+            self._last_error = ''
             return Audio(pcm=resp.content, sample_rate=sample_rate)
 
     async def stream(self, text: str, *, voice: str | None = None,
@@ -110,6 +130,20 @@ class LocalTTSProvider(TTSProvider):
         chunk = int(sample_rate * 0.02) * 2
         for i in range(0, len(audio.pcm), chunk):
             yield audio.pcm[i:i + chunk]
+
+    def capabilities(self) -> ProviderStatus:
+        return ProviderStatus(
+            type='tts', name=f'local:{self._base}',
+            mode='real',
+            healthy=self._healthy,
+            production_ready=self._healthy,
+            supports_streaming=True,
+            # ⚠ עברית אינה מובטחת ע"י עצם היות המנוע מקומי. מי שמגדיר
+            # מנוע חייב לוודא זאת בעצמו; דיווח שקרי כאן היה מוביל
+            # לשיחה באנגלית עם לקוח ישראלי.
+            supports_hebrew=False,
+            message=self._last_error,
+        )
 
 
 class TTSUnavailable(RuntimeError):

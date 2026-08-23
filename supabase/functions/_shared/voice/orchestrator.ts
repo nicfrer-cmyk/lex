@@ -32,7 +32,60 @@ import {
   type VoiceClassification, callerText,
 } from './llm.ts';
 import { scoreUrgency, guessCategory, type Urgency, type UrgencyRules } from './urgency.ts';
-import { normalizePhone, samePhone, todayISO } from '../security.ts';
+import { samePhone, todayISO } from '../security.ts';
+import { normalizePhoneNumber } from './phone.ts';
+import { supabaseCommandStore } from './commands.ts';
+
+// ============================================================
+// מכונת המצבים
+// ============================================================
+//
+// ⚠ נפרד מ-status. `status` הוא מצב השיחה מבחינת הטלפוניה (מצלצל /
+// פעילה / הסתיימה) ו-`voice_state` הוא מה שהסוכן עושה **בתוך** שיחה
+// פעילה. מיזוגם היה יוצר מצב שבו "בשיחה" לא מבחין בין הקשבה למתקשר
+// לבין המתנה לתשובת כלי — וזו בדיוק ההבחנה שדרושה כשמנסים להבין למה
+// שיחה נשמעה איטית.
+
+export type VoiceState =
+  | 'ringing' | 'answering' | 'listening' | 'transcribing' | 'thinking'
+  | 'speaking' | 'waiting_for_tool' | 'on_hold' | 'completing' | 'ended' | 'failed';
+
+/** תווית עברית לכל מצב — מוצגת בכרטיס השיחה החיה. */
+export const VOICE_STATE_HE: Record<VoiceState, string> = {
+  ringing: 'מצלצל',
+  answering: 'עונה לשיחה',
+  listening: 'מקשיבה',
+  transcribing: 'מתמללת',
+  thinking: 'מנסחת תשובה',
+  speaking: 'מדברת',
+  waiting_for_tool: 'מבצעת פעולה במערכת',
+  on_hold: 'בהמתנה',
+  completing: 'מסכמת',
+  ended: 'הסתיימה',
+  failed: 'נכשלה',
+};
+
+/**
+ * מעבר מצב. כל מעבר מייצר אירוע בציר הזמן.
+ *
+ * הכתיבה best-effort במכוון: מצב שלא נרשם אינו סיבה להפיל שיחה חיה.
+ * המצב האמיתי ממשיך לחיות בזיכרון התהליך; מה שאובד הוא שורה בציר
+ * הזמן, וזה נזק קטן בהרבה ממתקשר שנותק.
+ */
+export async function setVoiceState(
+  sb: SupabaseClient, officeId: string, callId: string,
+  state: VoiceState, payload: Record<string, unknown> = {},
+): Promise<void> {
+  try {
+    await sb.from('call_sessions')
+      .update({ voice_state: state, voice_state_at: new Date().toISOString() })
+      .eq('id', callId).eq('office_id', officeId);
+    await logEvent(sb, officeId, callId, 'STATE_' + state.toUpperCase(), payload);
+  } catch (e) {
+    console.warn('[voice] state transition not recorded', state,
+      e instanceof Error ? e.message : e);
+  }
+}
 
 // ============================================================
 // טיפוסים
@@ -68,15 +121,49 @@ export type CallSession = {
   is_simulation: boolean;
   turn_count: number;
   metadata: Record<string, unknown>;
+
+  // ---- זהות (20260823000000) ----
+  identity_status: 'unidentified' | 'phone_match' | 'verified' | 'rejected';
+  identity_verified_at: string | null;
+  identity_verification_method: string | null;
+  raw_caller_phone: string | null;
+
+  // ---- snapshot של תצורת הסוכן ----
+  agent_config_version: string | null;
+  prompt_hash: string | null;
+  llm_provider: string | null;
+  llm_model: string | null;
+  stt_provider: string | null;
+  tts_provider: string | null;
+  agent_snapshot: Record<string, unknown> | null;
+
+  // ---- מכונת מצבים ועיבוד ----
+  voice_state: string;
+  post_call_status: 'none' | 'pending' | 'processing' | 'done' | 'failed';
+  tags: string[] | null;
+
+  // ---- איכות ----
+  interruptions_count: number;
+  silence_events: number;
+  stt_low_confidence_count: number;
+  tool_failures_count: number;
+  call_completed_normally: boolean | null;
 };
 
 export type VoiceAgentRow = {
   id: string; office_id: string; slug: string; name: string;
+  description: string | null;
   role: string; system_prompt: string; greeting: string; language: string;
   llm_provider: string; llm_model: string; temperature: number;
+  // ⚠ הספקים כאן הם ההגדרה. מה שרץ בפועל מגיע מה-heartbeat של שרת הקול,
+  // ו-providerName() מעדיף אותו — הגדרה אומרת מה רצינו, heartbeat אומר
+  // מה באמת ענה למתקשר.
+  stt_provider: string | null; stt_model: string | null;
+  voice_provider: string | null; voice_id: string | null;
   max_turns: number; business_hours: Record<string, unknown>;
   escalation_rules: Record<string, unknown>; urgency_rules: Record<string, unknown>;
   is_active: boolean;
+  updated_at: string | null;
 };
 
 const MAX_TOOL_STEPS = 6;
@@ -191,6 +278,31 @@ export async function getVoiceLlm(
   return new AnthropicVoiceLlm(new AnthropicProvider());
 }
 
+/** מצב הספקים כפי ששרת הקול דיווח בו ב-heartbeat האחרון. */
+async function loadGatewayProviders(
+  sb: SupabaseClient, officeId: string,
+): Promise<Record<string, Record<string, unknown>>> {
+  const { data } = await sb.from('voice_gateway_status')
+    .select('providers').eq('office_id', officeId).maybeSingle();
+  return (data?.providers || {}) as Record<string, Record<string, unknown>>;
+}
+
+/**
+ * שם הספק שנרשם על השיחה.
+ *
+ * ⚠ מעדיף את מה ששרת הקול **מדווח בפועל** על פני מה שמוגדר בסוכן.
+ * הגדרה אומרת מה רצינו; ה-heartbeat אומר מה באמת רץ. כששניהם נבדלים,
+ * זה השני שקובע מה השיחה הזו שמעה.
+ */
+function providerName(
+  providers: Record<string, Record<string, unknown>>, kind: string, fallback?: string | null,
+): string {
+  const p = providers[kind];
+  if (p && typeof p.name === 'string' && p.name) return String(p.name);
+  if (p && typeof p.mode === 'string' && p.mode) return String(p.mode);
+  return fallback || 'mock';
+}
+
 // ============================================================
 // פתיחת שיחה
 // ============================================================
@@ -216,7 +328,8 @@ export type StartCallResult = {
 export async function startCall(
   sb: SupabaseClient, officeId: string, params: StartCallParams,
 ): Promise<StartCallResult> {
-  const callerPhone = normalizePhone(params.callerPhone) || params.callerPhone || '';
+  const phoneInfo = normalizePhoneNumber(params.callerPhone);
+  const callerPhone = phoneInfo.normalized || params.callerPhone || '';
   const settings = await loadSettings(sb, officeId);
   const agent = await loadAgent(sb, officeId, params.agentId);
 
@@ -256,6 +369,25 @@ export async function startCall(
 
   const greeting = agent?.greeting || 'שלום, הגעת למשרד עורכי הדין. איך אפשר לעזור?';
 
+  // ---- Snapshot של תצורת הסוכן ----
+  //
+  // ⚠ נלקח **עכשיו** ולא נקרא בדיעבד. prompt שישונה בצהריים לא יכול
+  // לשנות למפרע את מה ששיחה של הבוקר "התנהלה לפיו" — וזו בדיוק השאלה
+  // שנשאלת כשמישהו מתלונן על משהו שהמזכירה אמרה. hash ולא הטקסט המלא:
+  // הוא מספיק כדי להוכיח זהות מול גרסה, בלי לשכפל את ה-prompt לכל שורה.
+  const llm = await getVoiceLlm(sb, officeId, agent);
+  const gwProviders = await loadGatewayProviders(sb, officeId);
+  const { stableHash } = await import('../crypto.ts');
+  const promptHash = agent ? (await stableHash(agent.system_prompt)).slice(0, 16) : null;
+  const toolsPolicyVersion = agent
+    ? (await stableHash(JSON.stringify(
+        [...(await loadPermissions(sb, agent.id)).entries()].sort()))).slice(0, 16)
+    : null;
+
+  // ⚠ זהות: התאמת מספר מעלה ל-phone_match בלבד. היא **לא** verified —
+  // טלפון אבוד, בן משפחה או זיוף Caller ID מייצרים אותה התאמה בדיוק.
+  const identityStatus = client ? 'phone_match' : 'unidentified';
+
   const { data: inserted, error } = await sb.from('call_sessions').insert({
     office_id: officeId,
     external_call_id: params.externalCallId,
@@ -274,6 +406,32 @@ export async function startCall(
     recording_status: settings.recording_enabled ? 'pending' : 'disabled',
     transcript_status: 'partial',
     is_simulation: Boolean(params.isSimulation),
+    raw_caller_phone: phoneInfo.raw || params.callerPhone || null,
+    identity_status: identityStatus,
+    voice_state: 'answering',
+    voice_state_at: new Date().toISOString(),
+    post_call_status: 'none',
+    agent_config_version: agent ? String(agent.updated_at || agent.id) : null,
+    prompt_version: promptHash,
+    prompt_hash: promptHash,
+    tools_policy_version: toolsPolicyVersion,
+    llm_provider: llm.isMock ? 'mock' : (agent?.llm_provider || 'anthropic'),
+    llm_model: llm.isMock ? 'mock' : (agent?.llm_model || null),
+    stt_provider: providerName(gwProviders, 'stt', agent?.stt_provider),
+    stt_model: agent?.stt_model || null,
+    tts_provider: providerName(gwProviders, 'tts', agent?.voice_provider),
+    tts_model: agent?.voice_id || null,
+    agent_snapshot: agent
+      ? {
+          slug: agent.slug, name: agent.name, role: agent.role,
+          greeting: agent.greeting, language: agent.language,
+          temperature: agent.temperature, max_turns: agent.max_turns,
+          business_hours: agent.business_hours,
+          escalation_rules: agent.escalation_rules,
+          urgency_rules: agent.urgency_rules,
+          prompt_hash: promptHash,
+        }
+      : null,
     metadata: { greeting, conversation: [] as VoiceMsg[] },
   }).select('*').single();
 
@@ -303,11 +461,19 @@ export async function startCall(
     });
   }
 
+  if (client) {
+    await logEvent(sb, officeId, session.id, 'IDENTITY_PHONE_MATCH', {
+      client_id: client.id,
+      // ההודעה נשמרת בציר הזמן כדי שיהיה ברור בדיעבד שהזהות לא אומתה.
+      note: 'התאמת מספר בלבד — הזהות לא אומתה',
+    });
+  }
+
   await addSegment(sb, officeId, session.id, 'agent', greeting, { sequence: 0 });
   await sb.from('call_sessions').update({ status: 'active' }).eq('id', session.id);
   session.status = 'active';
+  await setVoiceState(sb, officeId, session.id, 'listening');
 
-  const llm = await getVoiceLlm(sb, officeId, agent);
   return { session, agent, greeting, created: true, providerMode: llm.isMock ? 'mock' : 'live' };
 }
 
@@ -325,10 +491,32 @@ export type TurnResult = {
   costUsd: number;
 };
 
+/**
+ * מדדים ששרת הקול מדד ואינם ניתנים למדידה כאן.
+ *
+ * STT ו-TTS קורים במכונה אחרת; ה-CRM לא יכול לתזמן אותם ואין טעם
+ * שינחש. הם מגיעים מבחוץ, וההשהיה הכוללת מורכבת מהם יחד עם מה
+ * שנמדד כאן (מודל וכלים).
+ */
+export type ExternalTurnMetrics = {
+  turnIndex?: number;
+  sttLatencyMs?: number;
+  ttsFirstAudioMs?: number;
+  ttsTotalMs?: number;
+  /** משך ההמתנה מרגע שהמתקשר סיים לדבר — נמדד בשרת הקול. */
+  speechEndedAgoMs?: number;
+  interrupted?: boolean;
+};
+
 export async function handleUtterance(
   sb: SupabaseClient, officeId: string, callId: string, utterance: string,
-  opts: { speaker?: 'caller' | 'human'; confidence?: number } = {},
+  opts: {
+    speaker?: 'caller' | 'human';
+    confidence?: number;
+    metrics?: ExternalTurnMetrics;
+  } = {},
 ): Promise<TurnResult> {
+  const turnStartedAt = Date.now();
   const { data: sessionRow } = await sb.from('call_sessions')
     .select('*').eq('id', callId).eq('office_id', officeId).maybeSingle();
   if (!sessionRow) throw new Error('השיחה לא נמצאה');
@@ -390,6 +578,12 @@ export async function handleUtterance(
     settings,
     refresh: (next: CrmDb) => { db = next; },
     isSimulation: session.is_simulation,
+    agentId: agent.id,
+    // ⚠ כל כתיבה עוברת דרך רישום הפקודות. בלעדיו runCommand נכשל
+    // במפורש, כדי שאידמפוטנטיות לא תיעלם בשקט.
+    commandStore: supabaseCommandStore(sb, officeId),
+    identityStatus: (session.identity_status || 'unidentified') as VoiceToolCtx['identityStatus'],
+    identityPolicy: (settings.identity_policy || 'strict') as VoiceToolCtx['identityPolicy'],
   } as VoiceToolCtx;
 
   const actions: TurnResult['actions'] = [];
@@ -400,14 +594,31 @@ export async function handleUtterance(
   let toolFailed = false;
 
   const toolSpecs = toolDefsForModel(permissions);
+  let llmTotalMs = 0;
+  let llmFirstTokenMs: number | null = null;
+  let toolTotalMs = 0;
+
+  await setVoiceState(sb, officeId, callId, 'thinking');
 
   for (let step = 0; step < MAX_TOOL_STEPS; step++) {
+    const llmStartedAt = Date.now();
+    await logEvent(sb, officeId, callId, 'LLM_STARTED', { step });
+
     const resp = await llm.turn({
       systemPrompt: buildSystemPrompt(agent, session, settings),
       history, tools: toolSpecs,
       model: agent.llm_model, temperature: Number(agent.temperature) || 0.3,
       callerPhone: session.caller_phone,
     });
+
+    const llmMs = Date.now() - llmStartedAt;
+    llmTotalMs += llmMs;
+    // ⚠ אומדן ולא מדידה: הנתיב הזה אינו זורם, ולכן "הטוקן הראשון"
+    // מגיע יחד עם התשובה כולה. כשיתווסף נתיב זורם, הערך יגיע ממנו.
+    // עדיף אומדן מסומן על שדה ריק שנראה כמו תקלה במדידה.
+    if (llmFirstTokenMs === null) llmFirstTokenMs = llmMs;
+    await logEvent(sb, officeId, callId, 'LLM_FIRST_TOKEN', { step, ms: llmMs, estimated: true });
+
     cost += resp.costUsd || 0;
     if (resp.classification) classification = { ...classification, ...resp.classification };
 
@@ -418,9 +629,26 @@ export async function handleUtterance(
       break;
     }
 
+    await setVoiceState(sb, officeId, callId, 'waiting_for_tool',
+      { tools: resp.toolCalls.map((t) => t.name) });
+
     for (const tc of resp.toolCalls) {
       history.push({ role: 'tool_call', id: tc.id, name: tc.name, input: tc.input });
-      const outcome = await executeToolForCall(sb, officeId, callId, tc, permissions, toolCtx);
+      const toolStartedAt = Date.now();
+      await logEvent(sb, officeId, callId, 'TOOL_STARTED', { tool: tc.name, tool_call_id: tc.id });
+
+      const outcome = await executeToolForCall(sb, officeId, callId, {
+        ...tc,
+        // מזהה קריאת הכלי של המודל הוא מה שמבדיל בין בקשה חדשה לבין
+        // שידור חוזר של אותה בקשה.
+        toolCallId: tc.id,
+        schemaVersion: '1',
+      }, permissions, toolCtx);
+      toolTotalMs += Date.now() - toolStartedAt;
+      await logEvent(sb, officeId, callId, 'TOOL_COMPLETED', {
+        tool: tc.name, tool_call_id: tc.id, status: outcome.status,
+        ms: Date.now() - toolStartedAt,
+      });
 
       if (outcome.status !== 'success') toolFailed = true;
       actions.push({
@@ -447,7 +675,40 @@ export async function handleUtterance(
     }
   }
 
-  if (reply) await addSegment(sb, officeId, callId, 'agent', reply);
+  if (reply) {
+    await setVoiceState(sb, officeId, callId, 'speaking');
+    await addSegment(sb, officeId, callId, 'agent', reply);
+  }
+
+  // ---- מדדי התור ----
+  //
+  // ⚠ turn_latency_ms הוא מה שהאדם בקו מרגיש: מרגע שסיים לדבר ועד
+  // שהתשובה מתחילה להישמע. הוא מורכב מ-STT (נמדד בשרת הקול), מהמודל
+  // ומהכלים (נמדדים כאן), ומ-TTS (שוב בשרת הקול). ממוצע על השיחה
+  // מסתיר את התור האחד שלקח שמונה שניות — וזה זה שגרם לניתוק.
+  const ext = opts.metrics || {};
+  const turnIndex = ext.turnIndex ?? (session.turn_count || 0);
+  const serverMs = Date.now() - turnStartedAt;
+  const turnLatencyMs = serverMs + (ext.sttLatencyMs || 0) + (ext.ttsFirstAudioMs || 0);
+
+  try {
+    await sb.from('call_turn_metrics').upsert({
+      office_id: officeId, call_id: callId, turn_index: turnIndex,
+      stt_latency_ms: ext.sttLatencyMs ?? null,
+      llm_first_token_ms: llmFirstTokenMs,
+      llm_total_ms: llmTotalMs,
+      tool_latency_ms: toolTotalMs || null,
+      tts_first_audio_ms: ext.ttsFirstAudioMs ?? null,
+      tts_total_ms: ext.ttsTotalMs ?? null,
+      turn_latency_ms: turnLatencyMs,
+      tool_calls: actions.length,
+      interrupted: Boolean(ext.interrupted),
+      stt_confidence: opts.confidence ?? null,
+    }, { onConflict: 'call_id,turn_index' });
+  } catch (e) {
+    // מדידה שלא נשמרה אינה סיבה להפיל תור שיחה שהצליח.
+    console.warn('[voice] turn metrics not saved', e instanceof Error ? e.message : e);
+  }
 
   // ---- סיווג ודחיפות ----
   const fullText = callerText(history);
@@ -477,6 +738,15 @@ export async function handleUtterance(
     followup_reason: toolFailed
       ? (session.followup_reason || 'פעולה אוטומטית נכשלה במהלך השיחה')
       : session.followup_reason,
+    tool_failures_count: (session.tool_failures_count || 0) +
+      actions.filter((a) => a.status !== 'success').length,
+    stt_low_confidence_count: (session.stt_low_confidence_count || 0) +
+      // ⚠ 0.6 הוא הסף שמתחתיו התמלול כבר לא אמין מספיק כדי לפעול לפיו.
+      // נספר ולא חוסם: המודל עדיין יקבל את הטקסט, אבל בסיום השיחה
+      // יהיה ברור אם היא התנהלה על תמלול רעוע.
+      (opts.confidence != null && opts.confidence < 0.6 ? 1 : 0),
+    interruptions_count: (session.interruptions_count || 0) +
+      (opts.metrics?.interrupted ? 1 : 0),
     metadata: {
       ...(session.metadata || {}),
       conversation: history.slice(-MAX_HISTORY_BLOCKS),
@@ -484,6 +754,9 @@ export async function handleUtterance(
       provider_mode: llm.isMock ? 'mock' : 'live',
     },
   }).eq('id', callId);
+
+  // חזרה להקשבה, אלא אם הסוכן סיים מצידו.
+  await setVoiceState(sb, officeId, callId, done ? 'completing' : 'listening');
 
   if (urgencyChanged && (verdict.urgency === 'high' || verdict.urgency === 'critical')) {
     await logEvent(sb, officeId, callId, 'URGENCY_DETECTED', {
@@ -543,55 +816,221 @@ export type EndCallParams = {
   endedAt?: string;
 };
 
+/**
+ * סיום שיחה — **הנתיב המהיר בלבד**.
+ *
+ * ## ההפרדה, ולמה היא לא אופטימיזציה
+ * סיכום ע"י מודל לוקח שניות. אם הוא ירוץ כאן, שרת הקול ממתין לתשובה
+ * לפני שהוא מנתק — והמתקשר שומע שקט בקצה השיחה, או גרוע מכך, הערוץ
+ * נשאר פתוח. מה שקורה כאן הוא רק מה שחייב לקרות לפני הניתוק: לסגור
+ * את השיחה, לקבוע תוצאה, ולוודא שלא אבדה פנייה.
+ *
+ * הסיכום, הסיווג המפורט, הרגש והתגיות מסומנים כ-pending ורצים אחר כך
+ * (`postProcessCall`). קריאה חוזרת ל-endCall אינה מייצרת סיכום שני.
+ */
 export async function endCall(
   sb: SupabaseClient, officeId: string, callId: string, params: EndCallParams = {},
-): Promise<{ summary: string; outcome: string; session: CallSession }> {
+): Promise<{ summary: string; outcome: string; session: CallSession; postCallQueued: boolean }> {
   const { data: sessionRow } = await sb.from('call_sessions')
     .select('*').eq('id', callId).eq('office_id', officeId).maybeSingle();
   if (!sessionRow) throw new Error('השיחה לא נמצאה');
   const session = sessionRow as CallSession;
 
-  // אידמפוטנטי: "השיחה הסתיימה" שנשלח פעמיים לא מייצר סיכום שני.
+  // אידמפוטנטי: "השיחה הסתיימה" שנשלח פעמיים לא סוגר אותה שוב.
   if (session.ended_at) {
     return {
-      summary: session.summary || '', outcome: session.outcome || 'completed', session,
+      summary: session.summary || '', outcome: session.outcome || 'completed',
+      session, postCallQueued: session.post_call_status === 'pending',
     };
   }
 
-  const { data: segments } = await sb.from('call_transcript_segments')
-    .select('speaker, text').eq('call_id', callId).order('sequence');
   const { data: actionRows } = await sb.from('call_actions')
     .select('tool_name, status, response_payload, entity_type, entity_id')
     .eq('call_id', callId).order('started_at');
+  const actions = actionRows || [];
 
-  const summary = await buildSummary(sb, officeId, session, segments || [], actionRows || []);
-  const outcome = params.outcome || deriveOutcome(actionRows || [], session);
-
+  const outcome = params.outcome || deriveOutcome(actions, session);
   const endedAt = params.endedAt || new Date().toISOString();
   const duration = params.durationSeconds ??
     Math.max(0, Math.round((Date.parse(endedAt) - Date.parse(session.started_at)) / 1000));
+  const status = params.status || 'completed';
+
+  // ---- מדדי איכות מצטברים ----
+  const { data: turnRows } = await sb.from('call_turn_metrics')
+    .select('turn_latency_ms').eq('call_id', callId);
+  const latencies = ((turnRows || []) as Array<{ turn_latency_ms: number | null }>)
+    .map((t) => Number(t.turn_latency_ms))
+    .filter((n: number) => Number.isFinite(n) && n > 0);
+  const avgLatency = latencies.length
+    ? Math.round(latencies.reduce((a: number, b: number) => a + b, 0) / latencies.length)
+    : null;
+  const maxLatency = latencies.length ? Math.max(...latencies) : null;
+
+  // ⚠ סיכום זמני ועובדתי, שנכתב **מיד**. הוא נדרש כי משימת ההמשך
+  // למטה מצטטת אותו, ובגלל שבחלון שבין הניתוק לבין העיבוד עורך הדין
+  // כבר עשוי לפתוח את השיחה. הסיכום המלא ידרוס אותו בהמשך.
+  const provisional = provisionalSummary(session, actions);
 
   await sb.from('call_sessions').update({
-    status: params.status || 'completed',
+    status,
     ended_at: endedAt,
     duration_seconds: duration,
-    summary,
     outcome,
+    summary: provisional,
     transcript_status: 'final',
+    voice_state: status === 'completed' ? 'ended' : 'failed',
+    voice_state_at: new Date().toISOString(),
+    call_completed_normally: status === 'completed',
+    avg_turn_latency_ms: avgLatency,
+    max_turn_latency_ms: maxLatency,
+    post_call_status: 'pending',
   }).eq('id', callId);
 
   await logEvent(sb, officeId, callId, 'CALL_ENDED', {
-    outcome, duration_seconds: duration,
-    actions: (actionRows || []).length,
+    outcome, duration_seconds: duration, actions: actions.length,
   });
 
-  // ⚠ רשת ביטחון. שיחה שהסתיימה בלי שנוצרה ממנה שום פעולה, ושסווגה
-  // כדחופה או שנכשלה בה פעולה — לא יכולה פשוט להיעלם. נוצרת משימה,
-  // כי פנייה שאבדה במשרד עורכי דין היא נזק אמיתי ללקוח.
-  await ensureFollowupTask(sb, officeId, session, actionRows || [], summary);
+  // ⚠ רשת ביטחון — נשארת בנתיב המהיר בכוונה. שיחה דחופה שלא הותירה
+  // עקבות היא פנייה שאבדה, ודחיית היצירה לעיבוד מאוחר הייתה פותחת
+  // חלון שבו היא לא קיימת בשום מקום.
+  await ensureFollowupTask(sb, officeId, session, actions, provisional);
 
   const { data: updated } = await sb.from('call_sessions').select('*').eq('id', callId).single();
-  return { summary, outcome, session: updated as CallSession };
+  return {
+    summary: provisional, outcome,
+    session: updated as CallSession, postCallQueued: true,
+  };
+}
+
+/** סיכום עובדתי מיידי, בלי מודל ובלי רשת. */
+function provisionalSummary(
+  session: CallSession, actions: Array<{ tool_name: string; status: string }>,
+): string {
+  const done = actions.filter((a) => a.status === 'success').map((a) => a.tool_name);
+  const bits = [
+    `פנייה טלפונית${session.caller_phone ? ` מהמספר ${session.caller_phone}` : ''}` +
+    `${session.category ? ` בנושא ${session.category}` : ''}.`,
+    done.includes('create_lead') ? 'נפתחה פנייה.' : '',
+    done.includes('create_task') || done.includes('request_human_callback')
+      ? 'נוצרה משימה לעורך הדין.' : '',
+    done.includes('create_appointment') ? 'נקבעה פגישה.' : '',
+    'הסיכום המלא בהכנה.',
+  ].filter(Boolean);
+  return bits.join(' ');
+}
+
+/**
+ * העיבוד שאחרי השיחה — סיכום מלא, סיווג, רגש ותגיות.
+ *
+ * רץ אחרי שהשיחה כבר נסגרה והמתקשר ניתק, ולכן מותר לו לקחת זמן. נקרא
+ * ע"י שרת הקול אחרי הניתוק, ע"י המסך, וע"י ה-cron כרשת ביטחון לשיחות
+ * שנשארו pending.
+ *
+ * אידמפוטנטי: שיחה שכבר עובדה מוחזרת כמות שהיא.
+ */
+export async function postProcessCall(
+  sb: SupabaseClient, officeId: string, callId: string,
+): Promise<{ processed: boolean; summary: string }> {
+  const { data: row } = await sb.from('call_sessions')
+    .select('*').eq('id', callId).eq('office_id', officeId).maybeSingle();
+  if (!row) throw new Error('השיחה לא נמצאה');
+  const session = row as CallSession;
+
+  if (session.post_call_status === 'done') {
+    return { processed: false, summary: session.summary || '' };
+  }
+  if (!session.ended_at) {
+    return { processed: false, summary: session.summary || '' };
+  }
+
+  // ⚠ נעילה אופטימית. שני קוראים (שרת הקול וה-cron) עלולים להגיע יחד,
+  // ושניהם היו קוראים למודל — כלומר תשלום כפול על אותו סיכום.
+  const { data: claimed } = await sb.from('call_sessions')
+    .update({ post_call_status: 'processing' })
+    .eq('id', callId).in('post_call_status', ['pending', 'failed'])
+    .select('id');
+  if (!claimed || !claimed.length) {
+    return { processed: false, summary: session.summary || '' };
+  }
+
+  try {
+    const { data: segments } = await sb.from('call_transcript_segments')
+      .select('speaker, text').eq('call_id', callId).order('sequence');
+    const { data: actionRows } = await sb.from('call_actions')
+      .select('tool_name, status, response_payload, entity_type, entity_id')
+      .eq('call_id', callId).order('started_at');
+
+    const summary = await buildSummary(sb, officeId, session, segments || [], actionRows || []);
+    const rows = (segments || []) as Array<{ speaker: string; text: string }>;
+    const transcript = rows.filter((x) => x.speaker === 'caller')
+      .map((x) => x.text).join(' ');
+
+    await sb.from('call_sessions').update({
+      summary,
+      category: session.category || guessCategory(transcript),
+      tags: deriveTags(session, actionRows || []),
+      post_call_status: 'done',
+      post_call_completed_at: new Date().toISOString(),
+      post_call_error: null,
+    }).eq('id', callId);
+
+    await logEvent(sb, officeId, callId, 'POST_CALL_COMPLETED', {
+      chars: summary.length,
+    });
+    return { processed: true, summary };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // ⚠ הסיכום הזמני נשאר. שיחה בלי סיכום כלל היא שיחה שעורך הדין לא
+    // יכול לקרוא למחרת; חזרה ל-'failed' מאפשרת ל-cron לנסות שוב.
+    await sb.from('call_sessions').update({
+      post_call_status: 'failed', post_call_error: msg.slice(0, 500),
+    }).eq('id', callId);
+    await logEvent(sb, officeId, callId, 'POST_CALL_FAILED', { error: msg.slice(0, 300) });
+    return { processed: false, summary: session.summary || '' };
+  }
+}
+
+/** תגיות עובדתיות בלבד — מה קרה בשיחה, לא פרשנות. */
+function deriveTags(
+  session: CallSession, actions: Array<{ tool_name: string; status: string }>,
+): string[] {
+  const tags = new Set<string>();
+  if (session.category) tags.add(session.category);
+  if (session.urgency === 'high' || session.urgency === 'critical') tags.add('דחוף');
+  if (session.is_simulation) tags.add('בדיקה');
+  if (session.manual_followup_required) tags.add('דורש טיפול');
+  for (const a of actions) {
+    if (a.status !== 'success') continue;
+    if (a.tool_name === 'create_appointment') tags.add('פגישה');
+    if (a.tool_name === 'create_lead') tags.add('ליד');
+    if (a.tool_name === 'request_human_callback') tags.add('בקשת חזרה');
+  }
+  return [...tags];
+}
+
+/**
+ * מעבד את כל השיחות שממתינות. נקרא מה-cron — רשת ביטחון לשיחות
+ * ששרת הקול לא הספיק לבקש עבורן עיבוד (נפילה, ניתוק רשת).
+ */
+export async function drainPostCallQueue(
+  sb: SupabaseClient, officeId: string, limit = 10,
+): Promise<number> {
+  const { data } = await sb.from('call_sessions')
+    .select('id').eq('office_id', officeId)
+    .in('post_call_status', ['pending', 'failed'])
+    .not('ended_at', 'is', null)
+    .order('ended_at', { ascending: true }).limit(limit);
+
+  let processed = 0;
+  for (const row of data || []) {
+    try {
+      const r = await postProcessCall(sb, officeId, row.id as string);
+      if (r.processed) processed++;
+    } catch (e) {
+      console.error('[voice] post-call failed', row.id, e instanceof Error ? e.message : e);
+    }
+  }
+  return processed;
 }
 
 function deriveOutcome(

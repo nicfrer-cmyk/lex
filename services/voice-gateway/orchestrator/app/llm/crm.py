@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..capabilities import LatencyTracker, ProviderStatus
 from ..crm.client import CrmClient, CrmUnavailable
 from ..telemetry.logging import get_logger
 from .base import LLMProvider, LlmTurn, ToolCall
@@ -33,6 +34,8 @@ class CrmLlmProvider(LLMProvider):
 
     def __init__(self, crm: CrmClient) -> None:
         self._crm = crm
+        self._latency = LatencyTracker()
+        self._healthy = True
 
     async def generate(self, system: str, messages: list[dict[str, Any]],
                        tools: list[dict[str, Any]] | None = None) -> LlmTurn:
@@ -43,13 +46,19 @@ class CrmLlmProvider(LLMProvider):
         if not call_id:
             raise ValueError("CrmLlmProvider דורש call_id בהודעה")
 
+        import time
+        started = time.monotonic()
         try:
             data = await self._crm.call("call.utterance", {
                 "call_id": call_id,
                 "text": text,
                 "confidence": last.get("confidence"),
+                "metrics": last.get("metrics") or {},
             })
+            self._latency.record(int((time.monotonic() - started) * 1000))
+            self._healthy = True
         except CrmUnavailable:
+            self._healthy = False
             # הבקשה כבר בתור המקומי. אומרים משהו וממשיכים.
             log.warning("crm_turn_queued_fallback", extra={"call_id": call_id})
             return LlmTurn(text=_FALLBACK, done=True)
@@ -79,3 +88,17 @@ class CrmLlmProvider(LLMProvider):
                         tools: list[dict[str, Any]]) -> list[ToolCall]:
         turn = await self.generate(system, messages, tools)
         return turn.tool_calls
+
+    def capabilities(self) -> ProviderStatus:
+        # ⚠ הסוכן רץ **בצד ה-CRM**, ולכן מוכנותו נקבעת שם (יש מפתח
+        # מודל או אין). הדיווח כאן מתאר את הערוץ בלבד; ה-CRM דורס אותו
+        # במצב האמיתי של המודל — ראה collectSnapshot ב-call-center.
+        return ProviderStatus(
+            type='llm', name='crm-agent', mode='real',
+            healthy=self._healthy,
+            production_ready=self._healthy,
+            supports_streaming=False,
+            supports_hebrew=True,
+            average_latency_ms=self._latency.average_ms,
+            message='' if self._healthy else 'ה-CRM אינו זמין',
+        )

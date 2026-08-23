@@ -21,6 +21,7 @@ from typing import Any
 
 import httpx
 
+from ..capabilities import LatencyTracker, ProviderStatus
 from ..telemetry.logging import get_logger
 from .base import LLMProvider, LlmTurn, ToolCall
 
@@ -34,6 +35,8 @@ class OpenAiCompatibleLLM(LLMProvider):
         self._base = base_url.rstrip("/")
         self._model = model
         self._timeout = timeout
+        self._latency = LatencyTracker()
+        self._healthy = True
 
     @property
     def _endpoint(self) -> str:
@@ -107,6 +110,20 @@ class OpenAiCompatibleLLM(LLMProvider):
     async def tool_call(self, system: str, messages: list[dict[str, Any]],
                         tools: list[dict[str, Any]]) -> list[ToolCall]:
         return (await self.generate(system, messages, tools)).tool_calls
+
+    def capabilities(self) -> ProviderStatus:
+        return ProviderStatus(
+            type='llm', name=f'{self.name}:{self._model}', mode='real',
+            healthy=self._healthy,
+            production_ready=self._healthy,
+            supports_streaming=True,
+            # ⚠ תלוי לחלוטין במודל שנטען. llama בסיסי עונה עברית
+            # חלשה; דיווח True כברירת מחדל היה מסתיר את זה עד השיחה
+            # הראשונה. מי שמאמת עברית מעדכן כאן.
+            supports_hebrew=False,
+            average_latency_ms=self._latency.average_ms,
+            message='' if self._healthy else 'המודל המקומי אינו מגיב',
+        )
 
 
 class OllamaLLM(OpenAiCompatibleLLM):

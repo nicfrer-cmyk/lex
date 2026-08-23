@@ -83,7 +83,52 @@ const CC_EVENT_HE = {
   TOOL_BLOCKED: 'פעולה נחסמה',
   FOLLOWUP_TASK_CREATED: 'נוצרה משימת המשך',
   AGENT_DISABLED: 'המזכירה הדיגיטלית מושבתת',
+
+  // ---- מכונת המצבים ומדידה ----
+  LISTENING_STARTED: 'מקשיבה למתקשר',
+  USER_SPEECH_STARTED: 'המתקשר התחיל לדבר',
+  USER_SPEECH_ENDED: 'המתקשר סיים לדבר',
+  STT_STARTED: 'תמלול התחיל',
+  STT_COMPLETED: 'תמלול הושלם',
+  LLM_STARTED: 'הסוכנת מנסחת תשובה',
+  LLM_FIRST_TOKEN: 'התשובה החלה להתקבל',
+  TOOL_STARTED: 'פעולה במערכת החלה',
+  TOOL_COMPLETED: 'פעולה במערכת הושלמה',
+  TTS_STARTED: 'הקראה התחילה',
+  TTS_FIRST_AUDIO: 'הקול החל להישמע',
+  TTS_COMPLETED: 'הקראה הושלמה',
+  BARGE_IN: 'המתקשר קטע את הסוכנת',
+  SILENCE_TIMEOUT: 'שתיקה ממושכת',
+  AUDIO_LOST: 'ערוץ האודיו נקטע',
+  IDENTITY_PHONE_MATCH: 'המספר תואם ללקוח (זהות לא אומתה)',
+  POST_CALL_COMPLETED: 'הסיכום המלא הופק',
+  POST_CALL_FAILED: 'הפקת הסיכום נכשלה',
+  STATE_LISTENING: 'מצב: מקשיבה',
+  STATE_THINKING: 'מצב: מנסחת',
+  STATE_SPEAKING: 'מצב: מדברת',
+  STATE_WAITING_FOR_TOOL: 'מצב: מבצעת פעולה',
+  STATE_COMPLETING: 'מצב: מסכמת',
+  STATE_ENDED: 'מצב: הסתיימה',
+  STATE_FAILED: 'מצב: נכשלה',
 };
+
+/**
+ * אירועים "רועשים" שאינם מוצגים כברירת מחדל.
+ *
+ * ⚠ ציר הזמן נקרא ע"י עורך דין. שיחה בת חמישה תורות מייצרת כשלושים
+ * אירועי מכונת מצבים, ובתוכם נבלעות שלוש השורות שבאמת חשובות ("נוצרה
+ * משימה", "נקבעה פגישה"). ההסתרה היא ברירת מחדל, לא מחיקה — כפתור
+ * מציג את הכול למי שמאבחן.
+ */
+const CC_VERBOSE_EVENTS = new Set([
+  'LISTENING_STARTED', 'USER_SPEECH_STARTED', 'USER_SPEECH_ENDED',
+  'STT_STARTED', 'STT_COMPLETED', 'LLM_STARTED', 'LLM_FIRST_TOKEN',
+  'TTS_STARTED', 'TTS_FIRST_AUDIO', 'TTS_COMPLETED', 'CALLER_UTTERANCE',
+  'AGENT_REPLY', 'TOOL_STARTED',
+  'STATE_LISTENING', 'STATE_THINKING', 'STATE_SPEAKING',
+  'STATE_WAITING_FOR_TOOL', 'STATE_COMPLETING', 'STATE_ENDED', 'STATE_FAILED',
+]);
+let ccShowVerbose = false;
 
 const CC_TOOL_HE = {
   lookup_client: 'זיהוי לקוח',
@@ -99,13 +144,40 @@ const CC_TOOL_HE = {
 };
 
 const CC_TABS = [
-  { id: 'dashboard', label: 'סקירה',     icon: '▦' },
-  { id: 'calls',     label: 'היסטוריית שיחות', icon: '≡' },
-  { id: 'agents',    label: 'סוכנים',    icon: '◈' },
-  { id: 'simulator', label: 'מצב בדיקה', icon: '▶' },
-  { id: 'system',    label: 'מצב מערכת', icon: '⚙' },
-  { id: 'settings',  label: 'הגדרות',    icon: '☎' },
+  { id: 'dashboard',   label: 'סקירה',            icon: '▦' },
+  { id: 'callbacks',   label: 'ממתינים לחזרה',    icon: '↩' },
+  { id: 'calls',       label: 'היסטוריית שיחות',  icon: '≡' },
+  { id: 'performance', label: 'ביצועים',          icon: '◷' },
+  { id: 'agents',      label: 'סוכנים',           icon: '◈' },
+  { id: 'simulator',   label: 'מצב בדיקה',        icon: '▶' },
+  { id: 'system',      label: 'מצב מערכת',        icon: '⚙' },
+  { id: 'settings',    label: 'הגדרות',           icon: '☎' },
 ];
+
+/** סטטוסים של בקשת חזרה. Callback הוא תכונת ליבה — אין העברה חיה. */
+const CC_CALLBACK_STATUS_HE = {
+  waiting: 'ממתין', contacted: 'נוצר קשר', no_answer: 'לא ענה',
+  reschedule: 'נדחה למועד אחר', completed: 'הושלם', cancelled: 'בוטל',
+};
+const CC_CALLBACK_STATUS_CLS = {
+  waiting: 'pending', contacted: 'active', no_answer: 'urgent',
+  reschedule: 'pending', completed: 'active', cancelled: 'closed',
+};
+
+/** מה הסוכנת עושה עכשיו — מכונת המצבים. */
+const CC_VOICE_STATE_HE = {
+  ringing: 'מצלצל', answering: 'עונה לשיחה', listening: 'מקשיבה',
+  transcribing: 'מתמללת', thinking: 'מנסחת תשובה', speaking: 'מדברת',
+  waiting_for_tool: 'מבצעת פעולה במערכת', on_hold: 'בהמתנה',
+  completing: 'מסכמת', ended: 'הסתיימה', failed: 'נכשלה',
+};
+
+const CC_IDENTITY_HE = {
+  unidentified: 'לא מזוהה',
+  phone_match: 'התאמת מספר',
+  verified: 'זהות אומתה',
+  rejected: 'צד שכנגד',
+};
 
 // ============================================================
 // ניווט ושלד
@@ -124,8 +196,10 @@ function renderCallCenter() {
   host.innerHTML = '<div class="empty">טוען…</div>';
 
   const fn = {
-    dashboard: ccRenderDashboard, calls: ccRenderHistory, agents: ccRenderAgents,
-    simulator: ccRenderSimulator, system: ccRenderSystem, settings: ccRenderSettings,
+    dashboard: ccRenderDashboard, callbacks: ccRenderCallbacks,
+    calls: ccRenderHistory, performance: ccRenderPerformance,
+    agents: ccRenderAgents, simulator: ccRenderSimulator,
+    system: ccRenderSystem, settings: ccRenderSettings,
   }[ccTab];
 
   Promise.resolve().then(() => fn(host))
@@ -274,20 +348,34 @@ async function ccRenderDashboard(host) {
   }[gwState] || gwState;
 
   host.innerHTML = `
-    ${gwState !== 'online' ? `<div class="alert alert-info" style="margin-bottom:14px">
-      <strong>שרת הטלפוניה ${gwState === 'never_connected' ? 'טרם חובר' : 'אינו מחובר'}.</strong>
-      <div style="margin-top:4px">שיחות טלפון אמיתיות עדיין אינן מתקבלות. אפשר לבדוק את המערכת
-      במלואה דרך <button class="btn btn-sm" onclick="ccNav('simulator')">מצב בדיקה</button></div>
-    </div>` : ''}
+    ${s.live_calls_enabled
+      ? `<div class="alert alert-success" style="margin-bottom:14px">
+          <strong>🟢 המערכת מקבלת שיחות אמיתיות.</strong></div>`
+      : `<div class="alert alert-info" style="margin-bottom:14px">
+          <strong>שיחות אמיתיות אינן מופעלות.</strong>
+          <div style="margin-top:4px">אפשר לבדוק את המערכת במלואה דרך
+            <button class="btn btn-sm" onclick="ccNav('simulator')">מצב בדיקה</button>
+            <button class="btn btn-sm" onclick="ccNav('system')">בדיקת מוכנות</button></div>
+        </div>`}
 
     <div class="stats-grid stats-grid-6">
       ${Stat('שיחות היום', s.calls_today ?? 0, '')}
       ${Stat('שיחות פעילות', s.calls_active ?? 0, s.calls_active ? 'עכשיו' : '', Number(s.calls_active) > 0)}
       ${Stat('לידים חדשים', s.leads_today ?? 0, 'נוצרו היום')}
       ${Stat('פגישות שנקבעו', s.appointments_today ?? 0, `${s.appointments_week ?? 0} השבוע`)}
-      ${Stat('משימות שנוצרו', s.tasks_today ?? 0, 'היום')}
+      ${Stat('ממתינים לחזרה', s.callbacks_waiting ?? 0, 'בקשות פתוחות', Number(s.callbacks_waiting) > 0)}
       ${Stat('דורש טיפול', s.requires_attention ?? 0, '14 ימים אחרונים', Number(s.requires_attention) > 0)}
     </div>
+
+    ${Number(s.callbacks_waiting) > 0 ? `<div style="margin-top:12px">
+      <button class="btn btn-primary" onclick="ccNav('callbacks')">
+        ↩ ${s.callbacks_waiting} ממתינים לחזרה — פתח רשימה</button></div>` : ''}
+
+    ${Number(s.dead_letters) > 0 ? `<div class="alert alert-danger" style="margin-top:12px">
+      <strong>🔴 ${s.dead_letters} פעולות לא סונכרנו.</strong>
+      <div style="margin-top:4px">פעולות שנוצרו בשיחה ולא נרשמו במערכת.
+        <button class="btn btn-sm" onclick="ccNav('system')">הצג</button></div>
+    </div>` : ''}
 
     <div class="ai-section-title" style="margin-top:20px">שיחות פעילות עכשיו</div>
     <div id="cc-active-wrap">${ccActiveCallsHtml(active)}</div>
@@ -342,13 +430,22 @@ function ccLiveCard(call) {
   </div>`;
 }
 
-/** "מה קורה עכשיו" בשפה של אדם, לא בשם הסטטוס. */
+/**
+ * "מה קורה עכשיו" בשפה של אדם, לא בשם הסטטוס.
+ *
+ * ⚠ voice_state קודם ל-status. status אומר "בשיחה" גם כשהסוכנת ממתינה
+ * לתשובת כלי — וההבחנה הזו היא בדיוק מה שמסביר למה השיחה נשמעת תקועה.
+ */
 function ccLiveStateText(call) {
   const agentName = 'מזכירת המשרד';
+  const vs = call.voice_state;
+  if (vs && CC_VOICE_STATE_HE[vs] && !['ringing', 'ended', 'failed'].includes(vs)) {
+    const who = call.client_id ? ' · לקוח קיים' : (call.lead_id ? ' · פנייה חדשה' : '');
+    return `${agentName} ${CC_VOICE_STATE_HE[vs]}${who}`;
+  }
   if (call.status === 'ringing') return 'השיחה מצלצלת';
   if (call.status === 'answering') return `${agentName} עונה לשיחה`;
   if (call.status === 'on_hold') return 'המתקשר בהמתנה';
-  if (call.status === 'transferring') return 'השיחה מועברת לנציג';
   if (call.client_id) return `${agentName} מטפלת בפניית לקוח קיים`;
   if (call.lead_id) return `${agentName} אוספת פרטים לפנייה חדשה`;
   return `${agentName} אוספת פרטים`;
@@ -375,6 +472,240 @@ function ccStartTimers() {
 function ccStopTimers() {
   if (ccTimerInterval) { clearInterval(ccTimerInterval); ccTimerInterval = null; }
 }
+
+
+// ============================================================
+// ממתינים לחזרה
+// ============================================================
+//
+// ⚠ זו אינה רשימת משימות נוספת. החלטת המוצר היא שאין העברה חיה לעורך
+// הדין, ולכן **כל** בקשה לדבר איתו הופכת לבקשת חזרה — וזה הופך את
+// המסך הזה לליבת המוצר ולא למקרה קצה. אם משהו כאן נופל בין הכיסאות,
+// לקוח שהמזכירה הבטיחה לו שיחזרו אליו לא יקבל אותה.
+//
+// המקור הוא db.tasks (המשימות חיות ב-blob, ראה docs). אין טבלה מקבילה:
+// שתי רשימות משימות היו מפצלות את תשומת הלב של עורך הדין, וזה בדיוק
+// מה שגורם לרשימה אחת מהן להיזנח.
+
+/** בקשות חזרה פתוחות, ממוינות לפי דחיפות ואז ותק. */
+function ccOpenCallbacks() {
+  const OPEN = ['waiting', 'no_answer', 'reschedule'];
+  const rank = { critical: 0, high: 1, normal: 2, low: 3 };
+  return (db.tasks || [])
+    .filter(t => t.callback && OPEN.includes(String(t.callback.status || 'waiting')))
+    .sort((a, b) => {
+      const ra = rank[a.callback.urgency] ?? 2, rb = rank[b.callback.urgency] ?? 2;
+      if (ra !== rb) return ra - rb;
+      return String(a.callback.createdAt || '').localeCompare(String(b.callback.createdAt || ''));
+    });
+}
+
+function ccClosedCallbacks(limit) {
+  const CLOSED = ['contacted', 'completed', 'cancelled'];
+  return (db.tasks || [])
+    .filter(t => t.callback && CLOSED.includes(String(t.callback.status)))
+    .sort((a, b) => String(b.callback.completedAt || b.callback.createdAt || '')
+      .localeCompare(String(a.callback.completedAt || a.callback.createdAt || '')))
+    .slice(0, limit || 20);
+}
+
+/** "לפני 3 שעות" — זמן ההמתנה הוא המספר שקובע כאן. */
+function ccWaitingFor(iso) {
+  if (!iso) return '—';
+  const mins = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60000));
+  if (mins < 60) return `${mins} דק׳`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} שע׳${mins % 60 ? ` ${mins % 60} דק׳` : ''}`;
+  return `${Math.floor(hours / 24)} ימים`;
+}
+
+/** ⚠ המתנה ארוכה מסומנת. בקשת חזרה דחופה שממתינה יום היא כישלון שירות. */
+function ccWaitingClass(cb) {
+  const hours = (Date.now() - Date.parse(cb.createdAt || 0)) / 3600000;
+  if (!isFinite(hours)) return '';
+  const urgent = cb.urgency === 'high' || cb.urgency === 'critical';
+  if (urgent && hours > 4) return 'ai-attention';
+  if (hours > 24) return 'ai-attention';
+  return '';
+}
+
+function ccRenderCallbacks(host) {
+  const open = ccOpenCallbacks();
+  const closed = ccClosedCallbacks();
+
+  host.innerHTML = `
+    <div class="alert alert-info" style="margin-bottom:14px">
+      <strong>המזכירה הדיגיטלית אינה מעבירה שיחות.</strong>
+      <div style="margin-top:4px">כשמתקשר מבקש לדבר עם עורך הדין, היא לוקחת את פרטי
+      הפנייה ופותחת בקשת חזרה. הרשימה הזו היא מה שנשאר לעשות.</div>
+    </div>
+
+    <div class="stats-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:16px">
+      ${Stat('ממתינים', open.length, '', open.length > 0)}
+      ${Stat('דחופים', open.filter(t => ['high', 'critical'].includes(t.callback.urgency)).length, '')}
+      ${Stat('טופלו לאחרונה', closed.length, '')}
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">ממתינים לחזרה (${open.length})</div>
+      ${open.length ? ccCallbackTable(open, true) :
+        '<div class="empty">אין בקשות חזרה פתוחות.</div>'}
+    </div>
+
+    ${closed.length ? `<div class="card">
+      <div class="card-title">טופלו</div>
+      ${ccCallbackTable(closed, false)}
+    </div>` : ''}`;
+}
+
+function ccCallbackTable(rows, withActions) {
+  return `<table class="data-table">
+    <thead><tr>
+      <th>שם</th><th>טלפון</th><th>סיבת הפנייה</th><th>דחיפות</th>
+      <th>ממתין</th><th>מועד מועדף</th><th>ניסיונות</th><th>סטטוס</th>
+      ${withActions ? '<th></th>' : ''}
+    </tr></thead>
+    <tbody>${rows.map(t => {
+      const cb = t.callback || {};
+      const st = String(cb.status || 'waiting');
+      return `<tr>
+        <td><b style="color:var(--navy)">${escapeHtml(cb.callerName || '—')}</b></td>
+        <td>${Phone(cb.callerPhone)}</td>
+        <td style="max-width:280px">${escapeHtml(String(cb.reason || '').slice(0, 140))}</td>
+        <td>${UrgencyBadge(cb.urgency)}</td>
+        <td class="${ccWaitingClass(cb)}">${escapeHtml(ccWaitingFor(cb.createdAt))}</td>
+        <td>${escapeHtml(cb.preferredCallbackTime || '—')}</td>
+        <td>${Number(cb.attemptCount) || 0}</td>
+        <td><span class="badge badge-${CC_CALLBACK_STATUS_CLS[st] || 'pending'}">
+          ${escapeHtml(CC_CALLBACK_STATUS_HE[st] || st)}</span></td>
+        ${withActions ? `<td style="white-space:nowrap">
+          <div class="overflow-menu-wrap">
+            <button class="btn btn-sm btn-success" onclick="ccCallbackSet(${aiJsAttr(t.id)},'completed')"
+              title="הלקוח קיבל מענה">✓ חזרתי</button>
+            <button class="btn btn-sm" onclick="ccCallbackSet(${aiJsAttr(t.id)},'no_answer')"
+              title="חייגתי ולא ענו">לא ענה</button>
+            <button class="btn btn-sm" onclick="ccCallbackReschedule(${aiJsAttr(t.id)})"
+              title="קבע ניסיון נוסף">מועד אחר</button>
+            ${t.clientId ? `<button class="btn btn-sm" onclick="ccOpenClient(${aiJsAttr(t.clientId)})">לקוח</button>` : ''}
+            ${cb.sourceCallId ? `<button class="btn btn-sm" onclick="ccOpenCall(${aiJsAttr(cb.sourceCallId)})">שיחה</button>` : ''}
+            <button class="btn btn-sm btn-danger" onclick="ccCallbackSet(${aiJsAttr(t.id)},'cancelled')"
+              title="בוטל">⊘</button>
+          </div>
+        </td>` : ''}
+      </tr>`;
+    }).join('')}</tbody>
+  </table>`;
+}
+
+/**
+ * עדכון סטטוס.
+ *
+ * ⚠ עובר דרך שכבת הפקודות בשרת ולא דרך saveDB בדפדפן. בקשת חזרה
+ * עשויה להתעדכן גם ע"י הסוכן (שיחה חוזרת מאותו מספר) וגם ע"י אדם
+ * באותו רגע; שני נתיבי כתיבה לאותו שדה הם בדיוק המקום שבו "סימנתי
+ * שחזרתי" נמחק בשקט.
+ */
+async function ccCallbackSet(taskId, status, extra) {
+  try {
+    await aiInvoke('call-center', Object.assign({
+      action: 'callback.update', task_id: taskId, status,
+    }, extra || {}));
+    await loadDB();
+    notify(status === 'completed' ? 'סומן כטופל ✓' : 'עודכן ✓');
+    renderCallCenter();
+  } catch (e) {
+    notify((e && e.message) || 'העדכון נכשל');
+  }
+}
+
+async function ccCallbackReschedule(taskId) {
+  const when = await aiPrompt('מתי לחזור? (טקסט חופשי — למשל "מחר אחרי 16:00")', '');
+  if (when === null) return;
+  await ccCallbackSet(taskId, 'reschedule', { preferred_time: when });
+}
+
+// ============================================================
+// ביצועים
+// ============================================================
+//
+// ⚠ P50 ו-P95 ולא ממוצע בלבד. בשיחה קולית הזנב הוא הבעיה: ממוצע של
+// 1.4 שניות נשמע מצוין גם כשאחת מכל עשרים שיחות ממתינה שש שניות —
+// וזו השיחה שבה המתקשר מנתק.
+
+const CC_LATENCY_TARGETS = { good: 1500, ok: 2500 };
+
+function ccLatencyClass(ms) {
+  const n = Number(ms) || 0;
+  if (!n) return 'cc-s-idle';
+  if (n <= CC_LATENCY_TARGETS.good) return 'cc-s-online';
+  if (n <= CC_LATENCY_TARGETS.ok) return 'cc-s-degraded';
+  return 'cc-s-offline';
+}
+
+function ccMs(v) {
+  const n = Number(v);
+  if (!isFinite(n) || !n) return '—';
+  return n >= 1000 ? `${(n / 1000).toFixed(1)} שנ׳` : `${Math.round(n)} ms`;
+}
+
+async function ccRenderPerformance(host) {
+  const days = ccPerfDays;
+  const m = await aiInvoke('call-center', { action: 'metrics', days });
+
+  if (!m.turns) {
+    host.innerHTML = ccEmpty('אין נתוני ביצועים',
+      'מדדים נאספים לכל תור שיחה. הרץ שיחת בדיקה כדי לראות אותם.',
+      `<button class="btn btn-primary" style="margin-top:12px" onclick="ccNav('simulator')">▶ מצב בדיקה</button>`);
+    return;
+  }
+
+  const row = (label, avg, p95, hint) => `
+    <div class="cc-status">
+      <div class="cc-status-label">${escapeHtml(label)}</div>
+      <div class="cc-status-value ${ccLatencyClass(avg)}">${escapeHtml(ccMs(avg))}</div>
+      <div class="cc-status-detail">${p95 != null ? `P95: ${escapeHtml(ccMs(p95))}` : ''}
+        ${hint ? '<br>' + escapeHtml(hint) : ''}</div>
+    </div>`;
+
+  host.innerHTML = `
+    <div class="cc-filters">
+      <select class="form-input" onchange="ccPerfSetDays(this.value)">
+        ${[1, 7, 30].map(d => `<option value="${d}"${d === days ? ' selected' : ''}>${d} ימים אחרונים</option>`).join('')}
+      </select>
+      <span class="cc-muted">${m.turns} תורות נמדדו</span>
+    </div>
+
+    <div class="ai-section-title">זמן תגובה כולל</div>
+    <div class="cc-muted" style="margin-bottom:8px">
+      מרגע שהמתקשר סיים לדבר ועד ששמע את תחילת התשובה. זה המספר שהאדם בקו מרגיש.
+    </div>
+    <div class="cc-status-grid">
+      ${row('ממוצע', m.turn_avg_ms, null)}
+      ${row('חציון (P50)', m.turn_p50_ms, null, 'מחצית מהתורות מהירים מזה')}
+      ${row('P95', m.turn_p95_ms, null, 'הזנב — כאן מנתקים')}
+      ${row('הפרעות', m.interruptions, null, 'מתקשר שקטע את הסוכנת')}
+    </div>
+
+    <div class="ai-section-title" style="margin-top:20px">פירוק לפי שלב</div>
+    <div class="cc-status-grid">
+      ${row('תמלול (STT)', m.stt_avg_ms, m.stt_p95_ms)}
+      ${row('מנוע שפה — טוקן ראשון', m.llm_first_token_avg_ms, null)}
+      ${row('מנוע שפה — סה"כ', m.llm_avg_ms, m.llm_p95_ms)}
+      ${row('כלים', m.tool_avg_ms, m.tool_p95_ms)}
+      ${row('הקראה — אודיו ראשון', m.tts_first_audio_avg_ms, null)}
+      ${row('הקראה — סה"כ', m.tts_avg_ms, null)}
+    </div>
+
+    <div class="alert alert-info" style="margin-top:16px">
+      <strong>יעד:</strong> זמן תגובה מתחת ל-1.5 שניות נשמע טבעי. מעל 2.5 שניות
+      מתקשרים מתחילים לדבר שוב מתוך הנחה שהקו נפל.
+      ${(m.tts_avg_ms == null && m.stt_avg_ms == null) ? `<div style="margin-top:6px">
+        שלבי התמלול וההקראה אינם נמדדים כרגע — הם רצים בשרת הקול, שטרם חובר.</div>` : ''}
+    </div>`;
+}
+
+let ccPerfDays = 7;
+function ccPerfSetDays(v) { ccPerfDays = Number(v) || 7; renderCallCenter(); }
 
 // ============================================================
 // היסטוריית שיחות
@@ -525,11 +856,16 @@ async function ccRefreshCallDetail() {
   if (!body) return;
 
   try {
-    const [callRes, evRes, segRes, actRes] = await Promise.all([
+    const [callRes, evRes, segRes, actRes, metRes] = await Promise.all([
       aiSb().from('call_sessions').select('*').eq('id', callId).maybeSingle(),
       aiSb().from('call_events').select('*').eq('call_id', callId).order('occurred_at'),
       aiSb().from('call_transcript_segments').select('*').eq('call_id', callId).order('sequence'),
       aiSb().from('call_actions').select('*').eq('call_id', callId).order('started_at'),
+      // מדדי השהיה לכל תור. .then(r=>r,()=>...) כי המיגרציה עשויה טרם
+      // לרוץ — ומסך שיחה שלא נפתח בגלל טבלת מדדים חסרה הוא תקלה גרועה
+      // בהרבה מהיעדר המדדים עצמם.
+      aiSb().from('call_turn_metrics').select('*').eq('call_id', callId)
+        .order('turn_index').then(r => r, () => ({ data: [] })),
     ]);
     if (callRes.error) throw callRes.error;
     const call = callRes.data;
@@ -538,15 +874,17 @@ async function ccRefreshCallDetail() {
     document.getElementById('cc-detail-title').textContent =
       `שיחה · ${ccCallerLabel(call)}`;
 
-    body.innerHTML = ccCallDetailHtml(call, evRes.data || [], segRes.data || [], actRes.data || []);
+    body.innerHTML = ccCallDetailHtml(call, evRes.data || [], segRes.data || [],
+      actRes.data || [], metRes.data || []);
     ccStartTimers();
   } catch (e) {
     body.innerHTML = ccError((e && e.message) || String(e), e);
   }
 }
 
-function ccCallDetailHtml(call, events, segments, actions) {
+function ccCallDetailHtml(call, events, segments, actions, metrics) {
   const failed = actions.filter(a => a.status === 'failed' || a.status === 'blocked');
+  metrics = metrics || [];
 
   return `
     <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:14px">
@@ -555,6 +893,7 @@ function ccCallDetailHtml(call, events, segments, actions) {
       ${call.category ? `<span class="badge badge-pending">${escapeHtml(call.category)}</span>` : ''}
       ${call.sentiment ? `<span class="badge badge-closed">רגש: ${escapeHtml(CC_SENTIMENT_HE[call.sentiment] || call.sentiment)}</span>` : ''}
       ${call.is_simulation ? '<span class="badge badge-closed">שיחת בדיקה</span>' : ''}
+      ${ccIdentityBadge(call)}
       <span style="margin-right:auto" class="cc-muted">
         ${aiFmtDate(call.started_at)} · משך <span class="cc-num">${
           CC_ACTIVE_STATUSES.includes(call.status)
@@ -570,7 +909,10 @@ function ccCallDetailHtml(call, events, segments, actions) {
           <div>מספר: ${Phone(call.caller_phone)}</div>
           <div>יעד: ${Phone(call.called_phone)}</div>
           <div>כיוון: ${call.direction === 'outbound' ? 'יוצאת' : 'נכנסת'}</div>
+          <div>זיהוי: ${escapeHtml(CC_IDENTITY_HE[call.identity_status] || call.identity_status || '—')}</div>
         </div>
+        ${call.identity_status === 'phone_match' ? `<div class="cc-muted" style="margin-top:6px">
+          ⚠ המספר תואם ללקוח אך הזהות לא אומתה. הסוכנת לא מסרה פרטי תיק.</div>` : ''}
         <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
           ${call.client_id ? `<button class="btn btn-sm" onclick="ccOpenClient(${aiJsAttr(call.client_id)})">פתח כרטיס לקוח</button>` : ''}
           ${call.matter_id ? `<button class="btn btn-sm" onclick="ccOpenCase(${aiJsAttr(call.matter_id)})">פתח תיק</button>` : ''}
@@ -595,8 +937,17 @@ function ccCallDetailHtml(call, events, segments, actions) {
     <div class="two-col">
       <div class="card">
         <div class="card-title">ציר זמן</div>
-        ${events.length ? `<div class="cc-timeline">${events.map(ccTimelineItem).join('')}</div>`
-          : '<div class="cc-muted">אין אירועים.</div>'}
+        ${(() => {
+          const shown = ccShowVerbose ? events : events.filter(e => !CC_VERBOSE_EVENTS.has(e.event_type));
+          const hidden = events.length - shown.length;
+          return (shown.length
+            ? `<div class="cc-timeline">${shown.map(ccTimelineItem).join('')}</div>`
+            : '<div class="cc-muted">אין אירועים.</div>') +
+            (hidden > 0 || ccShowVerbose
+              ? `<div style="margin-top:8px"><button class="btn btn-sm" onclick="ccToggleVerbose()">
+                  ${ccShowVerbose ? 'הצג רק אירועים מרכזיים' : `הצג ${hidden} אירועים טכניים`}</button></div>`
+              : '');
+        })()}
       </div>
       <div class="card">
         <div class="card-title">פעולות שבוצעו</div>
@@ -607,11 +958,91 @@ function ccCallDetailHtml(call, events, segments, actions) {
       </div>
     </div>
 
+    ${ccMetricsCard(call, metrics)}
+
     <div class="card" style="margin-top:14px">
       <div class="card-title">תמלול השיחה</div>
       ${segments.length ? ccTranscriptHtml(segments, actions)
         : '<div class="cc-muted">אין תמלול לשיחה זו.</div>'}
     </div>`;
+}
+
+function ccIdentityBadge(call) {
+  const st = call.identity_status || 'unidentified';
+  const cls = st === 'verified' ? 'active' : st === 'rejected' ? 'urgent' : 'pending';
+  return `<span class="badge badge-${cls}">${escapeHtml(CC_IDENTITY_HE[st] || st)}</span>`;
+}
+
+/**
+ * מדדי ההשהיה ותצורת הסוכן.
+ *
+ * ⚠ התצורה מוצגת מה-snapshot שנשמר על השיחה ולא מהסוכן הנוכחי. prompt
+ * שהשתנה בצהריים לא משנה למפרע את מה ששיחה של הבוקר התנהלה לפיו — וזו
+ * בדיוק השאלה שנשאלת כשמישהו מתלונן על משהו שהמזכירה אמרה.
+ */
+function ccMetricsCard(call, metrics) {
+  const hasMetrics = metrics && metrics.length;
+  const hasConfig = call.prompt_hash || call.llm_provider;
+  if (!hasMetrics && !hasConfig) return '';
+
+  return `<div class="two-col" style="margin-top:14px">
+    ${hasMetrics ? `<div class="card">
+      <div class="card-title">זמני תגובה</div>
+      <div class="cc-muted" style="margin-bottom:8px">
+        ממוצע ${escapeHtml(ccMs(call.avg_turn_latency_ms))} · שיא ${escapeHtml(ccMs(call.max_turn_latency_ms))}
+        ${call.interruptions_count ? ` · ${call.interruptions_count} הפרעות` : ''}
+      </div>
+      <table class="data-table">
+        <thead><tr><th>תור</th><th>תמלול</th><th>מודל</th><th>כלים</th><th>הקראה</th><th>סה"כ</th></tr></thead>
+        <tbody>${metrics.map(m => `<tr>
+          <td>${m.turn_index + 1}${m.interrupted ? ' ⚡' : ''}</td>
+          <td>${escapeHtml(ccMs(m.stt_latency_ms))}</td>
+          <td>${escapeHtml(ccMs(m.llm_total_ms))}</td>
+          <td>${escapeHtml(ccMs(m.tool_latency_ms))}</td>
+          <td>${escapeHtml(ccMs(m.tts_first_audio_ms))}</td>
+          <td class="${ccLatencyClass(m.turn_latency_ms)}"><b>${escapeHtml(ccMs(m.turn_latency_ms))}</b></td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>` : '<div></div>'}
+
+    ${hasConfig ? `<div class="card">
+      <div class="card-title">תצורת הסוכן בשיחה זו</div>
+      <div class="cc-muted" style="margin-bottom:8px">
+        נשמר בתחילת השיחה. שינוי הגדרות מאוחר יותר אינו משנה את הרשומה הזו.
+      </div>
+      <table class="data-table"><tbody>
+        ${ccCfgRow('מנוע שפה', call.llm_provider, call.llm_model)}
+        ${ccCfgRow('תמלול', call.stt_provider, call.stt_model)}
+        ${ccCfgRow('הקראה', call.tts_provider, call.tts_model)}
+        ${ccCfgRow('גרסת הנחיות', call.prompt_hash, '')}
+        ${ccCfgRow('גרסת הרשאות כלים', call.tools_policy_version, '')}
+      </tbody></table>
+      ${call.tags && call.tags.length ? `<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
+        ${call.tags.map(t => `<span class="badge badge-closed">${escapeHtml(t)}</span>`).join('')}
+      </div>` : ''}
+      ${call.post_call_status === 'pending' || call.post_call_status === 'processing'
+        ? '<div class="cc-muted" style="margin-top:8px">⏳ הסיכום המלא בהכנה…</div>' : ''}
+      ${call.post_call_status === 'failed'
+        ? `<div class="cc-action-reason" style="margin-top:8px">עיבוד הסיכום נכשל: ${escapeHtml(call.post_call_error || '')}
+           <button class="btn btn-sm" onclick="ccRetryPostCall(${aiJsAttr(call.id)})">נסה שוב</button></div>` : ''}
+    </div>` : '<div></div>'}
+  </div>`;
+}
+
+function ccCfgRow(label, value, sub) {
+  if (!value) return '';
+  return `<tr><td>${escapeHtml(label)}</td>
+    <td><b>${escapeHtml(String(value))}</b>${sub ? ` <span class="cc-muted">${escapeHtml(String(sub))}</span>` : ''}</td></tr>`;
+}
+
+function ccToggleVerbose() { ccShowVerbose = !ccShowVerbose; ccRefreshCallDetail(); }
+
+async function ccRetryPostCall(callId) {
+  try {
+    await aiInvoke('call-center', { action: 'call.postprocess', call_id: callId });
+    notify('העיבוד הורץ מחדש ✓');
+    await ccRefreshCallDetail();
+  } catch (e) { notify((e && e.message) || 'הפעולה נכשלה'); }
 }
 
 function ccTimelineItem(ev) {
@@ -1187,6 +1618,8 @@ async function ccStatus(force) {
 async function ccRenderSystem(host) {
   const st = await ccStatus(true);
   const c = st.components || {};
+  const r = st.readiness || { ready: false, blocking_reasons: [], warnings: [], checks: [] };
+  const isOwner = currentRole === 'owner';
 
   const card = (label, comp, hint) => {
     const state = (comp && comp.state) || 'unknown';
@@ -1194,11 +1627,18 @@ async function ccRenderSystem(host) {
       connected: ['🟢', 'מחובר', 'cc-s-online'],
       online: ['🟢', 'מחובר', 'cc-s-online'],
       live: ['🟢', 'פעיל', 'cc-s-online'],
+      configured: ['🟢', 'מוגדר', 'cc-s-online'],
+      registered: ['🟢', 'רשום', 'cc-s-online'],
       degraded: ['🟡', 'לא יציב', 'cc-s-degraded'],
       never_connected: ['🟡', 'טרם חובר', 'cc-s-degraded'],
-      not_configured: ['🟡', 'לא מוגדר', 'cc-s-degraded'],
-      mock: ['🟡', 'מצב הדגמה', 'cc-s-mock'],
+      not_configured: ['🔴', 'לא מוגדר', 'cc-s-offline'],
+      // ⚠ Mock מסומן אדום ולא צהוב. הוא בריא לחלוטין — ואם מחברים
+      // אליו מספר אמיתי, הלקוח לא שומע דבר. זה חוסם, ולכן הוא נראה
+      // כמו חוסם.
+      mock: ['🔴', 'מצב הדגמה', 'cc-s-offline'],
+      skeleton: ['🔴', 'שלד בלבד', 'cc-s-offline'],
       offline: ['🔴', 'מנותק', 'cc-s-offline'],
+      failed: ['🔴', 'נכשל', 'cc-s-offline'],
       error: ['🔴', 'שגיאה', 'cc-s-error'],
     };
     const [icon, text, cls] = map[state] || ['⚪', state, 'cc-s-idle'];
@@ -1210,8 +1650,52 @@ async function ccRenderSystem(host) {
   };
 
   const sc = st.server_config || {};
+  const s2 = st.settings || {};
 
   host.innerHTML = `
+    <!-- ============ מוכנות לייצור ============ -->
+    <div class="card ${r.ready ? '' : 'ai-emergency'}" style="margin-bottom:16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <div>
+          <div style="font-size:18px;font-weight:700;color:${r.ready ? 'var(--success)' : 'var(--warning)'}">
+            ${r.ready ? '🟢 מוכן לקבלת שיחות אמיתיות' : '🟡 עדיין לא מוכן ל-Production'}
+          </div>
+          <div class="cc-muted" style="margin-top:4px">
+            ${r.checks.filter(x => x.severity === 'ok').length} מתוך ${r.checks.length} רכיבים תקינים
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn" onclick="ccRunReadiness()">↻ בדיקת מוכנות מלאה</button>
+          ${isOwner ? ccLiveCallsButton(s2, r) : ''}
+        </div>
+      </div>
+
+      <div class="progress-wrap" style="margin-top:12px">
+        <div class="progress-fill" style="width:${r.progress || 0}%;
+          background:${r.ready ? 'var(--success)' : 'var(--warning)'}"></div>
+      </div>
+
+      ${r.blocking_reasons.length ? `<div style="margin-top:12px">
+        <div style="font-size:12px;font-weight:700;color:var(--danger);margin-bottom:6px">חסמים</div>
+        ${r.blocking_reasons.map(x => `<div class="cc-action cc-action-fail">
+          <div class="cc-action-icon">🔴</div>
+          <div class="cc-action-body">${escapeHtml(x)}</div></div>`).join('')}
+      </div>` : ''}
+
+      ${r.warnings.length ? `<div style="margin-top:12px">
+        <div style="font-size:12px;font-weight:700;color:var(--warning);margin-bottom:6px">אזהרות</div>
+        ${r.warnings.map(x => `<div class="cc-action cc-action-blocked">
+          <div class="cc-action-icon">⚠</div>
+          <div class="cc-action-body">${escapeHtml(x)}</div></div>`).join('')}
+      </div>` : ''}
+
+      ${s2.live_calls_enabled ? `<div class="alert alert-success" style="margin-top:12px">
+        המערכת מקבלת שיחות אמיתיות מאז ${aiFmtDate(s2.live_calls_enabled_at)}.</div>` : ''}
+      <div id="cc-readiness-result"></div>
+    </div>
+
+    <!-- ============ רכיבים ============ -->
+    <div class="ai-section-title">רכיבי המערכת</div>
     <div class="cc-status-grid">
       ${card('CRM API', c.crm_api)}
       ${card('Supabase', c.supabase)}
@@ -1223,14 +1707,36 @@ async function ccRenderSystem(host) {
       ${card('הקראה (TTS)', c.tts)}
     </div>
 
+    <!-- ============ יכולות הספקים ============ -->
+    ${ccProviderTable(st.providers || {})}
+
+    <!-- ============ סנכרון ============ -->
+    <div class="card" style="margin-top:16px">
+      <div class="card-title">סנכרון פעולות</div>
+      <div class="cc-muted" style="margin-bottom:8px">
+        פעולות שנוצרו בשיחה נשמרות בשרת הקול עד שה-CRM מאשר אותן. פעולה שמיצתה את
+        כל הניסיונות מופיעה כאן — היא לא נעלמת.
+      </div>
+      <div class="cc-status-grid">
+        ${card('ממתינות לסנכרון',
+          { state: (c.voice_gateway && c.voice_gateway.outbox_pending) ? 'degraded' : 'connected',
+            detail: `${(c.voice_gateway && c.voice_gateway.outbox_pending) || 0} פעולות` })}
+        ${card('לא סונכרנו',
+          { state: st.dead_letters ? 'error' : 'connected',
+            detail: `${st.dead_letters || 0} פעולות` })}
+      </div>
+      <div id="cc-deadletters" style="margin-top:12px"></div>
+    </div>
+
+    <!-- ============ המספר ============ -->
     <div class="card" style="margin-top:16px">
       <div class="card-title">המספר הציבורי</div>
       <div style="font-size:22px;font-weight:700;color:var(--navy)" class="cc-num">
         ${escapeHtml(ccFormatPhone(st.phone))}</div>
       <div class="cc-muted" style="margin-top:6px">
-        ${c.sip && c.sip.state === 'not_configured'
-          ? 'ממתין להגדרת ספק טלפוניה. שיחות אמיתיות אינן מתקבלות עדיין.'
-          : 'הקו מוגדר.'}
+        ${escapeHtml(st.phone || '')} · ${(c.sip && c.sip.state === 'registered')
+          ? 'הקו רשום אצל הספק.'
+          : 'ממתין להגדרת ספק טלפוניה. שיחות אמיתיות אינן מתקבלות עדיין.'}
       </div>
       ${(st.lines || []).length ? `<table class="data-table" style="margin-top:12px">
         <thead><tr><th>מספר</th><th>תיאור</th><th>ספק</th><th>מצב ספק</th><th>מצב קו</th><th>פעיל</th></tr></thead>
@@ -1244,25 +1750,193 @@ async function ccRenderSystem(host) {
         </tr>`).join('')}</tbody></table>` : ''}
     </div>
 
+    <!-- ============ הגדרות שרת ============ -->
     <div class="card" style="margin-top:14px">
       <div class="card-title">הגדרות שרת</div>
       <div class="cc-muted" style="margin-bottom:8px">
         מוצג רק האם הערך מוגדר. שום סוד אינו נשלח לדפדפן.
       </div>
-      <table class="data-table">
-        <tbody>
-          ${ccConfigRow('סוד חתימה לשרת הקול (VOICE_GATEWAY_SECRET)', sc.voice_gateway_secret,
-            'בלעדיו שרת הקול לא יוכל להתחבר כלל')}
-          ${ccConfigRow('כתובת שרת הקול (VOICE_GATEWAY_URL)', Boolean(sc.voice_gateway_url), '')}
-          ${ccConfigRow('מפתח מנוע השפה (ANTHROPIC_API_KEY)', sc.anthropic_key,
-            'בלעדיו המערכת עובדת במצב הדגמה')}
-          ${ccConfigRow('מספר העברה לנציג', Boolean(st.settings && st.settings.human_transfer_number),
-            'בלעדיו נוצרת משימת חזרה במקום העברה')}
-          ${ccConfigRow('הקלטת שיחות', Boolean(st.settings && st.settings.recording_enabled),
-            'כבוי כברירת מחדל, במכוון', true)}
-        </tbody>
-      </table>
+      <table class="data-table"><tbody>
+        ${ccConfigRow('סוד חתימה לשרת הקול (VOICE_GATEWAY_SECRET)', sc.voice_gateway_secret,
+          'בלעדיו שרת הקול לא יוכל להתחבר כלל')}
+        ${ccConfigRow('כתובת שרת הקול (VOICE_GATEWAY_URL)', Boolean(sc.voice_gateway_url), '')}
+        ${ccConfigRow('מפתח מנוע השפה (ANTHROPIC_API_KEY)', sc.anthropic_key,
+          'בלעדיו המערכת עובדת במצב הדגמה')}
+        ${ccConfigRow('ערוץ אודיו', Boolean(c.voice_gateway && c.voice_gateway.transport),
+          escapeHtml((c.voice_gateway && c.voice_gateway.transport) || 'לא דווח'))}
+        ${ccConfigRow('הקלטת שיחות', Boolean(s2.recording_enabled),
+          'כבוי כברירת מחדל, במכוון', true)}
+      </tbody></table>
     </div>`;
+
+  ccLoadDeadLetters();
+}
+
+/**
+ * מתג השיחות האמיתיות.
+ *
+ * ⚠ חסום כשהמערכת אינה מוכנה, ולא רק מוצג באפור: הפעלה על מערכת עם
+ * TTS במצב הדגמה פירושה שהמתקשר הראשון לא ישמע דבר. השרת חוסם גם הוא
+ * (live_calls.set מחזיר 409) — הכפילות מכוונת.
+ */
+function ccLiveCallsButton(settings, readiness) {
+  if (settings.live_calls_enabled) {
+    return `<button class="btn btn-danger" onclick="ccSetLiveCalls(false)">
+      ⏸ הפסק קבלת שיחות אמיתיות</button>`;
+  }
+  if (!readiness.ready) {
+    return `<button class="btn" disabled
+      title="לא ניתן להפעיל כל עוד קיימים חסמים">🔒 אפשר שיחות אמיתיות</button>`;
+  }
+  return `<button class="btn btn-primary" onclick="ccSetLiveCalls(true)">
+    ▶ אפשר שיחות אמיתיות</button>`;
+}
+
+async function ccSetLiveCalls(enabled) {
+  const ok = await customConfirm(
+    enabled
+      ? 'להפעיל קבלת שיחות אמיתיות? מרגע זה המזכירה הדיגיטלית תענה למתקשרים.'
+      : 'להפסיק קבלת שיחות אמיתיות? שיחות נכנסות לא ייענו ע"י המזכירה.',
+    { title: enabled ? 'הפעלת שיחות אמיתיות' : 'הפסקת שיחות', okText: 'אישור',
+      danger: !enabled });
+  if (!ok) return;
+
+  try {
+    const res = await aiInvoke('call-center', { action: 'live_calls.set', enabled });
+    if (res && res.ok === false) {
+      notify(res.error || 'לא ניתן להפעיל');
+    } else {
+      notify(enabled ? '🟢 שיחות אמיתיות מופעלות' : 'שיחות אמיתיות הופסקו');
+    }
+  } catch (e) {
+    notify((e && e.message) || 'הפעולה נכשלה');
+  }
+  ccStatusCache = null;
+  renderCallCenter();
+}
+
+async function ccRunReadiness() {
+  const el = document.getElementById('cc-readiness-result');
+  if (el) el.innerHTML = '<div class="cc-muted" style="margin-top:10px">בודק…</div>';
+  try {
+    const r = await aiInvoke('call-center', { action: 'readiness' });
+    if (el) {
+      el.innerHTML = `<div style="margin-top:12px">
+        <div class="ai-section-title">תוצאות הבדיקה</div>
+        ${r.checks.map(x => {
+          const icon = x.severity === 'ok' ? '✅' : x.severity === 'warning' ? '⚠️' : '🔴';
+          const cls = x.severity === 'ok' ? 'cc-action-ok'
+            : x.severity === 'warning' ? 'cc-action-blocked' : 'cc-action-fail';
+          return `<div class="cc-action ${cls}">
+            <div class="cc-action-icon">${icon}</div>
+            <div class="cc-action-body">
+              <b>${escapeHtml(x.label)}</b>
+              <div class="cc-muted">${escapeHtml(x.detail)}</div>
+            </div></div>`;
+        }).join('')}
+      </div>`;
+    }
+    ccStatusCache = null;
+  } catch (e) {
+    if (el) el.innerHTML = `<div class="alert alert-danger" style="margin-top:10px">
+      ${escapeHtml((e && e.message) || String(e))}</div>`;
+  }
+}
+
+/** יכולות הספקים — מה אפשרי, לא רק מה מחובר. */
+function ccProviderTable(providers) {
+  const keys = Object.keys(providers);
+  if (!keys.length) return '';
+  const yn = v => v === true ? '✓' : v === false ? '—' : '?';
+  return `<div class="card" style="margin-top:16px">
+    <div class="card-title">יכולות הספקים</div>
+    <div class="cc-muted" style="margin-bottom:8px">
+      <b>פעיל</b> פירושו שהשירות מגיב. <b>מוכן לייצור</b> פירושו שאפשר לענות איתו
+      לטלפון של לקוח. אלה שני דברים שונים.
+    </div>
+    <table class="data-table">
+      <thead><tr><th>רכיב</th><th>ספק</th><th>מצב</th><th>פעיל</th><th>מוכן לייצור</th>
+        <th>עברית</th><th>זרימה</th><th>הפרעה</th><th>השהיה</th></tr></thead>
+      <tbody>${keys.map(k => {
+        const p = providers[k] || {};
+        return `<tr>
+          <td><b>${escapeHtml(k.toUpperCase())}</b></td>
+          <td>${escapeHtml(p.name || '—')}</td>
+          <td>${escapeHtml(p.mode === 'mock' ? 'הדגמה' : p.mode === 'skeleton' ? 'שלד' : 'אמיתי')}</td>
+          <td>${p.healthy === false ? '🔴' : '🟢'}</td>
+          <td>${p.production_ready ? '🟢' : '🔴'}</td>
+          <td>${yn(p.supports_hebrew)}</td>
+          <td>${yn(p.supports_streaming)}</td>
+          <td>${yn(p.supports_barge_in)}</td>
+          <td>${p.average_latency_ms ? escapeHtml(ccMs(p.average_latency_ms)) : '—'}</td>
+        </tr>${p.message ? `<tr><td colspan="9" class="cc-muted"
+          style="padding-top:0">${escapeHtml(p.message)}</td></tr>` : ''}`;
+      }).join('')}</tbody>
+    </table>
+  </div>`;
+}
+
+/**
+ * פעולות שלא סונכרנו.
+ *
+ * ⚠ המפרט אוסר לאבד פעולה בשקט. כל שורה כאן היא פנייה של לקוח שהמזכירה
+ * קיבלה ושלא נרשמה במערכת — היא חייבת להיות גלויה ולהיות ניתנת לטיפול.
+ */
+async function ccLoadDeadLetters() {
+  const host = document.getElementById('cc-deadletters');
+  if (!host) return;
+  try {
+    const { data, error } = await aiSb().from('voice_dead_letters')
+      .select('*').neq('status', 'resolved')
+      .order('created_at', { ascending: false }).limit(20);
+    if (error) throw error;
+    if (!data || !data.length) {
+      host.innerHTML = '<div class="cc-muted">כל הפעולות סונכרנו.</div>';
+      return;
+    }
+    const isOwner = currentRole === 'owner';
+    host.innerHTML = `<table class="data-table">
+      <thead><tr><th>מתי</th><th>פעולה</th><th>ניסיונות</th><th>שגיאה</th><th></th></tr></thead>
+      <tbody>${data.map(d => `<tr>
+        <td style="white-space:nowrap">${aiFmtDate(d.created_at)}</td>
+        <td><b>${escapeHtml(d.action || '—')}</b>
+          ${d.error_code ? `<div class="cc-muted">${escapeHtml(d.error_code)}</div>` : ''}</td>
+        <td>${d.attempt_count}</td>
+        <td style="max-width:320px" class="cc-action-reason">${escapeHtml(String(d.last_error || '').slice(0, 200))}</td>
+        <td style="white-space:nowrap">
+          <button class="btn btn-sm" onclick="ccDeadLetterDetails(${aiJsAttr(d.id)})">פרטים</button>
+          ${isOwner ? `<button class="btn btn-sm btn-success"
+            onclick="ccResolveDeadLetter(${aiJsAttr(d.id)})">סמן כטופל</button>` : ''}
+        </td>
+      </tr>`).join('')}</tbody></table>`;
+  } catch (e) {
+    host.innerHTML = '';
+  }
+}
+
+async function ccDeadLetterDetails(id) {
+  const { data } = await aiSb().from('voice_dead_letters').select('*').eq('id', id).maybeSingle();
+  if (!data) return;
+  await customAlert(
+    `פעולה: ${data.action}\n` +
+    `ניסיונות: ${data.attempt_count}\n` +
+    `שגיאה: ${data.last_error || '—'}\n` +
+    `מזהה שיחה: ${data.call_external_id || data.call_id || '—'}\n\n` +
+    `תוכן: ${JSON.stringify(data.payload || {}, null, 1).slice(0, 800)}`,
+    'פעולה שלא סונכרנה');
+}
+
+async function ccResolveDeadLetter(id) {
+  const ok = await customConfirm(
+    'לסמן את הפעולה כטופלה? ודא שהפנייה נרשמה במערכת באופן ידני.',
+    { title: 'סימון כטופל', okText: 'סמן' });
+  if (!ok) return;
+  try {
+    await aiInvoke('call-center', { action: 'deadletter.resolve', id });
+    notify('סומן כטופל ✓');
+    ccStatusCache = null;
+    renderCallCenter();
+  } catch (e) { notify((e && e.message) || 'הפעולה נכשלה'); }
 }
 
 function ccConfigRow(label, on, hint, offIsOk) {
@@ -1293,46 +1967,130 @@ function ccFormatPhone(p) {
 async function ccRenderSettings(host) {
   const st = await ccStatus(true);
   const s = st.settings || {};
+  const p = st.providers || {};
   const isOwner = currentRole === 'owner';
+  const ro = isOwner ? '' : 'disabled';
 
   host.innerHTML = `
+    <!-- ============ טלפוניה ============ -->
     <div class="card" style="margin-bottom:14px">
       <div class="card-title">טלפוניה</div>
       <div class="form-row">
         <div class="form-group">
           <label class="form-label">המספר הציבורי של המשרד</label>
           <input class="form-input cc-num" id="cc-set-phone" dir="ltr"
-            value="${escapeHtml(st.phone || '')}" ${isOwner ? '' : 'disabled'}>
+            value="${escapeHtml(st.phone || '')}" ${ro}>
+          <div class="cc-muted" style="margin-top:5px">
+            נשמר בפורמט E.164 (למשל +972552745790). נרמול מתבצע אוטומטית בשמירה.
+          </div>
         </div>
         <div class="form-group">
           <label class="form-label">מספר העברה לנציג אנושי</label>
           <input class="form-input cc-num" id="cc-set-transfer" dir="ltr"
-            value="${escapeHtml(s.human_transfer_number || '')}" ${isOwner ? '' : 'disabled'}
-            placeholder="לא מוגדר">
+            value="${escapeHtml(s.human_transfer_number || '')}" ${ro} placeholder="לא מוגדר">
           <div class="cc-muted" style="margin-top:5px">
-            ⚠ אין להזין כאן את המספר הציבורי. אם השיחה מופנית ממנו אל המזכירה,
-            העברה חזרה אליו תיצור לולאת ניתוב. כל עוד השדה ריק — נוצרת משימת חזרה במקום העברה.
+            ⚠ החלטת המוצר היא ש<b>אין העברה חיה</b>. הסוכנת לוקחת הודעה ופותחת בקשת
+            חזרה. השדה נשאר לשימוש עתידי; אין להזין בו את המספר הציבורי — העברה
+            אליו תיצור לולאת ניתוב.
           </div>
         </div>
       </div>
       <div class="cc-muted">
-        ספק טלפוניה: ${escapeHtml(((st.components || {}).sip || {}).state === 'not_configured' ? 'לא מוגדר' : 'מוגדר')}
-        · חיבור SIP: ${escapeHtml(ccLineState((((st.lines || [])[0]) || {}).sip_status))}
+        ספק טלפוניה: ${escapeHtml(((st.components || {}).sip || {}).state === 'registered' ? 'רשום' : 'לא מוגדר')}
+        · מרכזייה: ${escapeHtml(((st.components || {}).asterisk || {}).state || '—')}
+        · ערוץ אודיו: ${escapeHtml(s.media_transport || '—')}
       </div>
     </div>
 
+    <!-- ============ מנועי ה-AI ============ -->
     <div class="card" style="margin-bottom:14px">
-      <div class="card-title">הקלטות ושמירת נתונים</div>
+      <div class="card-title">מנועי הקול</div>
+      <div class="cc-muted" style="margin-bottom:10px">
+        הספקים נקבעים בשרת הקול (משתני סביבה) ומדווחים כאן. מסך זה מציג את מה
+        ש<b>רץ בפועל</b>, לא את מה שהוגדר.
+      </div>
+      <table class="data-table">
+        <thead><tr><th>רכיב</th><th>ספק</th><th>מצב</th><th>מוכן לייצור</th></tr></thead>
+        <tbody>
+          ${['stt', 'llm', 'tts'].map(k => {
+            const pr = p[k] || {};
+            const label = { stt: 'תמלול (STT)', llm: 'מנוע שפה (LLM)', tts: 'הקראה (TTS)' }[k];
+            return `<tr>
+              <td><b>${label}</b></td>
+              <td>${escapeHtml(pr.name || 'לא דווח')}</td>
+              <td>${escapeHtml(pr.mode === 'mock' ? 'הדגמה' : pr.mode === 'skeleton' ? 'שלד' : 'אמיתי')}</td>
+              <td>${pr.production_ready ? '🟢 כן' : '🔴 לא'}
+                ${pr.message ? `<div class="cc-muted">${escapeHtml(pr.message)}</div>` : ''}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ============ התנהגות השיחה ============ -->
+    <div class="card" style="margin-bottom:14px">
+      <div class="card-title">התנהגות השיחה</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">משך שיחה מרבי (שניות)</label>
+          <input class="form-input" type="number" min="60" max="3600" id="cc-set-maxdur"
+            value="${Number(s.max_call_duration_seconds) || 600}" ${ro}>
+        </div>
+        <div class="form-group">
+          <label class="form-label">זמן שתיקה עד תגובה (מילישניות)</label>
+          <input class="form-input" type="number" min="2000" max="30000" step="500"
+            id="cc-set-silence" value="${Number(s.silence_timeout_ms) || 8000}" ${ro}>
+        </div>
+        <div class="form-group">
+          <label class="form-label">SLA לחזרה ללקוח (שעות)</label>
+          <input class="form-input" type="number" min="0" max="168" id="cc-set-sla"
+            value="${Number(s.callback_sla_hours) || 0}" ${ro}>
+          <div class="cc-muted" style="margin-top:4px">
+            0 = ללא התחייבות. ⚠ כל עוד הערך אפס, הסוכנת לא תבטיח זמן חזרה מדויק —
+            הבטחה שלא נשמרת גרועה מהיעדר הבטחה.
+          </div>
+        </div>
+      </div>
       <div class="ai-toggles">
-        <label class="ai-switch"><input type="checkbox" id="cc-set-recording"
-          ${s.recording_enabled ? 'checked' : ''} ${isOwner ? '' : 'disabled'}>
-          הקלטת שיחות</label>
+        <label class="ai-switch"><input type="checkbox" id="cc-set-bargein"
+          ${s.barge_in_enabled !== false ? 'checked' : ''} ${ro}>
+          אפשר למתקשר לקטוע את הסוכנת (barge-in)</label>
         <label class="ai-switch"><input type="checkbox" id="cc-set-ai"
-          ${s.ai_enabled !== false ? 'checked' : ''} ${isOwner ? '' : 'disabled'}>
+          ${s.ai_enabled !== false ? 'checked' : ''} ${ro}>
           המזכירה הדיגיטלית פעילה</label>
         <label class="ai-switch"><input type="checkbox" id="cc-set-sim"
-          ${s.simulation_enabled !== false ? 'checked' : ''} ${isOwner ? '' : 'disabled'}>
+          ${s.simulation_enabled !== false ? 'checked' : ''} ${ro}>
           מצב בדיקה זמין</label>
+      </div>
+    </div>
+
+    <!-- ============ זהות ============ -->
+    <div class="card" style="margin-bottom:14px">
+      <div class="card-title">זיהוי מתקשרים</div>
+      <div class="form-group">
+        <label class="form-label">מדיניות מסירת מידע</label>
+        <select class="form-input" id="cc-set-identity" ${ro}>
+          <option value="strict"${s.identity_policy === 'strict' ? ' selected' : ''}>
+            קפדנית — התאמת מספר אינה מספיקה למסירת פרטי תיק (מומלץ)</option>
+          <option value="phone_match_ok"${s.identity_policy === 'phone_match_ok' ? ' selected' : ''}>
+            מקלה — התאמת מספר מספיקה</option>
+        </select>
+        <div class="cc-muted" style="margin-top:6px">
+          ⚠ Caller ID אינו אימות זהות. טלפון אבוד, בן משפחה או זיוף מספר מייצרים
+          אותה התאמה בדיוק. במדיניות קפדנית הסוכנת פונה ללקוח בשמו אך אינה מוסרת
+          פרטי תיק.
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ פרטיות ============ -->
+    <div class="card" style="margin-bottom:14px">
+      <div class="card-title">פרטיות ושמירת נתונים</div>
+      <div class="ai-toggles">
+        <label class="ai-switch"><input type="checkbox" id="cc-set-recording"
+          ${s.recording_enabled ? 'checked' : ''} ${ro}> הקלטת שיחות</label>
+        <label class="ai-switch"><input type="checkbox" id="cc-set-transcript"
+          ${s.transcript_enabled !== false ? 'checked' : ''} ${ro}> שמירת תמלול</label>
       </div>
       <div class="alert alert-warning" style="margin-top:10px">
         הקלטת שיחה כפופה לחוק האזנת סתר ולכללי האתיקה. ההקלטה כבויה כברירת מחדל
@@ -1343,20 +2101,35 @@ async function ccRenderSettings(host) {
         <div class="form-group">
           <label class="form-label">שמירת תמלולים (ימים)</label>
           <input class="form-input" type="number" min="0" id="cc-set-ret-transcript"
-            value="${Number(s.transcript_retention_days) || 0}" ${isOwner ? '' : 'disabled'}>
+            value="${Number(s.transcript_retention_days) || 0}" ${ro}>
         </div>
         <div class="form-group">
           <label class="form-label">שמירת הקלטות (ימים)</label>
           <input class="form-input" type="number" min="0" id="cc-set-ret-recording"
-            value="${Number(s.recording_retention_days) || 0}" ${isOwner ? '' : 'disabled'}>
+            value="${Number(s.recording_retention_days) || 0}" ${ro}>
         </div>
         <div class="form-group">
           <label class="form-label">שמירת נתוני שיחה (ימים)</label>
           <input class="form-input" type="number" min="0" id="cc-set-ret-meta"
-            value="${Number(s.call_metadata_retention_days) || 0}" ${isOwner ? '' : 'disabled'}>
+            value="${Number(s.call_metadata_retention_days) || 0}" ${ro}>
         </div>
       </div>
-      <div class="cc-muted">0 = ללא מחיקה. בשלב זה אין מחיקה אוטומטית של נתונים — ההגדרה נשמרת בלבד.</div>
+      <div class="cc-muted">0 = ללא מחיקה. בשלב זה <b>אין מחיקה אוטומטית</b> —
+        ההגדרה נשמרת בלבד. מחיקת מידע בתיק משפטי דורשת כוונה מפורשת.</div>
+    </div>
+
+    <!-- ============ ייצור ============ -->
+    <div class="card ${s.live_calls_enabled ? '' : 'ai-emergency'}" style="margin-bottom:14px">
+      <div class="card-title">שיחות אמיתיות</div>
+      <div style="font-size:15px;font-weight:700;color:${s.live_calls_enabled ? 'var(--success)' : 'var(--text2)'}">
+        ${s.live_calls_enabled ? '🟢 מופעל' : '⚪ כבוי'}
+      </div>
+      <div class="cc-muted" style="margin-top:6px">
+        ⚠ גם כשכל התשתית מחוברת, קבלת שיחות אמיתיות אינה נדלקת מעצמה. ההפעלה
+        נעשית במסך "מצב מערכת" אחרי בדיקת מוכנות שעוברת.
+      </div>
+      <button class="btn" style="margin-top:10px" onclick="ccNav('system')">
+        עבור למצב מערכת ←</button>
     </div>
 
     ${isOwner ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
@@ -1368,18 +2141,28 @@ async function ccRenderSettings(host) {
     ${s.emergency_stop ? `<div class="alert alert-danger">
       <strong>המזכירה הדיגיטלית מושבתת.</strong> שיחות נכנסות לא יטופלו אוטומטית.</div>` : ''}
 
+    <!-- ============ בדיקות ============ -->
     <div class="card">
       <div class="card-title">בדיקות</div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn" onclick="ccRunTest('test.crm','cc-test-crm')">בדוק CRM API</button>
-        <button class="btn" onclick="ccRunTest('test.gateway','cc-test-gw')">בדוק שרת טלפוניה</button>
-        <button class="btn" onclick="ccRunTest('test.tools','cc-test-tools')">בדוק שער הכלים</button>
-        <button class="btn" onclick="ccRunTest('test.simulation','cc-test-sim')">הרץ שיחת בדיקה</button>
+      <div class="cc-muted" style="margin-bottom:10px">
+        כל בדיקה מריצה את הנתיב האמיתי. בדיקה של ספק במצב הדגמה נכשלת בכוונה —
+        "תקין" על מנוע שמחזיר שקט הוא בדיוק מה שגורם לחבר מספר אמיתי בביטחון מוטעה.
       </div>
-      <div id="cc-test-crm" style="margin-top:10px"></div>
-      <div id="cc-test-gw"></div>
-      <div id="cc-test-tools"></div>
-      <div id="cc-test-sim"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" onclick="ccRunTest('test.crm','cc-t-crm')">CRM API</button>
+        <button class="btn" onclick="ccRunTest('test.gateway','cc-t-gw')">שרת טלפוניה</button>
+        <button class="btn" onclick="ccRunTest('test.tools','cc-t-tools')">שער הכלים</button>
+        <button class="btn" onclick="ccRunTest('test.stt','cc-t-stt')">תמלול (STT)</button>
+        <button class="btn" onclick="ccRunTest('test.llm','cc-t-llm')">מנוע שפה (LLM)</button>
+        <button class="btn" onclick="ccRunTest('test.tts','cc-t-tts')">הקראה (TTS)</button>
+        <button class="btn" onclick="ccRunTest('test.simulation','cc-t-sim')">שיחת בדיקה</button>
+        <button class="btn btn-primary" onclick="ccRunTest('test.pipeline','cc-t-pipe')">
+          ▶ צינור מלא</button>
+      </div>
+      <div id="cc-t-crm" style="margin-top:10px"></div>
+      <div id="cc-t-gw"></div><div id="cc-t-tools"></div>
+      <div id="cc-t-stt"></div><div id="cc-t-llm"></div><div id="cc-t-tts"></div>
+      <div id="cc-t-sim"></div><div id="cc-t-pipe"></div>
     </div>`;
 }
 
@@ -1387,6 +2170,7 @@ async function ccSaveSettings() {
   const officeId = await aiOfficeId();
   const v = id => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
   const chk = id => { const el = document.getElementById(id); return el ? el.checked : false; };
+  const num = (id, def) => { const n = Number(v(id)); return isFinite(n) ? n : def; };
 
   const phone = v('cc-set-phone');
   const transfer = v('cc-set-transfer');
@@ -1400,23 +2184,48 @@ async function ccSaveSettings() {
 
   try {
     await aiUpdateChecked('call_center_settings', {
-      public_office_phone: phone || null,
-      human_transfer_number: transfer || null,
+      // נרמול ל-E.164 לפני שמירה: המספר הזה משמש להשוואה מול מספרי
+      // מתקשרים, וצורה לא קנונית פירושה שהשוואה תיכשל בשקט.
+      public_office_phone: ccToE164(phone) || phone || null,
+      human_transfer_number: ccToE164(transfer) || transfer || null,
       recording_enabled: chk('cc-set-recording'),
+      transcript_enabled: chk('cc-set-transcript'),
       ai_enabled: chk('cc-set-ai'),
       simulation_enabled: chk('cc-set-sim'),
-      transcript_retention_days: Math.max(0, Number(v('cc-set-ret-transcript')) || 0),
-      recording_retention_days: Math.max(0, Number(v('cc-set-ret-recording')) || 0),
-      call_metadata_retention_days: Math.max(0, Number(v('cc-set-ret-meta')) || 0),
+      barge_in_enabled: chk('cc-set-bargein'),
+      identity_policy: v('cc-set-identity') || 'strict',
+      max_call_duration_seconds: Math.max(60, num('cc-set-maxdur', 600)),
+      silence_timeout_ms: Math.max(2000, num('cc-set-silence', 8000)),
+      callback_sla_hours: Math.max(0, num('cc-set-sla', 0)),
+      transcript_retention_days: Math.max(0, num('cc-set-ret-transcript', 0)),
+      recording_retention_days: Math.max(0, num('cc-set-ret-recording', 0)),
+      call_metadata_retention_days: Math.max(0, num('cc-set-ret-meta', 0)),
     }, q => q.eq('office_id', officeId),
       'ההגדרות לא נשמרו — נדרשת הרשאת בעל משרד.');
 
-    // מסנכרן זמינות כלים (בעיקר transfer_call) מול ההגדרות החדשות.
     await aiInvoke('call-center', { action: 'settings.sync' });
     ccStatusCache = null;
     notify('ההגדרות נשמרו ✓');
     renderCallCenter();
   } catch (e) { notify((e && e.message) || 'השמירה נכשלה'); }
+}
+
+/**
+ * נרמול ל-E.164 בצד הלקוח.
+ *
+ * ⚠ מכוון להיות זהה ל-normalizePhoneNumber בשרת. הוא לא מחליף אותו —
+ * השרת מנרמל שוב — אבל בלעדיו המשתמש היה רואה בשדה מה שהקליד ומגלה
+ * רק אחר כך שנשמר משהו אחר.
+ */
+function ccToE164(raw) {
+  let s = String(raw || '').replace(/[\s\-().]/g, '');
+  if (!s) return '';
+  if (s.startsWith('00')) s = '+' + s.slice(2);
+  if (s.startsWith('+972')) s = '+972' + s.slice(4).replace(/^0+/, '');
+  else if (s.startsWith('972')) s = '+972' + s.slice(3).replace(/^0+/, '');
+  else if (s.startsWith('0')) s = '+972' + s.slice(1);
+  else if (!s.startsWith('+')) return '';
+  return /^\+\d{9,15}$/.test(s) ? s : '';
 }
 
 function ccSameNumber(a, b) {
@@ -1450,9 +2259,28 @@ async function ccRunTest(action, targetId) {
   if (el) el.innerHTML = '<div class="cc-muted">מריץ…</div>';
   try {
     const res = await aiInvoke('call-center', { action });
-    const cls = res.ok ? 'alert-success' : 'alert-warning';
-    const icon = res.ok ? '🟢' : '🟡';
+    // ⚠ NOT_PRODUCTION_READY מוצג אדום ולא צהוב. הבדיקה "עברה" טכנית
+    // והמערכת עדיין לא יכולה לענות לטלפון — צבע מרגיע כאן הוא בדיוק
+    // מה שגורם לחבר מספר אמיתי בביטחון מוטעה.
+    const blocking = res.code === 'NOT_PRODUCTION_READY';
+    const cls = res.ok ? 'alert-success' : blocking ? 'alert-danger' : 'alert-warning';
+    const icon = res.ok ? '🟢' : blocking ? '🔴' : '🟡';
     let extra = '';
+    if (res.stages && res.stages.length) {
+      extra += '<div style="margin-top:8px">' + res.stages.map(st =>
+        `<div class="cc-action ${st.ok ? 'cc-action-ok' : 'cc-action-fail'}">
+          <div class="cc-action-icon">${st.ok ? '✓' : '🔴'}</div>
+          <div class="cc-action-body"><b>${escapeHtml(st.stage)}</b>
+            <div class="cc-muted">${escapeHtml(st.detail)}${st.ms ? ` · ${ccMs(st.ms)}` : ''}</div>
+          </div></div>`).join('') + '</div>';
+    }
+    if (res.provider) {
+      extra += `<div class="cc-muted" style="margin-top:6px">
+        ספק: ${escapeHtml(res.provider.name || '?')} · מצב: ${escapeHtml(res.provider.mode || '?')}</div>`;
+    }
+    if (res.reply) {
+      extra += `<div style="margin-top:6px"><b>תשובה:</b> ${escapeHtml(res.reply)}</div>`;
+    }
     if (res.actions && res.actions.length) {
       extra = '<div style="margin-top:6px">' + res.actions.map(a =>
         `<div>${a.status === 'success' ? '✓' : '🔴'} ${escapeHtml(CC_TOOL_HE[a.tool] || a.tool)} — ${escapeHtml(a.message || '')}</div>`

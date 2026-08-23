@@ -14,6 +14,8 @@ from __future__ import annotations
 import abc
 from dataclasses import dataclass
 
+from ..capabilities import ProviderStatus
+
 
 @dataclass
 class InboundCall:
@@ -63,6 +65,9 @@ class TelephonyProvider(abc.ABC):
     async def test_connection(self) -> tuple[bool, str]:
         ...
 
+    def capabilities(self) -> ProviderStatus:
+        return ProviderStatus(type='telephony', name=self.name)
+
 
 class MockTelephonyProvider(TelephonyProvider):
     """אין מרכזייה מחוברת. מצהיר על עצמו ולא מתחזה."""
@@ -93,3 +98,7 @@ class MockTelephonyProvider(TelephonyProvider):
 
     async def test_connection(self) -> tuple[bool, str]:
         return False, "לא הוגדרה מרכזייה (ARI)"
+
+    def capabilities(self) -> ProviderStatus:
+        return ProviderStatus.mock(
+            'telephony', 'mock', 'לא הוגדרה מרכזייה — שיחות לא יתקבלו')

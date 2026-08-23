@@ -29,7 +29,13 @@ import type { CrmDb, CrmClient, CrmLead } from '../db.ts';
 // (שבו רצות הבדיקות) לא יכול לדעת זאת לבד — ייבוא רגיל נכשל בזמן ריצה
 // עם "does not provide an export named 'JsonSchema'".
 import { type JsonSchema, validate, ValidationError } from '../schema.ts';
-import { normalizePhone, samePhone, todayISO, addDaysISO, isoToHe } from '../security.ts';
+import { samePhone, todayISO, addDaysISO, isoToHe } from '../security.ts';
+import { normalizePhoneNumber } from './phone.ts';
+import { VoiceError } from './errors.ts';
+import {
+  applyOfficeCommand, buildIdempotencyKey, payloadFingerprint, supabaseCommandStore,
+  type CommandStore, type CommandType,
+} from './commands.ts';
 
 // ---------- טיפוסים ----------
 
@@ -60,6 +66,25 @@ export type VoiceToolCtx = {
   /** מרענן את ה-blob אחרי כתיבה, כדי שכלי הבא יראה את מה שקדם לו. */
   refresh: (db: CrmDb) => void;
   isSimulation: boolean;
+
+  // ---- מעטפת הפקודה ----
+  // ⚠ toolCallId הוא מה שמבדיל בין "המודל ביקש שוב את אותו דבר" (קריאה
+  // חדשה, מזהה חדש → פעולה חדשה ולגיטימית) לבין "אותה בקשה נשלחה
+  // פעמיים ברשת" (אותו מזהה → אותה פעולה). בלעדיו, מתקשר שביקש באמת
+  // שתי פגישות היה מקבל אחת.
+  toolCallId?: string | null;
+  agentId?: string | null;
+  schemaVersion?: string;
+  /** רישום הפקודות. חובה לכל כתיבה — ראה resolveCommandStore. */
+  commandStore?: CommandStore;
+
+  // ---- זהות ----
+  // ⚠ Caller ID אינו אימות. 'phone_match' אומר שהמספר מוכר, לא שזה
+  // האדם: טלפון אבוד, בן משפחה או זיוף Caller ID מייצרים אותה התאמה
+  // בדיוק. מסירת פרטי תיק דורשת 'verified'.
+  identityStatus?: 'unidentified' | 'phone_match' | 'verified' | 'rejected';
+  identityPolicy?: 'strict' | 'phone_match_ok';
+
   /**
    * איך כותבים ל-CRM, ואיך קוראים אותו מחדש.
    *
@@ -79,6 +104,11 @@ export type CallCenterSettings = {
   recording_enabled?: boolean;
   ai_enabled?: boolean;
   emergency_stop?: boolean;
+  // ⚠ 'strict' הוא ברירת המחדל: התאמת מספר לבדה אינה מספיקה כדי למסור
+  // פרטי תיק. ראה lookup_client.
+  identity_policy?: 'strict' | 'phone_match_ok';
+  live_calls_enabled?: boolean;
+  callback_sla_hours?: number;
 };
 
 export type VoiceToolDef = {
@@ -114,6 +144,70 @@ async function writeDb(ctx: VoiceToolCtx, mutate: (d: CrmDb) => void): Promise<C
   if (ctx.writeDb) return ctx.writeDb(mutate);
   const { saveOfficeDb } = await import('../db.ts');
   return saveOfficeDb(ctx.sb, ctx.officeId, mutate);
+}
+
+/**
+ * רישום הפקודות של ההקשר.
+ *
+ * ⚠ נכשל במפורש כששניהם חסרים, ולא נופל בשקט לרישום חדש. רישום שנוצר
+ * לכל קריאה פירושו שאידמפוטנטיות לא עובדת — ואז retry אחרי timeout
+ * קובע פגישה שנייה, שהיא בדיוק התקלה שהשכבה הזו נבנתה למנוע. כשל רועש
+ * עדיף על הגנה שנראית קיימת ואינה.
+ */
+function resolveCommandStore(ctx: VoiceToolCtx): CommandStore {
+  if (ctx.commandStore) return ctx.commandStore;
+  if (ctx.sb) return supabaseCommandStore(ctx.sb, ctx.officeId);
+  // ההודעה מפורשת כי היא נרשמת ב"פעולות שבוצעו" ובלוג — ומי שקורא
+  // אותה צריך לדעת מיד שזו תקלת תצורה ולא כשל של הסוכן.
+  throw new VoiceError('UNKNOWN_ERROR',
+    'command store missing on VoiceToolCtx', null,
+    'שגיאת תצורה: הפעולה לא בוצעה — כתיבה ל-CRM ללא אידמפוטנטיות אינה מותרת.');
+}
+
+/**
+ * כל כלי שכותב ל-CRM עובר כאן. הכלי מרכיב payload; הפקודה מבצעת.
+ *
+ * ההפרדה אינה קוסמטית: המוטציה עצמה רצה בתוך saveOfficeDb ולכן מורצת
+ * שוב על נתונים טריים כשמשתמש כתב במקביל. כלי שהיה כותב ישירות היה
+ * מחליט לפי עותק ישן — וזה המקום שבו פגישה כפולה נולדת.
+ */
+async function runCommand(
+  ctx: VoiceToolCtx, type: CommandType, payload: Record<string, unknown>,
+): Promise<VoiceToolResult> {
+  const store = resolveCommandStore(ctx);
+  const result = await applyOfficeCommand({
+    commandId: uid(),
+    callId: ctx.callId,
+    toolCallId: ctx.toolCallId ?? null,
+    agentId: ctx.agentId ?? null,
+    idempotencyKey: buildIdempotencyKey({
+      callId: ctx.callId,
+      toolCallId: ctx.toolCallId,
+      type,
+      fingerprint: payloadFingerprint(payload),
+    }),
+    type,
+    payload,
+    actor: { type: 'agent', id: ctx.agentId ?? null },
+    schemaVersion: ctx.schemaVersion || '1',
+  }, {
+    store,
+    write: async (mutate) => {
+      const db = await writeDb(ctx, mutate);
+      ctx.refresh(db);
+      return db;
+    },
+  });
+
+  return {
+    ok: true,
+    message: result.message,
+    // replayed נחשף למודל ולמסך: "בוצע" ו"כבר היה מבוצע" נראים זהים
+    // בלעדיו, ואי אפשר לדעת אם retry עשה משהו.
+    data: { ...(result.data || {}), replayed: result.replayed },
+    entityType: result.entityType,
+    entityId: result.entityId,
+  };
 }
 
 /** קריאה טרייה של ה-blob — לפני החלטה שתלויה במצב העדכני ביותר. */
@@ -250,7 +344,8 @@ export const VOICE_TOOLS: VoiceToolDef[] = [
       phone: S('string', { maxLength: 40, description: 'מספר הטלפון של המתקשר' }),
     }, []),
     handler: (input, ctx) => {
-      const phone = clean(input.phone, 40) || ctx.callerPhone || '';
+      const info = normalizePhoneNumber(clean(input.phone, 40) || ctx.callerPhone || '');
+      const phone = info.normalized || clean(input.phone, 40) || ctx.callerPhone || '';
       if (!phone) return Promise.resolve(fail('לא נמסר מספר טלפון לבדיקה.'));
 
       // הצד שכנגד קודם: אם המספר תואם לחייב, אין להתייחס אליו כלקוח.
@@ -258,28 +353,42 @@ export const VOICE_TOOLS: VoiceToolDef[] = [
       if (debtor) {
         return Promise.resolve(ok(
           'המספר אינו של לקוח המשרד. אין למסור פרטי תיק. יש לרשום את הפנייה ולהעביר לעורך הדין.',
-          { found: false, is_opposing_party: true },
+          { found: false, is_opposing_party: true, identity_status: 'rejected' },
         ));
       }
 
       const client = findClientByPhone(ctx.db, phone);
-      if (!client) return Promise.resolve(ok('לא נמצא לקוח עם המספר הזה.', { found: false }));
+      if (!client) {
+        return Promise.resolve(ok('לא נמצא לקוח עם המספר הזה.',
+          { found: false, identity_status: 'unidentified' }));
+      }
 
       const active = ctx.db.cases.filter((c) => c.client === client.id && c.status !== 'closed');
-      // סיכום מינימלי במכוון: שם התיק ושלב. די כדי לומר "בנוגע לתיק X",
-      // ולא די כדי להדליף מידע למי שהתחזה.
       const summary = active.length
         ? active.slice(0, 5).map((c) => `${c.name} (${c.stage || 'בטיפול'})`).join(', ')
         : 'אין תיקים פעילים';
 
+      // ⚠ שכבת המדיניות. התאמת מספר מעלה את הזהות ל-phone_match בלבד,
+      // ובמדיניות 'strict' (ברירת המחדל) זה **לא** מספיק כדי למסור
+      // פרטי תיק. שם הלקוח כן נמסר — פנייה בשם היא נוהג מקובל וסיכונה
+      // נמוך; שמות תיקים ושלבי הליך הם המידע שדליפתו מזיקה.
+      const verified = ctx.identityStatus === 'verified';
+      const mayDisclose = verified || ctx.identityPolicy === 'phone_match_ok';
+
       return Promise.resolve(ok(
-        `הלקוח זוהה: ${client.name}. תיקים פעילים: ${summary}.`,
+        mayDisclose
+          ? `הלקוח זוהה: ${client.name}. תיקים פעילים: ${summary}.`
+          : `המספר תואם ללקוח ${client.name}, אך הזהות טרם אומתה. ` +
+            'אפשר לפנות אליו בשמו ולקבל את פרטי הפנייה, אך אין למסור פרטי תיק.',
         {
           found: true,
           client_id: client.id,
           name: client.name,
+          identity_status: verified ? 'verified' : 'phone_match',
+          may_disclose_case_details: mayDisclose,
           active_cases_count: active.length,
-          active_cases_summary: summary,
+          // מה שלא נשלח לא יכול להיאמר בטלפון למי שהתחזה.
+          active_cases_summary: mayDisclose ? summary : undefined,
         },
         'client', client.id,
       ));
@@ -324,58 +433,14 @@ export const VOICE_TOOLS: VoiceToolDef[] = [
       summary: S('string', { maxLength: 2000 }),
       email: S('string', { maxLength: 120 }),
     }, ['name']),
-    handler: async (input, ctx) => {
-      const phone = clean(input.phone, 40) || ctx.callerPhone || '';
-      const name = clean(input.name, 120);
-
-      const debtor = findDebtorCase(ctx.db, phone);
-      if (debtor) {
-        return fail('המספר תואם לצד שכנגד בתיק קיים. לא נפתחה פנייה — יש להעביר את הנושא לעורך הדין.');
-      }
-      const existingClient = findClientByPhone(ctx.db, phone);
-      if (existingClient) {
-        return ok(
-          `המתקשר כבר רשום כלקוח (${existingClient.name}). לא נפתחה פנייה חדשה.`,
-          { created: false, client_id: existingClient.id },
-          'client', existingClient.id,
-        );
-      }
-      // אותו מספר, אותו יום → אותה פנייה. מתקשר שהתנתק וחייג שוב לא צריך
-      // להופיע פעמיים ברשימת הלידים.
-      const existingLead = findLeadByPhone(ctx.db, phone);
-      if (existingLead) {
-        const extra = clean(input.summary);
-        await writeDb(ctx, (d) => {
-          const l = d.leads.find((x) => x.id === existingLead.id);
-          if (!l) return;
-          if (extra) l.summary = [l.summary, extra].filter(Boolean).join('\n');
-          l.lastContactAt = new Date().toISOString();
-          l.updatedAt = new Date().toISOString();
-        }).then(ctx.refresh);
-        return ok(
-          `הפנייה הקיימת עודכנה (${existingLead.name || phone}).`,
-          { created: false, lead_id: existingLead.id },
-          'lead', existingLead.id,
-        );
-      }
-
-      const lead: CrmLead = {
-        id: uid(),
-        name: name || phone || 'פנייה טלפונית',
-        phone: normalizePhone(phone) || phone || '',
-        email: clean(input.email, 120) || undefined,
-        source: clean(input.source, 40) || 'voice_ai',
-        area: clean(input.category, 60) || undefined,
-        summary: clean(input.summary),
-        status: 'new',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        createdByCall: ctx.callId,
-      };
-      await writeDb(ctx, (d) => { d.leads.unshift(lead); }).then(ctx.refresh);
-      return ok(`נפתחה פנייה חדשה עבור ${lead.name}.`, { created: true, lead_id: lead.id },
-        'lead', lead.id);
-    },
+    handler: (input, ctx) => runCommand(ctx, 'create_lead', {
+      name: input.name,
+      phone: clean(input.phone, 40) || ctx.callerPhone || '',
+      source: input.source,
+      category: input.category,
+      summary: input.summary,
+      email: input.email,
+    }),
   },
 
   // ---------- משימות ----------
@@ -395,49 +460,17 @@ export const VOICE_TOOLS: VoiceToolDef[] = [
       matter_id: S('string', { maxLength: 40 }),
       assigned_to: S('string', { maxLength: 120 }),
     }, ['title']),
-    handler: async (input, ctx) => {
-      const text = clean(input.title, 200);
-      const clientId = clean(input.client_id, 40) || ctx.clientId || '';
-      const leadId = clean(input.lead_id, 40) || ctx.leadId || '';
-      let matterId = clean(input.matter_id, 40) || ctx.matterId || '';
-
-      // אם נמסר לקוח ולא תיק — משייכים לתיק הפעיל שלו, כי משימה ללא תיק
-      // נופלת מהמסך של התיק ואיש לא רואה אותה שם.
-      if (!matterId && clientId) {
-        const c = ctx.db.cases.find((x) => x.client === clientId && x.status !== 'closed');
-        if (c) matterId = c.id;
-      }
-
-      const dupe = ctx.db.tasks.find((t) => !t.done && t.text === text && (t.caseId || '') === matterId);
-      if (dupe) {
-        return ok('משימה זהה כבר פתוחה — לא נוצרה כפילות.',
-          { created: false, task_id: dupe.id }, 'task', dupe.id);
-      }
-
-      const notes = [
-        clean(input.description),
-        `נוצר משיחה טלפונית${ctx.callerPhone ? ' מהמספר ' + ctx.callerPhone : ''}.`,
-        leadId ? `פנייה: ${leadId}` : '',
-        clean(input.assigned_to, 120) ? `הועבר ל: ${clean(input.assigned_to, 120)}` : '',
-      ].filter(Boolean).join('\n');
-
-      const task = {
-        id: uid(),
-        text,
-        due: clean(input.due_date, 10) || '',
-        caseId: matterId,
-        priority: clean(input.priority, 20) || 'normal',
-        notes,
-        done: false,
-        // שדות additive — קוד קיים שלא מכיר אותם פשוט מתעלם.
-        createdByCall: ctx.callId,
-        clientId: clientId || undefined,
-        leadId: leadId || undefined,
-        assignedTo: clean(input.assigned_to, 120) || undefined,
-      };
-      await writeDb(ctx, (d) => { d.tasks.unshift(task as never); }).then(ctx.refresh);
-      return ok(`נוצרה משימה: ${text}.`, { created: true, task_id: task.id }, 'task', task.id);
-    },
+    handler: (input, ctx) => runCommand(ctx, 'create_task', {
+      title: input.title,
+      description: input.description,
+      priority: input.priority,
+      due_date: input.due_date,
+      client_id: clean(input.client_id, 40) || ctx.clientId || '',
+      lead_id: clean(input.lead_id, 40) || ctx.leadId || '',
+      matter_id: clean(input.matter_id, 40) || ctx.matterId || '',
+      assigned_to: input.assigned_to,
+      call_phone: ctx.callerPhone || '',
+    }),
   },
 
   {
@@ -452,43 +485,27 @@ export const VOICE_TOOLS: VoiceToolDef[] = [
       reason: S('string', { minLength: 2, maxLength: 500 }),
       name: S('string', { maxLength: 120 }),
       phone: S('string', { maxLength: 40 }),
+      // מועד מועדף לחזרה — נשמר ב-metadata של הבקשה ומוצג ברשימת
+      // הממתינים. טקסט חופשי במכוון: "אחרי 4", "לא בבוקר" ו-"מחר" הם
+      // מה שאנשים אומרים בטלפון, וכפייה של פורמט הייתה מאבדת את המידע.
+      preferred_time: S('string', { maxLength: 120 }),
+      urgency: S('string', { enum: ['low', 'normal', 'high', 'critical'] }),
       priority: S('string', { enum: ['urgent', 'normal'], default: 'urgent' }),
     }, ['reason']),
-    handler: async (input, ctx) => {
-      const phone = clean(input.phone, 40) || ctx.callerPhone || '';
-      const who = clean(input.name, 120) ||
-        (ctx.clientId ? (ctx.db.clients.find((c) => c.id === ctx.clientId)?.name || '') : '') ||
-        phone || 'מתקשר';
-      const text = `חזרה דחופה ללקוח — ${who}${phone ? ' · ' + phone : ''}`;
-
-      const dupe = ctx.db.tasks.find((t) => !t.done && t.text === text);
-      if (dupe) {
-        return ok('כבר קיימת משימת חזרה פתוחה עבור המתקשר.',
-          { created: false, task_id: dupe.id }, 'task', dupe.id);
-      }
-
-      let matterId = ctx.matterId || '';
-      if (!matterId && ctx.clientId) {
-        const c = ctx.db.cases.find((x) => x.client === ctx.clientId && x.status !== 'closed');
-        if (c) matterId = c.id;
-      }
-
-      const task = {
-        id: uid(),
-        text,
-        due: todayISO(),
-        caseId: matterId,
-        priority: clean(input.priority, 20) === 'normal' ? 'normal' : 'urgent',
-        notes: `סיבה: ${clean(input.reason, 500)}\nנוצר משיחה טלפונית.`,
-        done: false,
-        createdByCall: ctx.callId,
-        clientId: ctx.clientId || undefined,
-        leadId: ctx.leadId || undefined,
-      };
-      await writeDb(ctx, (d) => { d.tasks.unshift(task as never); }).then(ctx.refresh);
-      return ok('נרשמה בקשת חזרה דחופה. עורך הדין יחזור אליך.',
-        { created: true, task_id: task.id }, 'task', task.id);
-    },
+    handler: (input, ctx) => runCommand(ctx, 'create_callback', {
+      reason: input.reason,
+      name: clean(input.name, 120) ||
+        (ctx.clientId ? (ctx.db.clients.find((c) => c.id === ctx.clientId)?.name || '') : ''),
+      phone: clean(input.phone, 40) || ctx.callerPhone || '',
+      preferred_time: input.preferred_time,
+      // priority נשמר לתאימות לאחור עם קריאות קיימות; urgency הוא השדה
+      // המובנה שנשמר ב-metadata של בקשת החזרה.
+      urgency: input.urgency ||
+        (clean(input.priority, 20) === 'normal' ? 'normal' : 'high'),
+      client_id: ctx.clientId || '',
+      lead_id: ctx.leadId || '',
+      matter_id: ctx.matterId || '',
+    }),
   },
 
   // ---------- הערות ----------
@@ -504,52 +521,12 @@ export const VOICE_TOOLS: VoiceToolDef[] = [
       lead_id: S('string', { maxLength: 40 }),
       matter_id: S('string', { maxLength: 40 }),
     }, ['text']),
-    handler: async (input, ctx) => {
-      const text = clean(input.text, 4000);
-      const clientId = clean(input.client_id, 40) || ctx.clientId || '';
-      const leadId = clean(input.lead_id, 40) || ctx.leadId || '';
-      let matterId = clean(input.matter_id, 40) || ctx.matterId || '';
-      if (!matterId && clientId) {
-        const c = ctx.db.cases.find((x) => x.client === clientId && x.status !== 'closed');
-        if (c) matterId = c.id;
-      }
-
-      // he-IL עם שעה — הפורמט של cases.diary[].date ב-app.js.
-      const stamp = new Date().toLocaleString('he-IL', { timeZone: TIMEZONE });
-      const body = `[שיחה טלפונית] ${text}`;
-
-      if (matterId && ctx.db.cases.some((c) => c.id === matterId)) {
-        await writeDb(ctx, (d) => {
-          const c = d.cases.find((x) => x.id === matterId);
-          if (!c) return;
-          if (!Array.isArray(c.diary)) c.diary = [];
-          c.diary.unshift({ text: body, date: stamp });
-        }).then(ctx.refresh);
-        return ok('ההערה נרשמה ביומן התיק.', { target: 'matter' }, 'matter', matterId);
-      }
-
-      if (leadId && ctx.db.leads.some((l) => l.id === leadId)) {
-        await writeDb(ctx, (d) => {
-          const l = d.leads.find((x) => x.id === leadId);
-          if (!l) return;
-          l.notes = [l.notes, `${stamp} — ${body}`].filter(Boolean).join('\n');
-          l.updatedAt = new Date().toISOString();
-        }).then(ctx.refresh);
-        return ok('ההערה נרשמה בפנייה.', { target: 'lead' }, 'lead', leadId);
-      }
-
-      if (clientId && ctx.db.clients.some((c) => c.id === clientId)) {
-        await writeDb(ctx, (d) => {
-          const c = d.clients.find((x) => x.id === clientId);
-          if (!c) return;
-          // הוספה בסוף ולא דריסה: notes הוא שדה שהמשתמש כותב בו בעצמו.
-          c.notes = [c.notes, `${stamp} — ${body}`].filter(Boolean).join('\n');
-        }).then(ctx.refresh);
-        return ok('ההערה נרשמה בכרטיס הלקוח.', { target: 'client' }, 'client', clientId);
-      }
-
-      return fail('לא נמסר לקוח, פנייה או תיק לשייך אליו את ההערה.');
-    },
+    handler: (input, ctx) => runCommand(ctx, 'create_note', {
+      text: input.text,
+      client_id: clean(input.client_id, 40) || ctx.clientId || '',
+      lead_id: clean(input.lead_id, 40) || ctx.leadId || '',
+      matter_id: clean(input.matter_id, 40) || ctx.matterId || '',
+    }),
   },
 
   // ---------- יומן ----------
@@ -643,88 +620,59 @@ export const VOICE_TOOLS: VoiceToolDef[] = [
       const date = clean(input.date, 10);
       const time = clean(input.time, 5);
       const duration = Number(input.duration_minutes) || 60;
-      const startMin = timeToMinutes(time);
-      if (startMin === null) return fail('שעה לא תקינה.');
+
+      // ולידציות שאינן תלויות בנתונים — נבדקות כאן כדי לא לפתוח פקודה
+      // שכבר ידוע שתיכשל.
+      if (timeToMinutes(time) === null) return fail('שעה לא תקינה.');
       if (WEEKEND_DAYS.includes(isoWeekday(date))) {
         return fail('המועד המבוקש נופל בסוף השבוע. יש להציע מועד בימים ראשון עד חמישי.');
       }
       if (date < todayISO()) return fail('לא ניתן לקבוע פגישה בתאריך שעבר.');
 
-      // ⚠ מניעת Double Booking — נבדקת מול ה-blob **הטרי**, לא מול העותק
-      // שנטען בתחילת התור. שתי שיחות מקבילות שמבקשות את אותה שעה הן
-      // בדיוק התרחיש שבו העותק הישן טועה.
-      const fresh = await reloadDb(ctx);
-      const busy = busyFromEvents(fresh.events, date, 60);
-      const endMin = startMin + duration;
-      if (busy.some((b) => startMin < b.endMin && endMin > b.startMin)) {
-        return fail('המועד כבר תפוס ביומן. יש להציע מועד אחר.');
-      }
-
-      const clientId = clean(input.client_id, 40) || ctx.clientId || '';
-      const leadId = clean(input.lead_id, 40) || ctx.leadId || '';
-      let matterId = clean(input.matter_id, 40) || ctx.matterId || '';
-      if (!matterId && clientId) {
-        const c = fresh.cases.find((x) => x.client === clientId && x.status !== 'closed');
-        if (c) matterId = c.id;
-      }
-      const who = clientId
-        ? (fresh.clients.find((c) => c.id === clientId)?.name || '')
-        : (fresh.leads.find((l) => l.id === leadId)?.name || '');
-
-      const event = {
-        id: uid(),
-        title: clean(input.title, 200) || `פגישה${who ? ' — ' + who : ''}`,
-        date, time,
-        location: clean(input.location, 200),
-        type: 'meeting',
-        caseId: matterId,
-        notes: [clean(input.notes), 'נקבע בשיחה טלפונית עם המזכירה הדיגיטלית.']
-          .filter(Boolean).join('\n'),
-        // additive
-        durationMinutes: duration,
-        createdByCall: ctx.callId,
-        clientId: clientId || undefined,
-        leadId: leadId || undefined,
-      };
-
-      await writeDb(ctx, (d) => {
-        // בדיקה שנייה בתוך ה-mutate: saveOfficeDb עושה read-modify-write עם
-        // בדיקה אופטימית, ולכן זו ההזדמנות האחרונה לראות אירוע שנוצר
-        // בשנייה שחלפה.
-        const clash = busyFromEvents(d.events, date, 60)
-          .some((b) => startMin < b.endMin && endMin > b.startMin);
-        if (clash) throw new Error('DOUBLE_BOOKING');
-        d.events.push(event as never);
-      }).then(ctx.refresh).catch((e) => {
-        if (e instanceof Error && e.message === 'DOUBLE_BOOKING') {
-          throw new ToolConflictError('המועד נתפס בינתיים. יש להציע מועד אחר.');
-        }
-        throw e;
+      // ⚠ בדיקת התפיסה **אינה** כאן. היא בתוך המוטציה, ולכן רצה מחדש על
+      // נתונים טריים בכל ניסיון של saveOfficeDb — כולל אחרי שמשתמש קבע
+      // פגישה בשנייה שחלפה. בדיקה מוקדמת על עותק ישן היא בדיוק המקום
+      // שבו נולדת פגישה כפולה.
+      const result = await runCommand(ctx, 'create_appointment', {
+        date, time, duration_minutes: duration,
+        title: input.title,
+        client_id: clean(input.client_id, 40) || ctx.clientId || '',
+        lead_id: clean(input.lead_id, 40) || ctx.leadId || '',
+        matter_id: clean(input.matter_id, 40) || ctx.matterId || '',
+        location: input.location,
+        notes: input.notes,
       });
 
       // דחיפה ליומן החיצוני, אם וכאשר הוא מחובר — best effort. הפגישה
-      // כבר קיימת ב-CRM, ולכן כישלון סנכרון אינו מבטל אותה; הוא מסומן
-      // כדי שאדם ישלים ידנית.
+      // כבר קיימת ב-CRM, ולכן כישלון סנכרון אינו מבטל אותה.
+      // ⚠ מדולג ב-replay: הפגישה כבר סונכרנה בפעם הראשונה, ודחיפה שנייה
+      // הייתה יוצרת אירוע כפול ביומן החיצוני — בדיוק הכפילות שמנענו
+      // בצד שלנו.
       let synced: string | null = null;
-      try {
-        const { getCalendarProvider } = await import('../providers/calendar.ts');
-        const provider = await getCalendarProvider(ctx.sb, ctx.officeId);
-        if (!provider.isMock) {
-          const startISO = `${date}T${time.padStart(5, '0')}:00`;
-          const endISO = `${date}T${minutesToTime(endMin)}:00`;
-          const r = await provider.createEvent({
-            title: event.title, start: startISO, end: endISO,
-            location: event.location, description: event.notes,
-          });
-          if (r.ok) synced = r.externalId || null;
-        }
-      } catch { /* הפגישה נשמרה; סנכרון חיצוני הוא תוספת */ }
+      if (!result.data?.replayed) {
+        try {
+          if (!(globalThis as { Deno?: unknown }).Deno) throw new Error('no external calendar');
+          const { getCalendarProvider } = await import('../providers/calendar.ts');
+          const provider = await getCalendarProvider(ctx.sb, ctx.officeId);
+          if (!provider.isMock) {
+            const endMin = (timeToMinutes(time) || 0) + duration;
+            const r = await provider.createEvent({
+              title: String(input.title || 'פגישה'),
+              start: `${date}T${time.padStart(5, '0')}:00`,
+              end: `${date}T${minutesToTime(endMin)}:00`,
+              location: clean(input.location, 200),
+              description: clean(input.notes),
+            });
+            if (r.ok) synced = r.externalId || null;
+          }
+        } catch { /* הפגישה נשמרה; סנכרון חיצוני הוא תוספת */ }
+      }
 
-      return ok(
-        `נקבעה פגישה ל-${isoToHe(date)} בשעה ${time}.`,
-        { created: true, event_id: event.id, date, time, synced_external: synced },
-        'event', event.id,
-      );
+      return {
+        ...result,
+        message: `${result.message}`,
+        data: { ...(result.data || {}), synced_external: synced },
+      };
     },
   },
 
@@ -881,6 +829,16 @@ export async function execVoiceTool(
   } catch (e) {
     if (e instanceof ToolConflictError) {
       return { status: 'failed', result: fail(e.message) };
+    }
+    // ⚠ VoiceError נושא קוד יציב והודעה שמיועדת למי ששומע אותה. הקוד
+    // עובר ל-data כדי ששרת הקול יוכל להחליט אם לנסות שוב, וההודעה היא
+    // מה שהמודל יאמר — בלי הפרטים הטכניים, שנשארים בלוג.
+    if (e instanceof VoiceError) {
+      console.error(`[voice-tool] ${toolName} ${e.code}`, e.technical);
+      return {
+        status: e.code === 'TOOL_NOT_ALLOWED' ? 'blocked' : 'failed',
+        result: { ok: false, message: e.message, data: { error: e.toUserPayload() } },
+      };
     }
     // ⚠ כלי שנפל **לא מפיל את השיחה**. המודל מקבל הודעת שגיאה קצרה
     // וממשיך, ה-orchestrator מסמן manual_followup_required, והאדם מקבל

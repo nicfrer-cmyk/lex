@@ -22,6 +22,8 @@ import abc
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..capabilities import ProviderStatus
+
 
 @dataclass
 class ToolCall:
@@ -61,6 +63,9 @@ class LLMProvider(abc.ABC):
                         tools: list[dict[str, Any]]) -> list[ToolCall]:
         """בקשות כלים בלבד, בלי טקסט."""
 
+    def capabilities(self) -> ProviderStatus:
+        return ProviderStatus(type='llm', name=self.name)
+
 
 class MockLLMProvider(LLMProvider):
     """מצהיר על עצמו כהדגמה. אינו ממציא תוכן משפטי."""
@@ -81,3 +86,7 @@ class MockLLMProvider(LLMProvider):
     async def tool_call(self, system: str, messages: list[dict[str, Any]],
                         tools: list[dict[str, Any]]) -> list[ToolCall]:
         return []
+
+    def capabilities(self) -> ProviderStatus:
+        return ProviderStatus.mock(
+            'llm', 'mock', 'מנוע שפה במצב הדגמה — לא ינהל שיחה אמיתית')

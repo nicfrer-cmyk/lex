@@ -20,6 +20,7 @@ from typing import Any, Callable, Awaitable
 
 import httpx
 
+from ..capabilities import ProviderStatus
 from ..telemetry.logging import get_logger
 from .base import InboundCall, TelephonyProvider, TransferBlocked
 
@@ -45,6 +46,9 @@ class AsteriskAriProvider(TelephonyProvider):
         self._client: httpx.AsyncClient | None = None
         self._ws_task: asyncio.Task | None = None
         self._stop = asyncio.Event()
+        # ⚠ מתעדכן ב-_listen. מרכזייה "מוגדרת" אינה "מחוברת": המנוי
+        # אינו מובטח גם כשהסיסמה נכונה, וה-CRM חייב לדעת את ההבדל.
+        self._connected = False
 
     # ------------------------------------------------------------------
     # מחזור חיים
@@ -84,6 +88,7 @@ class AsteriskAriProvider(TelephonyProvider):
                 async with websockets.connect(url, ping_interval=20) as ws:
                     log.info("ari_connected", extra={"app": self._app})
                     backoff = 1
+                    self._connected = True
                     async for raw in ws:
                         try:
                             await on_event(json.loads(raw))
@@ -95,6 +100,7 @@ class AsteriskAriProvider(TelephonyProvider):
             except Exception as exc:  # noqa: BLE001
                 if self._stop.is_set():
                     return
+                self._connected = False
                 log.warning("ari_disconnected", extra={
                     "error": str(exc), "retry_in": backoff})
                 await asyncio.sleep(backoff)
@@ -180,6 +186,14 @@ class AsteriskAriProvider(TelephonyProvider):
             return True, f"Asterisk {version}"
         except Exception as exc:  # noqa: BLE001
             return False, str(exc)
+
+    def capabilities(self) -> ProviderStatus:
+        return ProviderStatus(
+            type='telephony', name='asterisk-ari', mode='real',
+            healthy=self._connected,
+            production_ready=self._connected,
+            message='' if self._connected else 'ARI אינו מחובר',
+        )
 
     # ------------------------------------------------------------------
 

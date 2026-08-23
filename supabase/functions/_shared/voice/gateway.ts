@@ -30,22 +30,21 @@ export const TOOL_EVENT: Record<string, string> = {
   transfer_call: 'TRANSFER_REQUESTED',
 };
 
-export type ToolCallRequest = { id: string; name: string; input: Record<string, unknown> };
+export type ToolCallRequest = {
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+  /** מזהה קריאת הכלי כפי שהמודל או שרת הקול מסרו אותו. נכנס למפתח
+   *  האידמפוטנטיות — ראה buildIdempotencyKey. */
+  toolCallId?: string | null;
+  schemaVersion?: string;
+};
 
-/** סידור מפתחות לפני גיבוב — {a:1,b:2} ו-{b:2,a:1} חייבים לתת אותו מפתח. */
-export function canonicalize(v: unknown): unknown {
-  if (Array.isArray(v)) return v.map(canonicalize);
-  if (v && typeof v === 'object') {
-    const out: Record<string, unknown> = {};
-    for (const k of Object.keys(v as Record<string, unknown>).sort()) {
-      const val = (v as Record<string, unknown>)[k];
-      if (val === undefined || val === '' || val === null) continue;
-      out[k] = canonicalize(val);
-    }
-    return out;
-  }
-  return v;
-}
+// ⚠ המימוש עבר ל-commands.ts, שם הוא משמש גם לבניית מפתח האידמפוטנטיות.
+// הייצוא החוזר נשאר כדי שקוראים קיימים לא יישברו — שני עותקים של
+// הפונקציה הזו היו מייצרים שני מפתחות שונים לאותה בקשה, כלומר פגישה
+// כפולה בדיוק במקרה שהיא נועדה למנוע.
+export { canonicalize, payloadFingerprint } from './commands.ts';
 
 /**
  * ביצוע כלי בודד, כולל רישום ואידמפוטנטיות.
@@ -63,7 +62,11 @@ export async function executeToolForCall(
   ctx: VoiceToolCtx,
 ): Promise<ExecOutcome> {
   const { stableHash } = await import('../crypto.ts');
-  const idem = await stableHash(tc.name, canonicalize(tc.input));
+  const { canonicalize } = await import('./commands.ts');
+  // ⚠ tool_call_id נכנס למפתח כשהוא קיים. בלעדיו, מתקשר שביקש באמת
+  // שתי פגישות זהות היה מקבל אחת — הקלט זהה, ורק המזהה מבדיל בין
+  // "בקשה חדשה" לבין "אותה בקשה שנשלחה שוב".
+  const idem = await stableHash(tc.name, tc.toolCallId || '', canonicalize(tc.input));
 
   const { data: prior } = await sb.from('call_actions')
     .select('id, status, response_payload, entity_type, entity_id')
@@ -84,13 +87,23 @@ export async function executeToolForCall(
   }
 
   const def = VOICE_TOOL_MAP.get(tc.name);
+  const startedAt = Date.now();
   const { data: actionRow } = await sb.from('call_actions').upsert({
     office_id: officeId, call_id: callId, tool_name: tc.name,
     request_payload: tc.input, status: 'executing',
     idempotency_key: idem, started_at: new Date().toISOString(),
+    tool_call_id: tc.toolCallId || null,
+    schema_version: tc.schemaVersion || '1',
+    agent_id: ctx.agentId || null,
   }, { onConflict: 'call_id,idempotency_key' }).select('id').single();
 
-  const outcome = await execVoiceTool(tc.name, tc.input, permissions.get(tc.name) || null, ctx);
+  const outcome = await execVoiceTool(
+    tc.name,
+    tc.input,
+    permissions.get(tc.name) || null,
+    { ...ctx, toolCallId: tc.toolCallId ?? null, schemaVersion: tc.schemaVersion } as VoiceToolCtx,
+  );
+  const latencyMs = Date.now() - startedAt;
 
   if (actionRow) {
     await sb.from('call_actions').update({
@@ -99,6 +112,9 @@ export async function executeToolForCall(
       error: outcome.status === 'success' ? null : outcome.result.message,
       entity_type: outcome.result.entityType || null,
       entity_id: outcome.result.entityId || null,
+      latency_ms: latencyMs,
+      // "בוצע" ו"כבר היה מבוצע" נראים זהים בלי הדגל הזה.
+      replayed: Boolean((outcome.result.data as Record<string, unknown> | undefined)?.replayed),
       completed_at: new Date().toISOString(),
     }).eq('id', actionRow.id);
   }
@@ -137,7 +153,7 @@ export async function buildCallToolCtx(
   if (!session) throw new Error('השיחה לא נמצאה');
 
   const { data: settings } = await sb.from('call_center_settings')
-    .select('public_office_phone, human_transfer_number, recording_enabled, ai_enabled, emergency_stop')
+    .select('public_office_phone, human_transfer_number, recording_enabled, ai_enabled, emergency_stop, identity_policy')
     .eq('office_id', officeId).maybeSingle();
 
   const { loadOfficeDb } = await import('../db.ts');
@@ -149,6 +165,8 @@ export async function buildCallToolCtx(
     matterId: session.matter_id as string | null,
   };
 
+  const { supabaseCommandStore } = await import('./commands.ts');
+
   const ctx = {
     sb, officeId, callId,
     callerPhone: session.caller_phone,
@@ -159,6 +177,11 @@ export async function buildCallToolCtx(
     settings: (settings || {}) as CallCenterSettings,
     refresh: (next: CrmDb) => { db = next; },
     isSimulation: Boolean(session.is_simulation),
+    agentId: session.agent_id || null,
+    commandStore: supabaseCommandStore(sb, officeId),
+    // מצב הזהות של השיחה, כפי שנקבע ב-startCall ומתעדכן במהלכה.
+    identityStatus: (session.identity_status || 'unidentified') as VoiceToolCtx['identityStatus'],
+    identityPolicy: (settings?.identity_policy || 'strict') as VoiceToolCtx['identityPolicy'],
   } as VoiceToolCtx;
 
   const permissions = await loadToolPermissions(sb, session.agent_id);
@@ -181,10 +204,16 @@ export async function loadToolPermissions(
 export async function runStandaloneTool(
   sb: SupabaseClient, officeId: string, callId: string,
   toolName: string, input: Record<string, unknown>,
+  envelope: { toolCallId?: string | null; schemaVersion?: string } = {},
 ): Promise<ExecOutcome> {
   const { ctx, permissions } = await buildCallToolCtx(sb, officeId, callId);
-  return executeToolForCall(sb, officeId, callId,
-    { id: 'ext_' + Date.now().toString(36), name: toolName, input }, permissions, ctx);
+  return executeToolForCall(sb, officeId, callId, {
+    id: envelope.toolCallId || ('ext_' + Date.now().toString(36)),
+    name: toolName,
+    input,
+    toolCallId: envelope.toolCallId ?? null,
+    schemaVersion: envelope.schemaVersion,
+  }, permissions, ctx);
 }
 
 /**

@@ -17,6 +17,7 @@ from ..stt.base import STTProvider
 from ..telemetry.logging import get_logger, set_call_id
 from ..telephony.base import TelephonyProvider, TransferBlocked
 from ..tts.base import TTSProvider
+from ..media.base import MediaSession, MediaTransport
 from .session import CallRunner, CallSession, CallState
 
 log = get_logger(__name__)
@@ -24,27 +25,29 @@ log = get_logger(__name__)
 
 class CallManager:
     def __init__(self, settings: Settings, crm: CrmClient, telephony: TelephonyProvider,
-                 stt: STTProvider, llm: LLMProvider, tts: TTSProvider) -> None:
+                 stt: STTProvider, llm: LLMProvider, tts: TTSProvider,
+                 transport: MediaTransport) -> None:
         self._settings = settings
         self._crm = crm
         self._telephony = telephony
         self._stt = stt
         self._llm = llm
         self._tts = tts
+        self._transport = transport
         self._sessions: dict[str, CallSession] = {}
         self._runners: dict[str, CallRunner] = {}
-        # מיפוי מזהה AudioSocket → ערוץ. הזרם מגיע לפני שהקישור ידוע,
+        # מיפוי מזהה ערוץ מדיה → ערוץ שיחה. הזרם מגיע לפני שהקישור ידוע,
         # ולכן צריך את שני הכיוונים.
         self._by_audio: dict[str, str] = {}
-        self._send_audio = None
-
-    def bind_audio_sender(self, sender) -> None:
-        self._send_audio = sender
+        # ⚠ נקבע מה-heartbeat. שרת הקול לא מחליט בעצמו אם מותר לו לענות
+        # לשיחות אמיתיות — ההחלטה היא של בעל המשרד במסך, וה-CRM מוסר
+        # אותה בכל דופק.
+        self.live_calls_enabled = False
 
     @property
     def active_count(self) -> int:
         return len([s for s in self._sessions.values()
-                    if s.state not in (CallState.COMPLETED, CallState.FAILED)])
+                    if s.state not in (CallState.ENDED, CallState.FAILED)])
 
     # ------------------------------------------------------------------
     # אירועי ARI
@@ -59,7 +62,7 @@ class CallManager:
         elif etype == "ChannelHold":
             await self._set_state(event, CallState.ON_HOLD)
         elif etype == "ChannelUnhold":
-            await self._set_state(event, CallState.ACTIVE)
+            await self._set_state(event, CallState.LISTENING)
 
     async def _on_start(self, event: dict[str, Any]) -> None:
         from ..telephony.asterisk_ari import AsteriskAriProvider
@@ -67,6 +70,15 @@ class CallManager:
         inbound = AsteriskAriProvider.parse_stasis_start(event)
         if inbound is None:
             return  # ערוץ מדיה שאנחנו פתחנו, לא שיחה
+
+        # ⚠ המפסק הראשי, נבדק לפני שעונים. ה-CRM ידחה את השיחה בכל
+        # מקרה, אבל אם נענה קודם — המתקשר כבר שמע צלצול ואז שקט, וזו
+        # החוויה הגרועה ביותר. עדיף שהשיחה כלל לא תיענה.
+        if not self.live_calls_enabled:
+            log.warning("call_rejected_live_disabled", extra={
+                "from": inbound.caller_number})
+            await self._telephony.end_call(inbound.channel_id)
+            return
 
         # ⚠ תקרת שיחות מקבילות. שרת קטן שמנסה לטפל בעשר שיחות בו-זמנית
         # יאט את כולן עד שאף אחת לא שמישה. עדיף לענות לארבע כמו שצריך
@@ -119,6 +131,8 @@ class CallManager:
             # ב-AudioSocket, המזהה שמגיע בפריים הראשון הוא ה-UUID של הערוץ.
             session.audio_uuid = session.channel_id
             self._by_audio[session.audio_uuid] = session.channel_id
+            await self._transport.start_session(MediaSession(
+                session_id=session.audio_uuid, channel_id=session.channel_id))
         except Exception:  # noqa: BLE001
             log.exception("media_start_failed")
             session.state = CallState.FAILED
@@ -127,7 +141,11 @@ class CallManager:
 
         runner = CallRunner(
             session, self._stt, self._llm, self._tts,
-            send_audio=lambda pcm: self._send(session.audio_uuid, pcm),
+            transport=self._transport,
+            report_event=lambda ev, state=None, payload=None: self._report_event(
+                session, ev, state, payload),
+            silence_timeout_ms=self.silence_timeout_ms,
+            barge_in_enabled=self.barge_in_enabled,
         )
         self._runners[session.channel_id] = runner
         await runner.start(data.get("greeting") or "")
@@ -157,6 +175,11 @@ class CallManager:
         runner = self._runners.pop(session.channel_id, None)
         if runner:
             await runner.stop()
+        if session.audio_uuid:
+            try:
+                await self._transport.end_session(session.audio_uuid)
+            except Exception:  # noqa: BLE001
+                pass
         if session.media_id:
             try:
                 await self._telephony.stop_media(session.media_id)
@@ -169,7 +192,7 @@ class CallManager:
                     "call_id": session.crm_call_id,
                     "status": status,
                     "duration_seconds": session.duration_seconds,
-                })
+                }, call_id=session.crm_call_id)
             except CrmUnavailable:
                 # ⚠ בתור. הסיכום והתוצאה ייווצרו כשה-CRM יחזור. זו הסיבה
                 # שהתור נשמר לדיסק ולא בזיכרון: restart בין השניים היה
@@ -178,7 +201,19 @@ class CallManager:
             except CrmRejected as exc:
                 log.error("call_end_rejected", extra={"error": str(exc)})
 
-        session.state = CallState.COMPLETED if status == "completed" else CallState.FAILED
+            # ⚠ העיבוד הכבד מתבקש **אחרי** שהשיחה נסגרה, ולא כחלק
+            # ממנה. סיכום ע"י מודל לוקח שניות; אילו הוא היה בנתיב
+            # הניתוק, המתקשר היה ממתין בקו מול שקט.
+            try:
+                await self._crm.call("call.postprocess",
+                                     {"call_id": session.crm_call_id},
+                                     queue_on_failure=True,
+                                     call_id=session.crm_call_id)
+            except (CrmUnavailable, CrmRejected):
+                # ה-cron ב-CRM מנקז שיחות שנשארו pending — רשת ביטחון.
+                pass
+
+        session.state = CallState.ENDED if status == "completed" else CallState.FAILED
         self._sessions.pop(session.channel_id, None)
         self._by_audio.pop(session.audio_uuid, None)
         log.info("call_finished", extra={
@@ -186,7 +221,7 @@ class CallManager:
         set_call_id(None)
 
     # ------------------------------------------------------------------
-    # אודיו
+    # אודיו ואירועים
     # ------------------------------------------------------------------
 
     async def on_audio(self, audio_uuid: str, pcm: bytes) -> None:
@@ -196,10 +231,43 @@ class CallManager:
             return
         await runner.on_audio(pcm)
 
-    async def _send(self, audio_uuid: str, pcm: bytes) -> None:
-        if self._send_audio is None:
+    async def _report_event(self, session: CallSession, event: str,
+                            state: str | None = None,
+                            payload: dict | None = None) -> None:
+        """מדווח אירוע מכונת מצבים ל-CRM.
+
+        ⚠ best-effort ו-**לא** נכנס ל-Outbox. אירוע ציר זמן שמגיע חמש
+        דקות באיחור אינו שווה את מקומו בתור שבו ממתינות פעולות אמיתיות
+        (ליד, משימה, פגישה) — ודחיפתו לשם הייתה מעכבת אותן.
+        """
+        if not session.crm_call_id:
             return
-        await self._send_audio(audio_uuid, pcm)
+        try:
+            await self._crm.call("call.event", {
+                "call_id": session.crm_call_id,
+                "event": event,
+                "state": state,
+                "payload": payload or {},
+            }, queue_on_failure=False)
+        except Exception:  # noqa: BLE001
+            pass
+
+    # ---- תצורה שמגיעה מה-CRM בכל heartbeat ----
+    silence_timeout_ms: int = 8000
+    barge_in_enabled: bool = True
+    max_call_duration_seconds: int = 600
+
+    def apply_remote_config(self, config: dict) -> None:
+        """מקור אמת אחד: ההגדרות ב-CRM.
+
+        שרת הקול לא מחזיק עותק משלו ולא מנחש. מה שבעל המשרד שינה במסך
+        נכנס לתוקף בדופק הבא, בלי deploy ובלי restart.
+        """
+        self.live_calls_enabled = bool(config.get("live_calls_enabled")) and \
+            not config.get("emergency_stop")
+        self.silence_timeout_ms = int(config.get("silence_timeout_ms") or 8000)
+        self.barge_in_enabled = config.get("barge_in_enabled") is not False
+        self.max_call_duration_seconds = int(config.get("max_call_duration_seconds") or 600)
 
     # ------------------------------------------------------------------
     # העברה
@@ -220,11 +288,11 @@ class CallManager:
             return False, ("לא הוגדר יעד העברה תקין. נוצרה משימת חזרה במקום.")
 
         try:
-            session.state = CallState.TRANSFERRING
+            session.state = CallState.COMPLETING
             await self._telephony.transfer_call(channel_id, target)
             return True, f"השיחה הועברה אל {target}"
         except TransferBlocked as exc:
-            session.state = CallState.ACTIVE
+            session.state = CallState.LISTENING
             return False, str(exc)
 
     async def shutdown(self) -> None:

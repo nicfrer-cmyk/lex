@@ -44,7 +44,8 @@ Deno.serve(async (req) => {
   const sb = admin();
   try {
     const body = await req.json().catch(() => ({}));
-    const tasks = (body.tasks as string[]) || ['reap', 'drain', 'automations', 'learn'];
+    const tasks = (body.tasks as string[]) ||
+      ['reap', 'drain', 'automations', 'learn', 'postcall'];
     const out: Record<string, unknown> = {};
 
     // 1. שחרור jobs שננעלו ע"י worker שמת (deploy באמצע, timeout).
@@ -58,7 +59,18 @@ Deno.serve(async (req) => {
       out.automations = await runAutomations(sb);
     }
 
-    // 3. ניקוז התור.
+    // 3. עיבוד שאחרי שיחה — רשת ביטחון.
+    //
+    // ⚠ שרת הקול אמור לבקש את העיבוד בעצמו מיד אחרי הניתוק, וברוב
+    // המקרים זה מה שקורה. הלולאה כאן קיימת עבור המקרים שבהם הוא לא
+    // הספיק: נפילה של התהליך, ניתוק רשת, restart. בלעדיה שיחה כזו
+    // הייתה נשארת עם הסיכום הזמני בלבד — ועורך הדין שקורא אותה למחרת
+    // לא היה יודע שחסר לו מידע.
+    if (tasks.includes('postcall')) {
+      out.post_call = await runPostCall(sb);
+    }
+
+    // 4. ניקוז התור.
     if (tasks.includes('drain')) {
       const resp = await fetch(`${SUPABASE_URL}/functions/v1/ai-worker`, {
         method: 'POST',
@@ -116,6 +128,30 @@ type AutomationRule = {
   actions: Array<Record<string, unknown>>;
   requires_approval: boolean;
 };
+
+/**
+ * מעבד שיחות שממתינות לעיבוד מאוחר, בכל המשרדים.
+ *
+ * מוגבל למספר קטן לכל סבב: העיבוד קורא למודל, ו-cron שמנסה לעבד מאה
+ * שיחות בבת אחת יפוג לפני שיסיים ויתחיל מהתחלה בסבב הבא — כלומר לא
+ * יסיים אף פעם. סבבים קטנים מתקדמים.
+ */
+async function runPostCall(sb: ReturnType<typeof admin>) {
+  const { drainPostCallQueue } = await import('../_shared/voice/orchestrator.ts');
+  const { data: offices } = await sb.from('call_center_settings').select('office_id');
+  const out: Record<string, number> = {};
+  for (const row of offices || []) {
+    try {
+      const n = await drainPostCallQueue(sb, row.office_id as string, 5);
+      if (n) out[row.office_id as string] = n;
+    } catch (e) {
+      // משרד אחד שנכשל לא עוצר את השאר.
+      console.error('[cron] post-call failed', row.office_id,
+        e instanceof Error ? e.message : e);
+    }
+  }
+  return out;
+}
 
 async function runAutomations(sb: ReturnType<typeof admin>) {
   const { data: rules, error } = await sb.from('automation_rules')

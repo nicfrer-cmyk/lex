@@ -62,6 +62,9 @@ class Settings:
     external_media_host: str = field(default_factory=lambda: _env("EXTERNAL_MEDIA_HOST", "127.0.0.1"))
     external_media_port: int = field(default_factory=lambda: _int("EXTERNAL_MEDIA_PORT", 8090))
     external_media_format: str = field(default_factory=lambda: _env("EXTERNAL_MEDIA_FORMAT", "slin16"))
+    # audiosocket | websocket. ⚠ websocket הוא שלד שמצהיר
+    # production_ready=False — ראה media/websocket.py.
+    media_transport: str = field(default_factory=lambda: _env("MEDIA_TRANSPORT", "audiosocket"))
 
     # ---- ספקים ----
     stt_provider: str = field(default_factory=lambda: _env("STT_PROVIDER", "mock"))
@@ -139,6 +142,8 @@ class Settings:
             out.append("TTS במצב הדגמה — לא נבחר מנוע הקראה")
         if self.stt_provider == "mock":
             out.append("STT במצב הדגמה — לא נבחר מנוע תמלול")
+        if self.media_transport == "websocket":
+            out.append("MEDIA_TRANSPORT=websocket הוא שלד בלבד — שיחות לא יישמעו")
         if (self.human_transfer_number
                 and _digits(self.human_transfer_number) == _digits(self.public_office_phone)):
             out.append(
@@ -151,6 +156,7 @@ class Settings:
         return {
             "asterisk": "configured" if self.ari_configured else "not_configured",
             "sip": "configured" if self.sip_configured else "not_configured",
+            "transport": self.media_transport,
             "stt": self.stt_provider,
             "llm": self.llm_provider,
             "tts": self.tts_provider,

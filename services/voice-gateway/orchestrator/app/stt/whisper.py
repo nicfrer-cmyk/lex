@@ -23,6 +23,7 @@ import math
 import time
 from typing import Any
 
+from ..capabilities import LatencyTracker, ProviderStatus
 from ..telemetry.logging import get_logger
 from .base import STTProvider, Transcript
 
@@ -74,6 +75,8 @@ class FasterWhisperSTT(STTProvider):
         self._streams: dict[str, _Stream] = {}
         self._pending: dict[str, Transcript] = {}
         self._lock = asyncio.Lock()
+        self._latency = LatencyTracker()
+        self._last_error: str = ''
 
     async def _ensure_model(self) -> Any:
         if self._model is not None:
@@ -122,6 +125,7 @@ class FasterWhisperSTT(STTProvider):
             asyncio.create_task(self._transcribe(call_id, audio, stream.sample_rate))
 
     async def _transcribe(self, call_id: str, pcm: bytes, sample_rate: int) -> None:
+        started = time.monotonic()
         try:
             model = await self._ensure_model()
             audio = _pcm_to_float32(pcm)
@@ -134,12 +138,15 @@ class FasterWhisperSTT(STTProvider):
             text = " ".join(s.text.strip() for s in segments).strip()
             if not text:
                 return
+            self._latency.record(int((time.monotonic() - started) * 1000))
+            self._last_error = ''
             self._pending[call_id] = Transcript(
                 text=text, is_final=True,
                 ended_at_ms=int(len(pcm) / 2 / sample_rate * 1000))
         except Exception:  # noqa: BLE001
             # ⚠ תמלול שנכשל **לא מפיל את השיחה**. הסוכן ימשיך בלי המקטע
             # הזה, וה-CRM יסמן manual_followup_required בסיום.
+            self._last_error = 'תמלול נכשל'
             log.exception("stt_transcribe_failed")
 
     async def get_partial_transcript(self, call_id: str) -> Transcript | None:
@@ -151,6 +158,21 @@ class FasterWhisperSTT(STTProvider):
     async def end_stream(self, call_id: str) -> None:
         self._streams.pop(call_id, None)
         self._pending.pop(call_id, None)
+
+    def capabilities(self) -> ProviderStatus:
+        return ProviderStatus(
+            type='stt', name=f'faster-whisper:{self._model_name}',
+            mode='real',
+            healthy=not self._last_error,
+            # ⚠ מוכן לייצור רק אחרי שהמודל באמת נטען. עד אז הוא יחזיר
+            # ריק — וספק שמחזיר ריק ומדווח מוכן הוא סוכן שלא שומע.
+            production_ready=self._model is not None,
+            supports_streaming=False,
+            supports_hebrew=self._language in ('he', 'auto'),
+            average_latency_ms=self._latency.average_ms,
+            message=self._last_error or (
+                '' if self._model is not None else 'המודל טרם נטען'),
+        )
 
 
 def _pcm_to_float32(pcm: bytes):

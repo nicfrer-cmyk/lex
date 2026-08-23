@@ -26,6 +26,9 @@ const NL = String.fromCharCode(10);
 const load = (rel) => import('file://' + path.join(ROOT, rel).replace(/\\/g, '/'));
 
 const TOOLS = () => load('supabase/functions/_shared/voice/tools.ts');
+const COMMANDS = () => load('supabase/functions/_shared/voice/commands.ts');
+const READINESS = () => load('supabase/functions/_shared/voice/readiness.ts');
+const PHONE = () => load('supabase/functions/_shared/voice/phone.ts');
 const URGENCY = () => load('supabase/functions/_shared/voice/urgency.ts');
 const SIGNING = () => load('supabase/functions/_shared/voice/signing.ts');
 const LLM = () => load('supabase/functions/_shared/voice/llm.ts');
@@ -61,11 +64,30 @@ function makeCtx(over) {
     settings: {},
     isSimulation: true,
     refresh: (next) => { state.db = next; },
+    // ⚠ writeDb מדמה את saveOfficeDb: הוא מריץ את המוטציה על ה-blob
+    // הנוכחי. הבדיקות לא עוקפות את נתיב הכתיבה, הן רק מחליפות את
+    // היעד שלו — ולכן כל בדיקת כפילות כאן בודקת את הקוד שירוץ באמת.
     writeDb: async (mutate) => { mutate(state.db); return state.db; },
     reload: async () => state.db,
   }, over || {});
   Object.defineProperty(ctx, 'db', { get: () => state.db, configurable: true });
   ctx._state = state;
+  return ctx;
+}
+
+/**
+ * הקשר עם רישום פקודות.
+ *
+ * ⚠ נדרש לכל כלי שכותב: runCommand נכשל במפורש בלי רישום, כדי
+ * שאידמפוטנטיות לא תיעלם בשקט בייצור. הרישום בזיכרון מממש את **אותה**
+ * סמנטיקה של הרישום ב-DB, ולכן הבדיקות בודקות התנהגות אמיתית ולא
+ * חיקוי שלה.
+ */
+async function makeWritableCtx(over) {
+  const { memoryCommandStore } = await COMMANDS();
+  const ctx = makeCtx(over);
+  ctx.commandStore = (over && over.commandStore) || memoryCommandStore();
+  ctx.agentId = 'agent-1';
   return ctx;
 }
 
@@ -133,7 +155,7 @@ test('מספר של הצד שכנגד אינו מזוהה כלקוח ואינו 
   const { execVoiceTool } = await TOOLS();
   // התרחיש: החייב בתיק מתקשר. הוא לא לקוח פוטנציאלי, ומסירת פרטים אליו
   // היא דליפה על הלקוח שנגדו הוא עומד.
-  const ctx = makeCtx({
+  const ctx = await makeWritableCtx({
     db: {
       clients: [{ id: 'c1', name: 'הלקוח', phone: '0501111111' }],
       cases: [{ id: 'm1', client: 'c1', name: 'תביעת חוב', debtorPhone: '050-1234567', status: 'active' }],
@@ -146,7 +168,11 @@ test('מספר של הצד שכנגד אינו מזוהה כלקוח ואינו 
 
   const lead = await execVoiceTool('create_lead',
     { name: 'החייב', phone: '+972501234567' }, ALLOW, ctx);
-  assert.equal(lead.status, 'failed');
+  // ⚠ 'blocked' ולא 'failed': זו מדיניות שסירבה, לא פעולה שהשתבשה.
+  // ההבחנה מגיעה עד המסך — ⛔ "נחסמה" עם הסיבה, במקום 🔴 "נכשלה"
+  // שנקרא כמו תקלה שצריך לתקן.
+  assert.equal(lead.status, 'blocked');
+  assert.ok(/צד שכנגד/.test(lead.result.message));
   assert.equal(ctx.db.leads.length, 0, 'לא נפתח ליד עבור הצד שכנגד');
 });
 
@@ -156,7 +182,7 @@ test('מספר של הצד שכנגד אינו מזוהה כלקוח ואינו 
 
 test('create_lead פותח פנייה עם source=voice_ai ומספר מנורמל', async () => {
   const { execVoiceTool } = await TOOLS();
-  const ctx = makeCtx();
+  const ctx = await makeWritableCtx();
 
   const out = await execVoiceTool('create_lead', {
     name: 'ישראל', phone: '050-1234567', source: 'voice_ai',
@@ -175,7 +201,7 @@ test('create_lead פותח פנייה עם source=voice_ai ומספר מנורמ
 
 test('create_lead לא מכפיל פנייה קיימת מאותו מספר — מעדכן אותה', async () => {
   const { execVoiceTool } = await TOOLS();
-  const ctx = makeCtx({
+  const ctx = await makeWritableCtx({
     db: { leads: [{ id: 'l1', name: 'ישראל', phone: '+972501234567', summary: 'פנייה ראשונה' }] },
   });
 
@@ -191,7 +217,7 @@ test('create_lead לא מכפיל פנייה קיימת מאותו מספר — 
 
 test('create_lead על מספר של לקוח קיים אינו יוצר ליד', async () => {
   const { execVoiceTool } = await TOOLS();
-  const ctx = makeCtx({ db: { clients: [{ id: 'c1', name: 'ותיק', phone: '0501234567' }] } });
+  const ctx = await makeWritableCtx({ db: { clients: [{ id: 'c1', name: 'ותיק', phone: '0501234567' }] } });
 
   const out = await execVoiceTool('create_lead', { name: 'ותיק', phone: '0501234567' }, ALLOW, ctx);
   assert.equal(out.result.data.created, false);
@@ -205,7 +231,7 @@ test('create_lead על מספר של לקוח קיים אינו יוצר ליד'
 
 test('create_task יוצר משימה בפורמט של מערכת המשימות הקיימת', async () => {
   const { execVoiceTool } = await TOOLS();
-  const ctx = makeCtx({
+  const ctx = await makeWritableCtx({
     db: { cases: [{ id: 'm1', client: 'c1', name: 'תיק', status: 'active' }] },
     clientId: 'c1',
   });
@@ -231,7 +257,7 @@ test('create_task יוצר משימה בפורמט של מערכת המשימו�
 
 test('create_task אינו יוצר משימה כפולה זהה באותו תיק', async () => {
   const { execVoiceTool } = await TOOLS();
-  const ctx = makeCtx({ db: { tasks: [{ id: 't1', text: 'לחזור ללקוח', caseId: '', done: false }] } });
+  const ctx = await makeWritableCtx({ db: { tasks: [{ id: 't1', text: 'לחזור ללקוח', caseId: '', done: false }] } });
 
   const out = await execVoiceTool('create_task', { title: 'לחזור ללקוח' }, ALLOW, ctx);
   assert.equal(out.status, 'success');
@@ -241,7 +267,7 @@ test('create_task אינו יוצר משימה כפולה זהה באותו תי
 
 test('request_human_callback יוצר משימת חזרה דחופה ליום הנוכחי', async () => {
   const { execVoiceTool } = await TOOLS();
-  const ctx = makeCtx({ db: { clients: [{ id: 'c1', name: 'ישראל ישראלי' }] }, clientId: 'c1' });
+  const ctx = await makeWritableCtx({ db: { clients: [{ id: 'c1', name: 'ישראל ישראלי' }] }, clientId: 'c1' });
 
   const out = await execVoiceTool('request_human_callback',
     { reason: 'מבקש לדבר עם עורך הדין' }, ALLOW, ctx);
@@ -265,7 +291,7 @@ test('request_human_callback יוצר משימת חזרה דחופה ליום ה
 
 test('create_note מוסיף ליומן התיק ולא דורס אותו', async () => {
   const { execVoiceTool } = await TOOLS();
-  const ctx = makeCtx({
+  const ctx = await makeWritableCtx({
     db: { cases: [{ id: 'm1', name: 'תיק', diary: [{ text: 'רישום קודם', date: '1.1.2026' }] }] },
     matterId: 'm1',
   });
@@ -279,7 +305,7 @@ test('create_note מוסיף ליומן התיק ולא דורס אותו', asyn
 
 test('create_note מוסיף להערות הלקוח בלי למחוק מה שהמשתמש כתב', async () => {
   const { execVoiceTool } = await TOOLS();
-  const ctx = makeCtx({
+  const ctx = await makeWritableCtx({
     db: { clients: [{ id: 'c1', name: 'ישראל', notes: 'לקוח ותיק, מעדיף מייל' }] },
     clientId: 'c1',
   });
@@ -326,7 +352,7 @@ test('busyFromEvents: אירוע ללא שעה חוסם את כל היום', asy
 test('create_appointment קובע פגישה ביומן הפנימי', async () => {
   const { execVoiceTool } = await TOOLS();
   const date = nextWeekday(3);
-  const ctx = makeCtx({ db: { clients: [{ id: 'c1', name: 'ישראל' }] }, clientId: 'c1' });
+  const ctx = await makeWritableCtx({ db: { clients: [{ id: 'c1', name: 'ישראל' }] }, clientId: 'c1' });
 
   const out = await execVoiceTool('create_appointment',
     { date, time: '10:30', duration_minutes: 60 }, ALLOW, ctx);
@@ -345,7 +371,7 @@ test('create_appointment קובע פגישה ביומן הפנימי', async () 
 test('create_appointment מונע Double Booking', async () => {
   const { execVoiceTool } = await TOOLS();
   const date = nextWeekday(3);
-  const ctx = makeCtx({ db: { events: [{ id: 'e1', date, time: '10:00', title: 'דיון' }] } });
+  const ctx = await makeWritableCtx({ db: { events: [{ id: 'e1', date, time: '10:00', title: 'דיון' }] } });
 
   // חופפת חלקית לאירוע קיים בן שעה.
   const clash = await execVoiceTool('create_appointment', { date, time: '10:30' }, ALLOW, ctx);
@@ -361,7 +387,7 @@ test('create_appointment מונע Double Booking', async () => {
 
 test('create_appointment דוחה סוף שבוע ותאריך שעבר', async () => {
   const { execVoiceTool } = await TOOLS();
-  const ctx = makeCtx();
+  const ctx = await makeWritableCtx();
 
   const sat = await execVoiceTool('create_appointment',
     { date: '2026-08-29', time: '10:00' }, ALLOW, ctx);
@@ -396,7 +422,7 @@ test('check_calendar מחזיר רק שעות פנויות, בלי תוכן הי
 
 test('כלי שאינו מוקצה לסוכן נחסם ולא מבוצע', async () => {
   const { execVoiceTool } = await TOOLS();
-  const ctx = makeCtx();
+  const ctx = await makeWritableCtx();
 
   const out = await execVoiceTool('create_task', { title: 'משימה' }, null, ctx);
   assert.equal(out.status, 'blocked');
@@ -405,7 +431,7 @@ test('כלי שאינו מוקצה לסוכן נחסם ולא מבוצע', async
 
 test('כלי מושבת וכלי לא-זמין נחסמים, עם סיבות שונות', async () => {
   const { execVoiceTool } = await TOOLS();
-  const ctx = makeCtx();
+  const ctx = await makeWritableCtx();
 
   const disabled = await execVoiceTool('create_task', { title: 'x' },
     { enabled: false, available: true, requires_confirmation: false, risk_level: 'low' }, ctx);
@@ -436,7 +462,7 @@ test('עצירת חירום חוסמת כל כלי, כולל קריאה בלבד
 
 test('סכימה דוחה שדה לא מוכר ושדה חובה חסר', async () => {
   const { execVoiceTool } = await TOOLS();
-  const ctx = makeCtx();
+  const ctx = await makeWritableCtx();
 
   // ⚠ הקלט מגיע ממודל שמאזין למתקשר. שדה מוברח הוא וקטור תקיפה אמיתי.
   const extra = await execVoiceTool('create_task',
@@ -1054,4 +1080,832 @@ test('הקו הראשי נזרע כלא-מוגדר ולא כמחובר', () => {
   // transfer_call ו-send_message חייבים להיזרע כלא-זמינים.
   assert.ok(/\('transfer_call',\s+true,\s+true,\s+'high',\s+false/.test(seed));
   assert.ok(/\('send_message',\s+true,\s+true,\s+'high',\s+false/.test(seed));
+});
+
+// ============================================================
+// 13. קונקורנטיות — משתמש וסוכן כותבים יחד
+// ============================================================
+//
+// ⚠ זו הבדיקה שמגנה על הנכס היקר ביותר במערכת. כל ה-CRM הוא jsonb יחיד,
+// וכתיבה היא read-modify-write על שורה שלמה. אם המוטציה של הסוכן הייתה
+// "כתוב את הבלוב שקראתי", עריכה של עורך הדין באותה שנייה הייתה נמחקת
+// בלי שאיש ידע. הבדיקה מדמה בדיוק את המרוץ הזה.
+
+/**
+ * מדמה את saveOfficeDb: קורא, מחיל את המוטציה, וכותב **רק** אם הגרסה
+ * לא זזה. `onFirstRead` מזריק כתיבה מקבילה, כמו משתמש ששמר בינתיים.
+ */
+function makeConcurrentWriter(state, onFirstRead) {
+  let reads = 0;
+  const stats = { attempts: 0 };
+  return {
+    stats,
+    write: async (mutate) => {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        stats.attempts++;
+        const versionAtRead = state.version;
+        // עותק עמוק — saveOfficeDb מקבל blob טרי מהשרת בכל ניסיון.
+        const draft = JSON.parse(JSON.stringify(state.db));
+
+        if (reads++ === 0 && onFirstRead) onFirstRead(state);
+
+        mutate(draft);
+
+        if (state.version === versionAtRead) {
+          state.db = draft;
+          state.version++;
+          return state.db;
+        }
+        // הגרסה זזה → מישהו כתב בינתיים → קוראים מחדש ומחילים שוב.
+      }
+      throw new Error('write_conflict');
+    },
+  };
+}
+
+test('שינוי של משתמש ושינוי של הסוכן — שניהם שורדים', async () => {
+  const { applyOfficeCommand, memoryCommandStore } = await COMMANDS();
+
+  const state = {
+    version: 1,
+    db: makeDb({ clients: [{ id: 'c1', name: 'ישראל', notes: 'הערה מקורית' }] }),
+  };
+
+  // ⚠ בזמן שהסוכן מחיל את הפקודה, עורך הדין שומר עריכה בכרטיס הלקוח.
+  const writer = makeConcurrentWriter(state, (st) => {
+    st.db.clients[0].notes = 'עורך הדין ערך את הכרטיס';
+    st.db.clients[0].phone = '050-9999999';
+    st.version++;
+  });
+
+  const result = await applyOfficeCommand({
+    commandId: 'cmd-1', callId: 'call-1', idempotencyKey: 'k-concurrent',
+    type: 'create_task',
+    payload: { title: 'לחזור ללקוח', client_id: 'c1' },
+    actor: { type: 'agent' },
+  }, { store: memoryCommandStore(), write: writer.write });
+
+  assert.equal(result.ok, true);
+  // המוטציה הורצה פעמיים: פעם ראשונה נדחתה, פעם שנייה על נתונים טריים.
+  assert.equal(result.conflictRetries, 1, 'זוהתה התנגשות אחת');
+  assert.ok(writer.stats.attempts >= 2);
+
+  // ⚠ שני השינויים קיימים. זה כל העניין.
+  assert.equal(state.db.clients[0].notes, 'עורך הדין ערך את הכרטיס',
+    'עריכת המשתמש לא נדרסה');
+  assert.equal(state.db.clients[0].phone, '050-9999999');
+  assert.equal(state.db.tasks.length, 1, 'המשימה של הסוכן נשמרה');
+  assert.equal(state.db.tasks[0].text, 'לחזור ללקוח');
+});
+
+test('התנגשות חוזרת מדווחת ולא נבלעת', async () => {
+  const { applyOfficeCommand, memoryCommandStore } = await COMMANDS();
+  const state = { version: 1, db: makeDb() };
+  // כותב שנכשל תמיד — כמו עומס עריכה מתמשך.
+  const write = async () => { throw new Error('write_conflict'); };
+
+  await assert.rejects(
+    applyOfficeCommand({
+      commandId: 'c', callId: null, idempotencyKey: 'k-always-conflict',
+      type: 'create_task', payload: { title: 'משימה' }, actor: { type: 'agent' },
+    }, { store: memoryCommandStore(), write }),
+    /write_conflict/);
+  assert.equal(state.db.tasks.length, 0);
+});
+
+// ============================================================
+// 14. אידמפוטנטיות
+// ============================================================
+
+test('אותו tool_call_id פעמיים — פעולה אחת בלבד', async () => {
+  const { execVoiceTool } = await TOOLS();
+  const { memoryCommandStore } = await COMMANDS();
+  const store = memoryCommandStore();
+
+  const ctx = await makeWritableCtx({ commandStore: store });
+  ctx.toolCallId = 'toolu_abc123';
+
+  const first = await execVoiceTool('create_task',
+    { title: 'לבדוק את התיק' }, ALLOW, ctx);
+  const second = await execVoiceTool('create_task',
+    { title: 'לבדוק את התיק' }, ALLOW, ctx);
+
+  assert.equal(first.status, 'success');
+  assert.equal(second.status, 'success');
+  assert.equal(first.result.data.replayed, false);
+  // ⚠ הפעם השנייה מוחזרת מהרישום ולא מבוצעת. זה מה שהופך retry אחרי
+  // timeout לבטוח.
+  assert.equal(second.result.data.replayed, true, 'הפעולה השנייה שוחזרה');
+  assert.equal(ctx.db.tasks.length, 1, 'נוצרה משימה אחת בלבד');
+  assert.equal(second.result.entityId, first.result.entityId, 'אותה משימה הוחזרה');
+});
+
+test('פגישה: retry עם אותו tool_call_id אינו יוצר כפילות', async () => {
+  const { execVoiceTool } = await TOOLS();
+  const { memoryCommandStore } = await COMMANDS();
+  const date = nextWeekday(3);
+  const ctx = await makeWritableCtx({ commandStore: memoryCommandStore() });
+  ctx.toolCallId = 'toolu_appt_1';
+
+  const a = await execVoiceTool('create_appointment', { date, time: '11:00' }, ALLOW, ctx);
+  const b = await execVoiceTool('create_appointment', { date, time: '11:00' }, ALLOW, ctx);
+
+  assert.equal(a.status, 'success', a.result.message);
+  assert.equal(b.status, 'success', b.result.message);
+  assert.equal(ctx.db.events.length, 1, 'נקבעה פגישה אחת בלבד');
+  assert.equal(b.result.data.replayed, true);
+  assert.equal(b.result.entityId, a.result.entityId);
+});
+
+test('בקשה חדשה עם tool_call_id אחר — פעולה חדשה, לא כפילות שנחסמה', async () => {
+  const { execVoiceTool } = await TOOLS();
+  const { memoryCommandStore } = await COMMANDS();
+  const date = nextWeekday(3);
+  const ctx = await makeWritableCtx({ commandStore: memoryCommandStore() });
+
+  // ⚠ מתקשר שביקש באמת שתי פגישות. אילו המפתח לא כלל את tool_call_id,
+  // השנייה הייתה נחסמת כ"כפילות" והלקוח היה מקבל אחת.
+  ctx.toolCallId = 'toolu_1';
+  const a = await execVoiceTool('create_appointment', { date, time: '11:00' }, ALLOW, ctx);
+  ctx.toolCallId = 'toolu_2';
+  const b = await execVoiceTool('create_appointment', { date, time: '14:00' }, ALLOW, ctx);
+
+  assert.equal(a.status, 'success');
+  assert.equal(b.status, 'success', b.result.message);
+  assert.equal(ctx.db.events.length, 2, 'שתי פגישות שונות נקבעו');
+});
+
+test('רישום פקודות חסר נכשל במפורש ולא כותב בשקט', async () => {
+  const { execVoiceTool } = await TOOLS();
+  // ⚠ ctx בלי commandStore ובלי sb. אילו הקוד היה יוצר רישום חדש בשקט,
+  // אידמפוטנטיות הייתה נעלמת בייצור בלי שאיש ישים לב.
+  const ctx = makeCtx();
+  const out = await execVoiceTool('create_task', { title: 'משימה' }, ALLOW, ctx);
+  assert.equal(out.status, 'failed');
+  assert.ok(/אידמפוטנטיות/.test(out.result.message), out.result.message);
+  assert.equal(ctx.db.tasks.length, 0);
+});
+
+// ============================================================
+// 15. בקשת חזרה
+// ============================================================
+
+test('request_human_callback יוצר metadata מובנה ומלא', async () => {
+  const { execVoiceTool } = await TOOLS();
+  const { memoryCommandStore } = await COMMANDS();
+  const ctx = await makeWritableCtx({
+    db: { clients: [{ id: 'c1', name: 'ישראל ישראלי' }] },
+    clientId: 'c1', commandStore: memoryCommandStore(),
+  });
+
+  const out = await execVoiceTool('request_human_callback', {
+    reason: 'קיבל עיקול ורוצה לדבר עם עורך הדין',
+    preferred_time: 'מחר אחרי 16:00',
+    urgency: 'high',
+  }, ALLOW, ctx);
+
+  assert.equal(out.status, 'success');
+  const cb = ctx.db.tasks[0].callback;
+  assert.ok(cb, 'נוצר metadata של בקשת חזרה');
+  assert.equal(cb.status, 'waiting');
+  assert.equal(cb.attemptCount, 0);
+  assert.equal(cb.lastAttemptAt, null);
+  assert.equal(cb.completedAt, null);
+  assert.equal(cb.urgency, 'high');
+  assert.equal(cb.callerName, 'ישראל ישראלי');
+  assert.equal(cb.callerPhone, '+972501234567', 'המספר נשמר מנורמל');
+  assert.equal(cb.preferredCallbackTime, 'מחר אחרי 16:00');
+  assert.equal(cb.sourceCallId, 'call-1');
+  assert.ok(cb.createdAt);
+  // המשימה עצמה חייבת להיראות במסך המשימות הקיים.
+  assert.equal(ctx.db.tasks[0].done, false);
+  assert.equal(ctx.db.tasks[0].priority, 'urgent');
+});
+
+test('מחזור החיים של בקשת חזרה: לא ענה → נדחה → הושלם', async () => {
+  const { applyOfficeCommand, memoryCommandStore } = await COMMANDS();
+  const state = { version: 1, db: makeDb() };
+  const write = async (mutate) => { mutate(state.db); return state.db; };
+  const store = memoryCommandStore();
+  let n = 0;
+  const run = (type, payload) => applyOfficeCommand({
+    commandId: 'c' + (++n), callId: 'call-1', idempotencyKey: 'k' + n,
+    type, payload, actor: { type: 'user', id: 'u1' },
+  }, { store, write });
+
+  await run('create_callback', { reason: 'רוצה לדבר', phone: '0501234567', name: 'דנה' });
+  const taskId = state.db.tasks[0].id;
+
+  await run('update_callback', { task_id: taskId, status: 'no_answer' });
+  let cb = state.db.tasks[0].callback;
+  assert.equal(cb.status, 'no_answer');
+  assert.equal(cb.attemptCount, 1, 'ניסיון נספר');
+  assert.ok(cb.lastAttemptAt);
+  assert.equal(state.db.tasks[0].done, false, 'המשימה נשארת פתוחה');
+
+  await run('update_callback', { task_id: taskId, status: 'reschedule',
+    preferred_time: 'מחר בבוקר' });
+  cb = state.db.tasks[0].callback;
+  // ⚠ "נדחה למועד אחר" אינו ניסיון חיוג. ספירתו הייתה מציגה לקוח כמי
+  // שניסו להשיגו חמש פעמים כשלא ניסו כלל.
+  assert.equal(cb.attemptCount, 1, 'דחייה אינה נספרת כניסיון');
+  assert.equal(cb.preferredCallbackTime, 'מחר בבוקר');
+
+  await run('update_callback', { task_id: taskId, status: 'completed' });
+  cb = state.db.tasks[0].callback;
+  assert.equal(cb.status, 'completed');
+  assert.ok(cb.completedAt);
+  // סגירת הבקשה סוגרת את המשימה — אחרת היא נשארת ברשימה לנצח.
+  assert.equal(state.db.tasks[0].done, true);
+});
+
+test('בקשת חזרה כפולה מאותו מספר אינה נפתחת פעמיים', async () => {
+  const { applyOfficeCommand, memoryCommandStore } = await COMMANDS();
+  const state = { version: 1, db: makeDb() };
+  const write = async (mutate) => { mutate(state.db); return state.db; };
+  const store = memoryCommandStore();
+
+  await applyOfficeCommand({
+    commandId: 'a', callId: 'call-1', idempotencyKey: 'ka', type: 'create_callback',
+    payload: { reason: 'ראשון', phone: '050-1234567' }, actor: { type: 'agent' },
+  }, { store, write });
+
+  // שיחה שנייה, מספר בפורמט אחר — עדיין אותו אדם.
+  const second = await applyOfficeCommand({
+    commandId: 'b', callId: 'call-2', idempotencyKey: 'kb', type: 'create_callback',
+    payload: { reason: 'שני', phone: '+972501234567' }, actor: { type: 'agent' },
+  }, { store, write });
+
+  assert.equal(second.deduped, true);
+  assert.equal(state.db.tasks.length, 1, 'בקשת חזרה אחת בלבד');
+});
+
+test('בקשת חזרה מועשרת כשהשם והמועד מגיעים בהמשך', async () => {
+  const { applyOfficeCommand, memoryCommandStore } = await COMMANDS();
+  const state = { db: makeDb() };
+  const write = async (mutate) => { mutate(state.db); return state.db; };
+  const store = memoryCommandStore();
+  let n = 0;
+  const run = (type, payload) => applyOfficeCommand({
+    commandId: 'c' + (++n), callId: 'call-1', idempotencyKey: 'k' + n,
+    type, payload, actor: { type: 'agent' },
+  }, { store, write });
+
+  // ⚠ הסדר בשיחה דחופה: קודם רושמים בקשת חזרה (הטלפון בידינו), רק
+  // אחר כך שואלים לשם. מתקשר מתוח שינתק באמצע לא ייעלם.
+  await run('create_callback', { reason: 'קיבל עיקול', phone: '0501234567', urgency: 'high' });
+  let cb = state.db.tasks[0].callback;
+  assert.ok(/^[\d\-+ ()]+$/.test(cb.callerName), 'בשלב זה השם הוא המספר');
+  assert.ok(!/·.*·/.test(state.db.tasks[0].text), 'המספר אינו מוכפל בכותרת');
+
+  // המתקשר מוסר שם ומועד מועדף — הקריאה השנייה משלימה ולא נזרקת.
+  const second = await run('create_callback', {
+    reason: 'רוצה לדבר היום', phone: '+972501234567',
+    name: 'ישראל ישראלי', preferred_time: 'אחרי 16:00', urgency: 'critical',
+  });
+
+  assert.equal(second.deduped, true, 'לא נפתחה בקשה שנייה');
+  assert.equal(state.db.tasks.length, 1);
+  cb = state.db.tasks[0].callback;
+  assert.equal(cb.callerName, 'ישראל ישראלי', 'השם הושלם');
+  assert.equal(cb.preferredCallbackTime, 'אחרי 16:00', 'המועד המועדף נשמר');
+  assert.ok(/ישראל ישראלי/.test(state.db.tasks[0].text), 'כותרת המשימה עודכנה');
+  // דחיפות עולה בלבד: מידע חדש יכול להחמיר הערכה, לא להרגיע אותה.
+  assert.equal(cb.urgency, 'critical');
+  assert.ok(cb.reason.includes('קיבל עיקול') && cb.reason.includes('רוצה לדבר היום'),
+    'שתי הסיבות נשמרו');
+});
+
+test('create_lead משלים את שם הפונה בבקשת חזרה פתוחה', async () => {
+  const { applyOfficeCommand, memoryCommandStore } = await COMMANDS();
+  const state = { db: makeDb() };
+  const write = async (mutate) => { mutate(state.db); return state.db; };
+  const store = memoryCommandStore();
+  let n = 0;
+  const run = (type, payload) => applyOfficeCommand({
+    commandId: 'c' + (++n), callId: 'call-1', idempotencyKey: 'k' + n,
+    type, payload, actor: { type: 'agent' },
+  }, { store, write });
+
+  await run('create_callback', { reason: 'עיקול', phone: '0501234567' });
+  await run('create_lead', { name: 'דנה כהן', phone: '0501234567', source: 'voice_ai' });
+
+  const cb = state.db.tasks[0].callback;
+  // ⚠ בלי ההשלמה, רשימת "ממתינים לחזרה" הייתה מציגה מספר טלפון בזמן
+  // שהשם כבר ידוע — ועורך הדין שמתקשר חזרה לא היה יודע למי הוא פונה.
+  assert.equal(cb.callerName, 'דנה כהן');
+  assert.ok(/דנה כהן/.test(state.db.tasks[0].text));
+  assert.equal(state.db.tasks[0].leadId, state.db.leads[0].id, 'הבקשה קושרה לפנייה');
+});
+
+test('השלמה אינה דורסת שם שנמסר במפורש', async () => {
+  const { applyOfficeCommand, memoryCommandStore } = await COMMANDS();
+  const state = { db: makeDb() };
+  const write = async (mutate) => { mutate(state.db); return state.db; };
+  const store = memoryCommandStore();
+  let n = 0;
+  const run = (type, payload) => applyOfficeCommand({
+    commandId: 'c' + (++n), callId: 'call-1', idempotencyKey: 'k' + n,
+    type, payload, actor: { type: 'agent' },
+  }, { store, write });
+
+  await run('create_callback', { reason: 'עיקול', phone: '0501234567', name: 'ישראל' });
+  // ⚠ ליד בשם אחר (בן משפחה שהתקשר, טעות הקלדה) לא רשאי לדרוס שם
+  // שהמתקשר מסר במפורש.
+  await run('create_lead', { name: 'מישהו אחר', phone: '0501234567' });
+  assert.equal(state.db.tasks[0].callback.callerName, 'ישראל');
+});
+
+// ============================================================
+// 16. נרמול מספרי טלפון
+// ============================================================
+
+test('normalizePhoneNumber ממיר לפורמט E.164', async () => {
+  const { normalizePhoneNumber } = await PHONE();
+
+  const mobile = normalizePhoneNumber('0501234567');
+  assert.equal(mobile.normalized, '+972501234567');
+  assert.equal(mobile.valid, true);
+  assert.equal(mobile.kind, 'mobile');
+  assert.equal(mobile.display, '050-123-4567');
+
+  // כל הצורות שאותו אדם מופיע בהן במערכת.
+  for (const raw of ['050-123-4567', '050 123 4567', '+972501234567',
+                     '972501234567', '00972501234567', '(050) 123-4567']) {
+    assert.equal(normalizePhoneNumber(raw).normalized, '+972501234567', raw);
+  }
+});
+
+test('normalizePhoneNumber מטפל בקווים נייחים ובכל הקידומות', async () => {
+  const { normalizePhoneNumber } = await PHONE();
+  const cases = [
+    ['021234567', '+97221234567'],
+    ['031234567', '+97231234567'],
+    ['041234567', '+97241234567'],
+    ['081234567', '+97281234567'],
+    ['091234567', '+97291234567'],
+    ['0771234567', '+972771234567'],
+  ];
+  for (const [raw, expected] of cases) {
+    const r = normalizePhoneNumber(raw);
+    assert.equal(r.normalized, expected, raw);
+    assert.equal(r.valid, true, `${raw} אמור להיות תקין`);
+  }
+});
+
+test('normalizePhoneNumber דוחה מספרים באורך שגוי ומספרי שירות', async () => {
+  const { normalizePhoneNumber } = await PHONE();
+
+  // ⚠ נייד קצר בספרה. normalizePhone הגנרי היה מקבל אותו (הוא בודק
+  // טווח אורך רחב), ולכן הסיווג כאן הוא מה שמונע בקשת חזרה למספר
+  // שאי אפשר לחייג אליו.
+  const short = normalizePhoneNumber('05012345');
+  assert.equal(short.valid, false);
+  assert.ok(/ספרות/.test(short.reason), short.reason);
+
+  const tollFree = normalizePhoneNumber('1-800-123-456');
+  assert.equal(tollFree.valid, false);
+  assert.equal(tollFree.kind, 'toll_free');
+
+  assert.equal(normalizePhoneNumber('').valid, false);
+  assert.equal(normalizePhoneNumber('שלום').valid, false);
+});
+
+test('samePhoneNumber מזהה את אותו אדם בפורמטים שונים', async () => {
+  const { samePhoneNumber } = await PHONE();
+  assert.equal(samePhoneNumber('0501234567', '+972501234567'), true);
+  assert.equal(samePhoneNumber('050-123-4567', '972501234567'), true);
+  assert.equal(samePhoneNumber('0501234567', '0501234568'), false);
+  assert.equal(samePhoneNumber('', '0501234567'), false);
+});
+
+test('המספר הציבורי מוגדר בפורמט E.164', async () => {
+  const { OFFICE_PHONE_E164, normalizePhoneNumber, displayFromE164 } = await PHONE();
+  assert.equal(OFFICE_PHONE_E164, '+972552745790');
+  assert.equal(normalizePhoneNumber('0552745790').normalized, OFFICE_PHONE_E164);
+  assert.equal(displayFromE164(OFFICE_PHONE_E164), '055-274-5790');
+});
+
+// ============================================================
+// 17. זהות — Caller ID אינו אימות
+// ============================================================
+
+test('התאמת מספר אינה verified ואינה מספיקה לפרטי תיק', async () => {
+  const { execVoiceTool } = await TOOLS();
+  const ctx = makeCtx({
+    db: {
+      clients: [{ id: 'c1', name: 'ישראל ישראלי', phone: '0501234567' }],
+      cases: [{ id: 'm1', client: 'c1', name: 'תיק הוצאה לפועל',
+                stage: 'דיון', status: 'active' }],
+    },
+    // ברירת המחדל של המערכת.
+    identityStatus: 'phone_match', identityPolicy: 'strict',
+  });
+
+  const out = await execVoiceTool('lookup_client', { phone: '0501234567' }, ALLOW, ctx);
+  assert.equal(out.status, 'success');
+  assert.equal(out.result.data.found, true);
+  assert.equal(out.result.data.identity_status, 'phone_match');
+  assert.equal(out.result.data.may_disclose_case_details, false);
+
+  // ⚠ שם הלקוח כן נמסר (פנייה בשם היא נוהג מקובל), אבל שם התיק ושלב
+  // ההליך — לא. מה שלא נשלח לא יכול להיאמר למי שהשיג טלפון.
+  const serialized = JSON.stringify(out.result);
+  assert.ok(serialized.includes('ישראל ישראלי'), 'השם נמסר');
+  assert.ok(!serialized.includes('תיק הוצאה לפועל'), 'שם התיק לא נמסר');
+  assert.ok(!serialized.includes('דיון'), 'שלב ההליך לא נמסר');
+});
+
+test('זהות שאומתה כן מאפשרת מסירת פרטי תיק', async () => {
+  const { execVoiceTool } = await TOOLS();
+  const ctx = makeCtx({
+    db: {
+      clients: [{ id: 'c1', name: 'ישראל ישראלי', phone: '0501234567' }],
+      cases: [{ id: 'm1', client: 'c1', name: 'תיק הוצאה לפועל',
+                stage: 'דיון', status: 'active' }],
+    },
+    identityStatus: 'verified',
+  });
+  const out = await execVoiceTool('lookup_client', { phone: '0501234567' }, ALLOW, ctx);
+  assert.equal(out.result.data.may_disclose_case_details, true);
+  assert.ok(JSON.stringify(out.result).includes('תיק הוצאה לפועל'));
+});
+
+test('מדיניות מקלה מאפשרת מסירה על סמך התאמת מספר', async () => {
+  const { execVoiceTool } = await TOOLS();
+  const ctx = makeCtx({
+    db: {
+      clients: [{ id: 'c1', name: 'ישראל', phone: '0501234567' }],
+      cases: [{ id: 'm1', client: 'c1', name: 'תיק א', status: 'active' }],
+    },
+    identityStatus: 'phone_match', identityPolicy: 'phone_match_ok',
+  });
+  const out = await execVoiceTool('lookup_client', { phone: '0501234567' }, ALLOW, ctx);
+  assert.equal(out.result.data.may_disclose_case_details, true);
+});
+
+// ============================================================
+// 18. מוכנות לייצור
+// ============================================================
+
+function readyInput(over) {
+  return Object.assign({
+    gatewayState: 'online',
+    gatewaySecretConfigured: true,
+    components: { asterisk: 'configured', sip: 'registered' },
+    providers: {
+      stt: { name: 'faster-whisper', mode: 'real', healthy: true, production_ready: true },
+      llm: { name: 'anthropic', mode: 'real', healthy: true, production_ready: true },
+      tts: { name: 'local', mode: 'real', healthy: true, production_ready: true },
+    },
+    transport: 'audiosocket',
+    outboxPending: 0,
+    deadLetters: 0,
+    phoneLine: { public_number: '+972552745790', is_active: true, sip_status: 'registered' },
+    toolsEnabled: 8,
+    agentActive: true,
+    crmReachable: true,
+    liveCallsEnabled: false,
+    emergencyStop: false,
+  }, over || {});
+}
+
+test('מערכת מלאה — ready=true', async () => {
+  const { evaluateVoiceProductionReadiness } = await READINESS();
+  const r = evaluateVoiceProductionReadiness(readyInput());
+  assert.equal(r.ready, true, r.blocking_reasons.join('; '));
+  assert.equal(r.blocking_reasons.length, 0);
+  assert.equal(r.progress, 100);
+});
+
+test('TTS במצב הדגמה חוסם — למרות שהוא בריא', async () => {
+  const { evaluateVoiceProductionReadiness } = await READINESS();
+  // ⚠ הבדיקה המרכזית של כל המנוע. Mock עונה, מהיר, לא קורס — והוא
+  // מחזיר שקט. מערכת שבודקת healthy בלבד הייתה מדווחת ירוק.
+  const r = evaluateVoiceProductionReadiness(readyInput({
+    providers: Object.assign(readyInput().providers, {
+      tts: { name: 'mock', mode: 'mock', healthy: true, production_ready: false,
+             message: 'מצב הדגמה' },
+    }),
+  }));
+  assert.equal(r.ready, false);
+  assert.ok(r.blocking_reasons.some(x => /הקראה/.test(x)), r.blocking_reasons.join('; '));
+  const tts = r.checks.find(c => c.key === 'tts');
+  assert.equal(tts.state, 'mock');
+  assert.equal(tts.severity, 'blocking');
+});
+
+test('כשל סגור: מידע חסר פירושו לא מוכן', async () => {
+  const { evaluateVoiceProductionReadiness } = await READINESS();
+
+  // ⚠ never_connected אינו "כנראה בסדר" — הוא הסימן הבטוח ביותר
+  // שאין שרת קול.
+  assert.equal(evaluateVoiceProductionReadiness(
+    readyInput({ gatewayState: 'never_connected' })).ready, false);
+  assert.equal(evaluateVoiceProductionReadiness(
+    readyInput({ gatewaySecretConfigured: false })).ready, false);
+  assert.equal(evaluateVoiceProductionReadiness(
+    readyInput({ providers: {} })).ready, false);
+  assert.equal(evaluateVoiceProductionReadiness(
+    readyInput({ toolsEnabled: 0 })).ready, false);
+  assert.equal(evaluateVoiceProductionReadiness(
+    readyInput({ agentActive: false })).ready, false);
+  assert.equal(evaluateVoiceProductionReadiness(
+    readyInput({ phoneLine: null })).ready, false);
+  assert.equal(evaluateVoiceProductionReadiness(
+    readyInput({ transport: null, components: { asterisk: 'configured', sip: 'registered' } })).ready,
+    false);
+  assert.equal(evaluateVoiceProductionReadiness(
+    readyInput({ emergencyStop: true })).ready, false);
+});
+
+test('פעולות שלא סונכרנו הן אזהרה ולא חסם', async () => {
+  const { evaluateVoiceProductionReadiness } = await READINESS();
+  // ⚠ חסימה כאן הייתה מונעת דווקא את התאוששות המערכת: פעולות ממתינות
+  // מעידות על תקלה שכבר קרתה, לא על אי-יכולת לענות לשיחה חדשה.
+  const r = evaluateVoiceProductionReadiness(readyInput({ deadLetters: 3 }));
+  assert.equal(r.ready, true);
+  assert.ok(r.warnings.some(x => /סנכרון/.test(x)), r.warnings.join('; '));
+});
+
+test('canEnableLiveCalls חוסם כשיש חסמים', async () => {
+  const { evaluateVoiceProductionReadiness, canEnableLiveCalls } = await READINESS();
+
+  const blocked = canEnableLiveCalls(evaluateVoiceProductionReadiness(
+    readyInput({ providers: { tts: { mode: 'mock', healthy: true, production_ready: false } } })));
+  assert.equal(blocked.allowed, false);
+  assert.ok(blocked.reason.length > 0);
+
+  assert.equal(canEnableLiveCalls(
+    evaluateVoiceProductionReadiness(readyInput())).allowed, true);
+});
+
+// ============================================================
+// 19. Snapshot של תצורת הסוכן
+// ============================================================
+
+test('תצורת הסוכן נשמרת בפתיחת השיחה ואינה מתעדכנת אחריה', () => {
+  const orch = fs.readFileSync(
+    path.join(ROOT, 'supabase/functions/_shared/voice/orchestrator.ts'), 'utf8');
+
+  // ⚠ ה-snapshot חייב להיכתב פעם אחת, ב-insert. אילו הוא היה מתעדכן
+  // אחר כך, prompt שהשתנה בצהריים היה משנה למפרע את מה ששיחה של הבוקר
+  // "התנהלה לפיו" — וזו בדיוק השאלה שנשאלת כשמישהו מתלונן.
+  const insertIdx = orch.indexOf('agent_snapshot: agent');
+  assert.ok(insertIdx > 0, 'agent_snapshot נכתב ב-insert');
+
+  const updates = [...orch.matchAll(/\.update\(\{([\s\S]{0,900}?)\}\)/g)].map(m => m[1]);
+  for (const body of updates) {
+    for (const field of ['agent_snapshot', 'prompt_hash', 'tools_policy_version',
+                         'agent_config_version']) {
+      assert.ok(!body.includes(field + ':'),
+        `${field} לא אמור להתעדכן אחרי פתיחת השיחה`);
+    }
+  }
+
+  // וכל השדות אכן קיימים בסכמה.
+  const mig = fs.readFileSync(
+    path.join(ROOT, 'supabase/migrations/20260823000000_call_center_production_hardening.sql'),
+    'utf8');
+  for (const col of ['agent_config_version', 'prompt_version', 'prompt_hash',
+                     'tools_policy_version', 'llm_provider', 'llm_model',
+                     'stt_provider', 'stt_model', 'tts_provider', 'tts_model',
+                     'agent_snapshot']) {
+    assert.ok(mig.includes(`add column if not exists ${col}`), `חסרה עמודה ${col}`);
+  }
+});
+
+test('הסכמה החדשה additive בלבד', () => {
+  const mig = fs.readFileSync(
+    path.join(ROOT, 'supabase/migrations/20260823000000_call_center_production_hardening.sql'),
+    'utf8');
+  // ⚠ מיגרציה שמוחקת עמודה או טבלה שוברת שיחות שכבר נשמרו, ואת הקוד
+  // שקורא אותן. הבדיקה כאן היא מה שיעצור שינוי כזה לפני שהוא מגיע
+  // לייצור.
+  assert.ok(!/drop\s+column/i.test(mig), 'אין מחיקת עמודות');
+  assert.ok(!/drop\s+table(?!\s+if\s+exists\s+public\.voice_request_nonces)/i.test(mig),
+    'אין מחיקת טבלאות');
+  assert.ok(!/truncate/i.test(mig), 'אין truncate');
+  assert.ok(!/alter\s+column[\s\S]{0,40}type/i.test(mig), 'אין שינוי טיפוס עמודה');
+});
+
+test('שכבת המוטציה מוגבלת לרשימת פקודות סגורה', async () => {
+  const { COMMAND_MUTATORS } = await COMMANDS();
+  const mig = fs.readFileSync(
+    path.join(ROOT, 'supabase/migrations/20260823000000_call_center_production_hardening.sql'),
+    'utf8');
+
+  // ⚠ ה-AI לא מספק פונקציית mutate — הוא שולח שם מתוך רשימה. הרשימה
+  // בקוד וברמת ה-DB חייבות להיות זהות, אחרת פקודה תיחסם רק באחד
+  // מהמקומות ותתגלה כשגיאה מוזרה בייצור.
+  const inCode = Object.keys(COMMAND_MUTATORS).sort();
+  const m = mig.match(/command_type text not null check \(command_type in \(([\s\S]*?)\)\)/);
+  assert.ok(m, 'נמצאה רשימת הפקודות ב-DB');
+  const inDb = [...m[1].matchAll(/'([a-z_]+)'/g)].map(x => x[1]).sort();
+  assert.deepEqual(inCode, inDb, 'הרשימות זהות');
+});
+
+// ============================================================
+// 20. שרת הקול — Outbox, dead letter, barge-in, ספקי Mock
+// ============================================================
+//
+// ⚠ הקוד הזה ב-Python ורץ במכונה אחרת, אבל הוא חלק מאותה מערכת: ה-
+// Outbox הוא מה שמונע אובדן פנייה, ו-ProviderStatus.mock הוא מה שמונע
+// הכרזת מוכנות שגויה. בדיקה שלהם דרך shell היא הדרך להחזיק את שניהם
+// תחת `npm test` אחד.
+//
+// מדולג בסביבה בלי Python — ה-CRM עצמו אינו תלוי בו.
+
+function runPython(t, script) {
+  const { execFileSync } = require('node:child_process');
+  try {
+    return execFileSync('python', ['-c', script], {
+      encoding: 'utf8', cwd: path.join(ROOT, 'services/voice-gateway/orchestrator'),
+      env: Object.assign({}, process.env, { PYTHONIOENCODING: 'utf-8' }),
+    }).trim();
+  } catch (e) {
+    if (/not recognized|ENOENT|No such file/i.test(String(e.message))) {
+      t.skip('Python אינו זמין בסביבה הזו');
+      return null;
+    }
+    throw new Error(String(e.stderr || e.message).slice(0, 800));
+  }
+}
+
+test('ספק Mock מדווח healthy אך לא production_ready', (t) => {
+  const out = runPython(t, [
+    'import sys, json; sys.path.insert(0, ".")',
+    'from app.capabilities import ProviderStatus',
+    'from app.tts.base import MockTTSProvider',
+    'from app.stt.base import MockSTTProvider',
+    'from app.llm.base import MockLLMProvider',
+    'res = {k: p.capabilities().as_dict() for k, p in {',
+    '  "tts": MockTTSProvider(), "stt": MockSTTProvider(), "llm": MockLLMProvider()}.items()}',
+    'print(json.dumps(res, ensure_ascii=False))',
+  ].join(NL));
+  if (out === null) return;
+
+  const res = JSON.parse(out);
+  for (const kind of ['tts', 'stt', 'llm']) {
+    // ⚠ שני הדגלים, ובמפורש. השירות פועל — ואי אפשר לענות איתו לטלפון.
+    assert.equal(res[kind].healthy, true, `${kind} אמור להיות healthy`);
+    assert.equal(res[kind].production_ready, false,
+      `${kind} לעולם לא production_ready במצב mock`);
+    assert.equal(res[kind].mode, 'mock');
+    assert.ok(res[kind].message.length > 0, `${kind} מסביר למה`);
+  }
+});
+
+test('Outbox: ה-CRM לא זמין → הפעולה נשמרת; חזר → נשלחת ונמחקת', (t) => {
+  const out = runPython(t, [
+    'import sys, json, asyncio, tempfile, os; sys.path.insert(0, ".")',
+    'from app.crm.outbox import Outbox',
+    'async def main():',
+    '    ob = Outbox(os.path.join(tempfile.mkdtemp(), "o.db"), max_retries=5)',
+    '    await ob.start()',
+    '    await ob.add("call.start", {"from": "+972501234567"}, idempotency_key="k1")',
+    '    queued = await ob.counts()',
+    '    batch = await ob.next_batch()',
+    '    entry = batch[0]',
+    '    await ob.mark_completed(entry.id)',
+    '    done = await ob.counts()',
+    '    print(json.dumps({"queued": queued, "done": done,',
+    '                      "action": entry.action, "idem": entry.idempotency_key,',
+    '                      "payload": entry.payload}, ensure_ascii=False))',
+    'asyncio.run(main())',
+  ].join(NL));
+  if (out === null) return;
+
+  const r = JSON.parse(out);
+  assert.equal(r.queued.pending, 1, 'הפעולה נשמרה כשה-CRM לא היה זמין');
+  assert.equal(r.action, 'call.start');
+  // ⚠ מפתח האידמפוטנטיות שורד את התור. בלעדיו, שליחה חוזרת הייתה
+  // יוצרת שיחה שנייה — כלומר התור היה הופך למנגנון לייצור כפילויות.
+  assert.equal(r.idem, 'k1');
+  assert.equal(r.payload.from, '+972501234567');
+  assert.equal(r.done.completed, 1);
+  assert.ok(!r.done.pending, 'לא נשארה פעולה ממתינה');
+});
+
+test('Outbox: מיצוי הניסיונות מעביר ל-dead_letter ולא מוחק', (t) => {
+  const out = runPython(t, [
+    'import sys, json, asyncio, tempfile, os; sys.path.insert(0, ".")',
+    'from app.crm.outbox import Outbox',
+    'async def main():',
+    '    ob = Outbox(os.path.join(tempfile.mkdtemp(), "o.db"), max_retries=3)',
+    '    await ob.start()',
+    '    i = await ob.add("tool.execute", {"tool": "create_appointment"})',
+    '    dead = []',
+    '    for _ in range(3):',
+    '        dead.append(await ob.mark_failed(i, "connection refused"))',
+    '    counts = await ob.counts()',
+    '    dl = await ob.dead_letters()',
+    '    print(json.dumps({"dead_flags": dead, "counts": counts,',
+    '                      "n": len(dl), "attempts": dl[0].attempt_count,',
+    '                      "err": dl[0].last_error}, ensure_ascii=False))',
+    'asyncio.run(main())',
+  ].join(NL));
+  if (out === null) return;
+
+  const r = JSON.parse(out);
+  assert.deepEqual(r.dead_flags, [false, false, true], 'הועבר ל-dead_letter רק במיצוי');
+  assert.equal(r.counts.dead_letter, 1);
+  // ⚠ הפעולה **נשארת**. פנייה של לקוח שלא נרשמה חייבת להיות ניתנת
+  // לאיתור ולטיפול; מחיקה בשקט היא בדיוק מה שהמפרט אוסר.
+  assert.equal(r.n, 1, 'הפעולה נשמרה ולא נמחקה');
+  assert.equal(r.attempts, 3);
+  assert.ok(/connection refused/.test(r.err));
+});
+
+test('barge-in: דיבור בזמן הקראה מפעיל השתקה', (t) => {
+  const out = runPython(t, [
+    'import sys, json; sys.path.insert(0, ".")',
+    'from app.audio.vad import BargeInPolicy, BargeInConfig',
+    'frame_silence = b"\\x00\\x00" * 320',
+    'frame_loud = b"\\x00\\x40" * 320',
+    'p = BargeInPolicy(BargeInConfig(grace_ms=0, min_speech_frames=5))',
+    'p.on_speech_started()',
+    'quiet = [p.push(frame_silence) for _ in range(10)]',
+    'loud = [p.push(frame_loud) for _ in range(10)]',
+    'p2 = BargeInPolicy(BargeInConfig(enabled=False))',
+    'p2.on_speech_started()',
+    'off = [p2.push(frame_loud) for _ in range(20)]',
+    'p3 = BargeInPolicy(BargeInConfig(grace_ms=400, min_speech_frames=2))',
+    'p3.on_speech_started()',
+    'grace = [p3.push(frame_loud) for _ in range(5)]',
+    'print(json.dumps({"quiet": any(quiet), "loud": any(loud),',
+    '                  "disabled": any(off), "in_grace": any(grace)}))',
+  ].join(NL));
+  if (out === null) return;
+
+  const r = JSON.parse(out);
+  assert.equal(r.quiet, false, 'שקט אינו הפרעה');
+  assert.equal(r.loud, true, 'דיבור רצוף מפעיל השתקה');
+  // ⚠ כשהמתג כבוי, המדיניות לא מפעילה השתקה — אחרת הסוכנת הייתה
+  // נקטעת בלי שהתעבורה יודעת להפסיק, והתמלול היה קולט את קולה שלה.
+  assert.equal(r.disabled, false, 'barge-in כבוי אינו מפעיל');
+  // ⚠ חלון החסד מונע מהד של המילה האחרונה של המתקשר לקטוע את המשפט
+  // הראשון של הסוכנת.
+  assert.equal(r.in_grace, false, 'חלון החסד מגן על תחילת המשפט');
+});
+
+test('AudioSocketTransport תומך בהפסקת השמעה; WebSocket מצהיר שהוא שלד', (t) => {
+  const out = runPython(t, [
+    'import sys, json; sys.path.insert(0, ".")',
+    'from app.media.audiosocket import AudioSocketTransport',
+    'from app.media.websocket import WebSocketMediaTransport',
+    'a = AudioSocketTransport("127.0.0.1", 8090).health().as_dict()',
+    'w = WebSocketMediaTransport("127.0.0.1", 8091).health().as_dict()',
+    'print(json.dumps({"audiosocket": a, "websocket": w}, ensure_ascii=False))',
+  ].join(NL));
+  if (out === null) return;
+
+  const r = JSON.parse(out);
+  assert.equal(r.audiosocket.supports_barge_in, true);
+  // ⚠ שלד שמדווח production_ready היה מאפשר להדליק שיחות אמיתיות מעליו
+  // — Asterisk היה מתחבר, השיחה הייתה נענית, ואיש לא היה שומע דבר.
+  assert.equal(r.websocket.production_ready, false, 'שלד לעולם לא מוכן לייצור');
+  assert.equal(r.websocket.healthy, true, 'המודול עצמו תקין');
+  assert.ok(r.websocket.message.length > 0, 'מסביר שהוא שלד');
+});
+
+// ============================================================
+// 21. שגיאות מובנות
+// ============================================================
+
+test('לכל קוד שגיאה יש הודעה בעברית והחלטת retry', async () => {
+  const { VoiceError, isRetryable, humanMessage } = await load(
+    'supabase/functions/_shared/voice/errors.ts');
+
+  const e = new VoiceError('CRM_UNAVAILABLE', 'ECONNREFUSED 10.0.0.1:443', 'call-9');
+  const payload = e.toPayload();
+  assert.equal(payload.code, 'CRM_UNAVAILABLE');
+  assert.equal(payload.retryable, true);
+  assert.equal(payload.call_id, 'call-9');
+  assert.ok(payload.human_message.length > 0);
+  assert.equal(payload.technical_message, 'ECONNREFUSED 10.0.0.1:443');
+
+  // ⚠ ה-payload שמוצג למשתמש אינו כולל את הפרטים הטכניים.
+  const user = e.toUserPayload();
+  assert.ok(!('technical_message' in user), 'אין stack/פרטים טכניים ב-UI');
+  assert.ok(!JSON.stringify(user).includes('ECONNREFUSED'));
+
+  // retryable הוא החלטה: מה שלא ישתנה מעצמו לא מנוסה שוב.
+  assert.equal(isRetryable('SIGNATURE_INVALID'), false);
+  assert.equal(isRetryable('TOOL_NOT_ALLOWED'), false);
+  assert.equal(isRetryable('LIVE_CALLS_DISABLED'), false);
+  assert.equal(isRetryable('CRM_UNAVAILABLE'), true);
+  assert.equal(isRetryable('TOOL_TIMEOUT'), true);
+  assert.ok(humanMessage('TTS_UNAVAILABLE').includes('הקראה'));
+});
+
+test('הודעה ייעודית דורסת את ההודעה הגנרית של הקוד', async () => {
+  const { VoiceError } = await load('supabase/functions/_shared/voice/errors.ts');
+  // ⚠ אותו קוד משרת מצבים שונים. למודל שמדבר עם המתקשר צריך להיאמר
+  // "המועד תפוס", לא הסבר על גרסאות נתונים.
+  const e = new VoiceError('CRM_CONFLICT', 'double booking', null,
+    'המועד כבר תפוס ביומן. יש להציע מועד אחר.');
+  assert.ok(/תפוס/.test(e.message));
+  assert.equal(e.code, 'CRM_CONFLICT');
+  assert.equal(e.technical, 'double booking');
 });
