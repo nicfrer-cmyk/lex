@@ -30,6 +30,7 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const BUCKET = 'documents';
 const LOCK_TTL_MS = 20 * 60 * 1000; // Word renews an active lock periodically while open
+const MAX_PUT_BYTES = 50 * 1024 * 1024;
 
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
 
@@ -238,7 +239,15 @@ Deno.serve(async (req) => {
     const lockedByOther = existing && existing.locked_by !== user.userId && new Date(existing.expires_at).getTime() > Date.now();
     if (lockedByOther) return new Response('Locked', { status: 423 });
 
+    // PUT overwrites the only stored copy in place, so guard what can be written:
+    // nothing over the size cap (it would also bypass the plan's storage quota), and
+    // never an empty body over a real document — some clients send a 0-byte PUT
+    // before the real one, and storing it would wipe the file. Acknowledged as a no-op.
+    const declared = Number(req.headers.get('content-length') || '0');
+    if (declared > MAX_PUT_BYTES) return new Response('Payload Too Large', { status: 413 });
     const bytes = new Uint8Array(await req.arrayBuffer());
+    if (bytes.length > MAX_PUT_BYTES) return new Response('Payload Too Large', { status: 413 });
+    if (bytes.length === 0) return new Response(null, { status: 204 });
     const { error } = await admin.storage.from(BUCKET).upload(doc.filePath, bytes, { upsert: true, contentType: mimeType });
     if (error) return new Response('Internal Server Error: ' + error.message, { status: 500 });
     return new Response(null, { status: 204 });

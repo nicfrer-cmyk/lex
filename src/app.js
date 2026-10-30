@@ -57,6 +57,10 @@ let _currentOfficeName = '';
 
 // ===== DB =====
 async function loadDB() {
+  // A reload while a save is still in flight would replace db with the pre-save
+  // version and reset the save baseline under it — the user's last change would be
+  // silently reverted. Wait for pending saves first.
+  await _saveChain;
   const data = await Platform.loadDB();
   if (data) {
     db = data;
@@ -488,10 +492,16 @@ async function saveCase() {
   let trustCloseNote = eid ? (old.trustCloseNote||'') : '';
   if (eid && newStatus==='closed' && old.status!=='closed') {
     const trust=caseTrustTotals(eid);
-    if (trust.available !== 0) {
-      const proceed=await customConfirm(`קיימת יתרת כספי נאמנות בתיק זה (₪${trust.available.toLocaleString()}). לסגור את התיק בכל זאת?`,{title:'יתרת כספי נאמנות בתיק'});
+    // balance, not available: money that is reserved (earmarked) is still physically
+    // in trust and must be accounted for just the same.
+    if (trust.balance !== 0) {
+      const proceed=await customConfirm(`קיימת יתרת כספי נאמנות בתיק זה (₪${trust.balance.toLocaleString()}). לסגור את התיק בכל זאת?`,{title:'יתרת כספי נאמנות בתיק'});
       if (!proceed) return;
-      trustCloseNote=prompt('מה נעשה ביתרת כספי הנאמנות? (לדוגמה: הוחזרה ללקוח / מיועדת להוצאה עתידית / הועברה באישור לתיק אחר / התיק נסגר אך הכרטסת נותרת פתוחה)')||'';
+      const note=prompt('מה נעשה ביתרת כספי הנאמנות? (לדוגמה: הוחזרה ללקוח / מיועדת להוצאה עתידית / הועברה באישור לתיק אחר / התיק נסגר אך הכרטסת נותרת פתוחה)');
+      // Cancelling the explanation used to close the case anyway with no note —
+      // exactly the "balance silently vanishes" case this check exists to prevent.
+      if (note===null || !note.trim()) { notify('התיק לא נסגר — יש לפרט מה נעשה ביתרת כספי הנאמנות.'); return; }
+      trustCloseNote=note.trim();
     }
   } else if (newStatus!=='closed') {
     trustCloseNote='';
@@ -661,6 +671,19 @@ const TRUST_TX_LABELS = {
 // Only these types actually move the ledger; 'earmark'/'release' don't touch the real
 // balance (the money is still physically in trust) — they just track how much of it is
 // already spoken for, shown separately as "reserved" so it isn't double-counted as free.
+// How one transaction moves the real trust balance — the single rule both the ledger
+// table's running "balance after" column and the printed statement use, matching
+// caseTrustTotals(). earmark/release only track reserved money, so they move nothing
+// (they used to be counted as an expense/deposit there, so the column disagreed with
+// the summary card on any case with a reservation).
+function trustLedgerDelta(t){
+  if(t.status==='reversed'||t.status==='cancelled'||t.status==='draft') return 0;
+  if(t.type==='deposit'||t.type==='transfer_in') return t.amount||0;
+  if(t.type==='expense'||t.type==='refund'||t.type==='transfer_out') return -(t.amount||0);
+  if(t.type==='correction') return t.amount||0;
+  return 0;
+}
+
 function caseTrustTotals(caseId){
   const all=(db.trustTransactions||[]).filter(t=>t.caseId===caseId);
   const active=t=>t.status!=='reversed'&&t.status!=='cancelled'&&t.status!=='draft';
@@ -811,10 +834,7 @@ function trustTabHtml(caseId, trust) {
   const chrono=trust.all.slice().sort((a,b)=>(a.date||'')<(b.date||'')?-1:(a.date||'')>(b.date||'')?1:0);
   let running=0;
   const withBalance=chrono.map(t=>{
-    if(active(t)){
-      const sign=(t.type==='deposit'||t.type==='transfer_in'||t.type==='release')?1:(t.type==='correction')?Math.sign(t.amount)||1:-1;
-      running += t.type==='correction'?t.amount:sign*t.amount;
-    }
+    running += trustLedgerDelta(t);
     return {t,balanceAfter:running};
   });
   const rows=withBalance.slice().reverse();
@@ -2928,11 +2948,7 @@ function exportTrustLedger(caseId){
   let txt=`כרטסת כספי נאמנות – ${c.name}\n${'─'.repeat(40)}\n\n`;
   let running=0;
   chrono.forEach(t=>{
-    const active=t.status!=='reversed'&&t.status!=='cancelled'&&t.status!=='draft';
-    if(active){
-      const sign=(t.type==='deposit'||t.type==='transfer_in'||t.type==='release')?1:(t.type==='correction')?(Math.sign(t.amount)||1):-1;
-      running+=t.type==='correction'?t.amount:sign*t.amount;
-    }
+    running+=trustLedgerDelta(t);
     txt+=`${t.date||''} | ${TRUST_TX_LABELS[t.type]||t.type} | ${t.category||t.source||''} | ${t.description||''}${t.payee?' ('+t.payee+')':''} | ₪${(t.amount||0).toLocaleString()} | יתרה: ₪${running.toLocaleString()}${t.status==='reversed'?' [בוטל: '+(t.reversedReason||'')+']':t.status==='cancelled'?' [בוטל]':t.status==='draft'?' [טיוטה]':t.status==='pending'?' [ממתין]':''}\n`;
   });
   txt+=`\nיתרה זמינה נוכחית: ₪${trust.available.toLocaleString()}\n`;
@@ -3895,6 +3911,7 @@ async function openSettingsModal() {
     document.getElementById('settings-errors-section').style.display = isOwner ? '' : 'none';
     document.getElementById('settings-subscription-section').style.display = isOwner ? '' : 'none';
     document.getElementById('settings-danger-zone').style.display = isOwner ? '' : 'none';
+    document.getElementById('settings-versions-section').style.display = isOwner ? '' : 'none';
     _currentOfficeName = office.name || '';
     if (isOwner) { renderTeamSection(); renderErrorsSection(); renderSubscriptionSection(); }
   } catch (e) { /* office info is best-effort in this modal */ }
@@ -3976,6 +3993,39 @@ function renderLegalDoc(type) {
   const bodies = { terms: TERMS_OF_SERVICE_HTML, privacy: PRIVACY_POLICY_HTML };
   document.getElementById('legal-doc-title').textContent = titles[type] || 'מסמך';
   document.getElementById('legal-doc-body').innerHTML = bodies[type] || '';
+}
+
+// ===== DATA VERSIONS (owner only — app_data_history, see stage_b_restore.sql) =====
+const VERSION_REASON_LABEL = { periodic: 'שמירה אוטומטית', shrink: 'לפני מחיקה גדולה', delete: 'לפני מחיקה', restore: 'לפני שחזור' };
+async function openDataVersions() {
+  openModal('modal-data-versions');
+  const body = document.getElementById('data-versions-body');
+  body.innerHTML = '<div class="empty">טוען גרסאות...</div>';
+  try {
+    const rows = await Platform.listDataVersions();
+    if (!rows.length) { body.innerHTML = '<div class="empty">עדיין אין גרסאות שמורות.</div>'; return; }
+    body.innerHTML = `<table class="table"><thead><tr><th>מתי</th><th>סוג</th><th>תיקים</th><th>לקוחות</th><th>משימות</th><th>תשלומים</th><th>נאמנות</th><th></th></tr></thead><tbody>${
+      rows.map(r => `<tr>
+        <td>${escapeHtml(new Date(r.saved_at).toLocaleString('he-IL'))}</td>
+        <td>${escapeHtml(VERSION_REASON_LABEL[r.reason] || r.reason)}</td>
+        <td>${Number(r.cases)}</td><td>${Number(r.clients)}</td><td>${Number(r.tasks)}</td><td>${Number(r.payments)}</td><td>${Number(r.trust)}</td>
+        <td><button class="btn btn-sm" onclick="restoreDataVersion(${Number(r.id)}, '${escapeHtml(new Date(r.saved_at).toLocaleString('he-IL'))}')">שחזר</button></td>
+      </tr>`).join('')
+    }</tbody></table>`;
+  } catch (e) {
+    body.innerHTML = `<div class="alert alert-danger">שגיאה בטעינת הגרסאות: ${escapeHtml(e.message)}</div>`;
+  }
+}
+async function restoreDataVersion(id, label) {
+  if (!await customConfirm(`לשחזר את כל נתוני המשרד למצב של ${label}? שינויים שנעשו מאז יוחלפו — אבל המצב הנוכחי נשמר כגרסה, כך שאפשר לבטל את השחזור.`, { danger: true, okText: 'שחזר', title: 'שחזור גרסה' })) return;
+  try {
+    await _saveChain;
+    await Platform.restoreDataVersion(id);
+    notify('הנתונים שוחזרו. טוען מחדש...');
+    setTimeout(() => location.reload(), 800);
+  } catch (e) {
+    notify('שגיאה בשחזור: ' + e.message);
+  }
 }
 
 // ===== ACCOUNT DELETION (irreversible — see supabase/functions/delete-account) =====

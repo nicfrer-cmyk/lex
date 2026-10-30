@@ -226,11 +226,24 @@ function showAuthGate() {
   document.getElementById('auth-recovery-form').style.display = 'none';
 }
 
+// The user whose office data is in memory. Once the app booted, everything (db, the
+// office cache, the save baseline) belongs to that user — so a sign-out, or a
+// different user signing in on the same tab, reloads the page instead of letting the
+// new session save the previous office's in-memory data.
+let bootedUserId = null;
+
 window.supabaseClient.auth.onAuthStateChange((event, session) => {
   if (suppressAuthListener) return;
   if (event === 'PASSWORD_RECOVERY') { inPasswordRecovery = true; showPasswordRecoveryForm(); return; }
   if (inPasswordRecovery) return;
-  if (session) showApp(); else showAuthGate();
+  if (appBooted && bootedUserId && (!session || session.user.id !== bootedUserId)) {
+    location.reload();
+    return;
+  }
+  if (session) {
+    if (!bootedUserId) bootedUserId = session.user.id;
+    showApp();
+  } else showAuthGate();
 });
 
 // Registered above first so its listener is already subscribed by the time this

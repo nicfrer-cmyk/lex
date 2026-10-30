@@ -408,6 +408,21 @@ window.Platform = {
   },
 
   // ---- account deletion (see supabase/functions/delete-account) ----
+  // Saved versions of the office blob (app_data_history, owner-only via RLS) — summary
+  // counts only, so listing doesn't download every full snapshot.
+  async listDataVersions() {
+    const { data, error } = await supabase.rpc('list_app_data_versions');
+    if (error) throw error;
+    return data || [];
+  },
+  // Server-side restore (restore_app_data_version): snapshots the current data first,
+  // so a restore can itself be undone. The caller must reload afterwards — the
+  // in-memory version/baseline no longer match the row.
+  async restoreDataVersion(id) {
+    const { error } = await supabase.rpc('restore_app_data_version', { p_id: id });
+    if (error) throw error;
+  },
+
   // Irreversible — permanently deletes the office, all its data/documents, and the
   // owner's own login. See that function for exactly what gets removed.
   async deleteAccount() {

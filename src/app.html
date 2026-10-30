@@ -1527,6 +1527,11 @@ textarea.form-input{resize:vertical;min-height:80px}
       <div style="font-size:12px;font-weight:700;color:var(--accent2);margin-bottom:10px">יומן שגיאות (20 אחרונות)</div>
       <div id="settings-errors-list" style="font-size:11px;color:var(--text3);max-height:160px;overflow-y:auto"></div>
     </div>
+    <div id="settings-versions-section" style="border-top:1px solid var(--border);margin-top:14px;padding-top:14px;display:none">
+      <div style="font-size:12px;font-weight:700;color:var(--accent2);margin-bottom:8px">🕘 גיבוי ושחזור</div>
+      <div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.6">המערכת שומרת אוטומטית גרסאות של כל נתוני המשרד (עד 90 יום), ותמיד לפני שינוי גדול. אפשר לחזור לכל גרסה — המצב הנוכחי נשמר לפני השחזור, כך שגם שחזור אפשר לבטל.</div>
+      <button class="btn btn-sm" onclick="openDataVersions()">הצג גרסאות שמורות</button>
+    </div>
     <div id="settings-danger-zone" style="border-top:1px solid var(--danger);margin-top:14px;padding-top:14px;display:none">
       <div style="font-size:12px;font-weight:700;color:var(--danger);margin-bottom:8px">⚠ מחיקת חשבון</div>
       <div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.6">
@@ -1561,6 +1566,15 @@ textarea.form-input{resize:vertical;min-height:80px}
       <button class="btn btn-primary" id="confirm-ok-btn" onclick="resolveConfirmModal(true)">אישור</button>
       <button class="btn" id="confirm-cancel-btn" onclick="resolveConfirmModal(false)">ביטול</button>
     </div>
+  </div>
+</div>
+
+<!-- MODAL: saved versions of the office data (owner only) — see openDataVersions() -->
+<div class="modal-overlay" id="modal-data-versions">
+  <div class="modal modal-wide">
+    <div class="modal-header"><div class="modal-title">🕘 גרסאות שמורות של נתוני המשרד</div><button class="modal-close" onclick="closeModal('modal-data-versions')">×</button></div>
+    <div id="data-versions-body" style="max-height:60vh;overflow-y:auto"></div>
+    <div class="modal-footer"><button class="btn" onclick="closeModal('modal-data-versions')">סגור</button></div>
   </div>
 </div>
 
