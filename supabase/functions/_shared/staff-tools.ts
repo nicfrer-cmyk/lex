@@ -204,7 +204,9 @@ export const STAFF_TOOLS: ToolDef[] = [
       summary: S('string', { maxLength: 500 }),
       channel: S('string', { enum: [...WORK_CHANNELS] }),
       tags: S('array', { items: S('string', { maxLength: 40 }) }),
-      metadata: S('object'),
+      // חופשי בכוונה: תיאור מטא, מילות מפתח, הצעת ויז׳ואל — כל סוכן מוסיף
+      // משלו. הוולידטור דוחה שדות לא מוכרים כברירת מחדל (ובצדק, בכל השאר).
+      metadata: S('object', { additionalProperties: true }),
       scheduled_for: S('string', { maxLength: 30 }),
     }, ['kind', 'title', 'body']),
     handler: async (i, ctx) => {
@@ -214,7 +216,7 @@ export const STAFF_TOOLS: ToolDef[] = [
         summary: i.summary ? String(i.summary) : String(i.body).slice(0, 220),
         channel: i.channel ? String(i.channel) : 'internal',
         tags: Array.isArray(i.tags) ? i.tags.slice(0, 12).map(String) : [],
-        metadata: (i.metadata && typeof i.metadata === 'object') ? i.metadata : {},
+        metadata: (i.metadata && typeof i.metadata === 'object' && JSON.stringify(i.metadata).length <= 8000) ? i.metadata : {},
         scheduled_for: i.scheduled_for && !isNaN(Date.parse(String(i.scheduled_for))) ? new Date(String(i.scheduled_for)).toISOString() : null,
         status: 'draft', created_by: ctx.userId,
       };

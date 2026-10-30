@@ -72,6 +72,16 @@ test('the new tools are registered, and the sensitive ones only propose or stay 
   for (const t of STAFF_TOOLS) assert.ok(['none', 'low'].includes(t.risk), `${t.slug} risk=${t.risk}`);
 });
 
+test('create_work_item accepts free-form metadata (the model adds its own keys)', async () => {
+  // נמצא בריצה אמיתית: הקריאייטיב שלח metadata עם visual_suggestion ונדחה.
+  const { STAFF_TOOLS } = await load('staff-tools.ts');
+  const { validate } = await load('schema.ts');
+  const def = STAFF_TOOLS.find(t => t.slug === 'create_work_item');
+  const out = validate({ kind: 'post', title: 'כותרת', body: 'גוף הפוסט הארוך מספיק', metadata: { visual_suggestion: 'x', post_number: 1 } }, def.schema);
+  assert.equal(out.metadata.visual_suggestion, 'x');
+  assert.throws(() => validate({ kind: 'post', title: 'כותרת', body: 'גוף הפוסט', evil: 1 }, def.schema), /שדות לא מוכרים/);
+});
+
 test('fetch_url refuses private and non-http targets', async () => {
   const { STAFF_TOOLS } = await load('staff-tools.ts');
   const fetchUrl = STAFF_TOOLS.find(t => t.slug === 'fetch_url');
