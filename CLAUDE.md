@@ -112,8 +112,8 @@ npx cap sync android                       # סנכרון אנדרואיד
 - **צוות ה-AI** (`src/ai-staff.js`, `supabase/migrations/20261031000000_ai_staff.sql`, `_shared/staff-tools.ts`): 11 תפקידים עם לוח ושגרה; סוכני מסמכים מושבתים (לא נמחקים). `ai_work_items` = תוצרים (תמיד טיוטה עד אישור), `ai_owner_tasks` = מה שרק הבעלים יכול לעשות. `ai-cron` מריץ `routines`. הצ׳אט הצף = מנהל/ת המשרד ומאציל (`delegateToAgent`). מדריך: `docs/AI_STAFF_HE.md`.
 
 **ממתין לבעלים — צוות ה-AI** (פקודות ב-`docs/AI_STAFF_HE.md`, סעיף "לפרוס"):
-- [ ] להריץ את `20261031000000_ai_staff.sql` (SQL Editor או `db query --linked -f`). **טרם רץ בייצור.**
-- [ ] לפרוס `ai-worker`, `ai-cron`, `ai-gateway`. **טרם נפרסו** — בלי זה הכלים החדשים והשגרות לא קיימים בשרת.
+- [x] `20261031000000_ai_staff.sql` ו-`20261031000001_routines_opt_in.sql` רצו בייצור (31.10.2026). השגרות דולקות רק במשרד של הבעלים (`routines_enabled`).
+- [x] `ai-worker`, `ai-cron`, `ai-gateway` נפרסו (31.10.2026). נבדק מקצה לקצה: lead-intake ו-creative רצו, תוצר נוצר, הצ׳אט רואה את הצוות.
 - [ ] להפעיל את המתזמן (`bash scripts/setup-cron.sh`), ולהשלים את "מה נדרש ממך" בלשונית הגדרות וחיבורים (Brave Search, Google OAuth, WhatsApp, פרסום לרשתות, רשימת תפוצה).
 
 **ממתין לבעלים** (פירוט ב-`docs/DEPLOY_RUNBOOK_HE.md`):
