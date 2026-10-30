@@ -105,4 +105,35 @@ await esbuild.build({
   logLevel: 'info',
 });
 
-console.log('[build] wrote dist/ (index.html, app.js, auth.js, platform.js, template-manager.js, vendor/*)');
+// Response headers, as a _headers file in the published folder. The [[headers]] rules
+// in netlify.toml were never applied to this site (not even index.html's no-cache), so
+// the headers are shipped the way Netlify always honours: dist/_headers. Keep the
+// policy in sync with netlify.toml's comment; it is the single source from here on.
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com data:",
+  "img-src 'self' data: blob: https://syxutnwbpjsvzlwfpvyc.supabase.co",
+  "connect-src 'self' https://syxutnwbpjsvzlwfpvyc.supabase.co wss://syxutnwbpjsvzlwfpvyc.supabase.co",
+  "worker-src 'self' blob:",
+  "frame-src 'self' blob: https://syxutnwbpjsvzlwfpvyc.supabase.co",
+  "object-src 'none'", "base-uri 'self'", "form-action 'self'", "frame-ancestors 'none'",
+].join('; ');
+fs.writeFileSync(path.join(outDir, '_headers'), [
+  '/*',
+  '  X-Frame-Options: DENY',
+  '  X-Content-Type-Options: nosniff',
+  '  Referrer-Policy: strict-origin-when-cross-origin',
+  '  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()',
+  // Report-only first: inline onclick handlers/styles are still everywhere, and a wrong
+  // enforced policy would break the site for every user at once.
+  `  Content-Security-Policy-Report-Only: ${CSP}`,
+  '/',
+  '  Cache-Control: no-cache, must-revalidate',
+  '/index.html',
+  '  Cache-Control: no-cache, must-revalidate',
+  '',
+].join('\n'));
+
+console.log('[build] wrote dist/ (index.html, app.js, auth.js, platform.js, template-manager.js, vendor/*, _headers)');
