@@ -1,0 +1,25 @@
+# Runs the test suite and a full build on every push and pull request, so a change that
+# breaks tests is visible before Netlify publishes it. (Netlify builds from master on
+# its own; this is the gate to look at before merging.)
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      # Electron and the Supabase CLI are dev/desktop tools; the tests and the web
+      # build don't need their binaries.
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm test
+      - run: node build.mjs

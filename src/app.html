@@ -2,7 +2,7 @@
 <html lang="he" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<title>LexTrack – ירין אשואל, עו"ד</title>
+<title>LexTrack</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700&display=swap');
 *{box-sizing:border-box;margin:0;padding:0}
@@ -614,7 +614,7 @@ textarea.form-input{resize:vertical;min-height:80px}
   <div class="sidebar" id="sidebar">
     <div class="logo">
       <div class="logo-title">⚖ LexTrack</div>
-      <div class="logo-sub">ירין אשואל, עו"ד | ניהול תיקים</div>
+      <div class="logo-sub">ניהול המשרד</div>
     </div>
     <div class="nav-section">ראשי</div>
     <div class="nav-item active" onclick="nav('dashboard',this)">
@@ -727,7 +727,7 @@ textarea.form-input{resize:vertical;min-height:80px}
         </div>
       </div>
       <div class="search-wrap">
-        <input class="search-input" id="cases-search" placeholder="חיפוש לפי שם, מספר, לקוח..." oninput="renderCases(this.value)">
+        <input class="search-input" id="cases-search" placeholder="חיפוש לפי שם, מספר, לקוח..." oninput="debouncedRender('renderCases',this.value)">
       </div>
       <div id="cases-table-wrap" class="content content-table">
         <table class="data-table">
@@ -775,7 +775,7 @@ textarea.form-input{resize:vertical;min-height:80px}
         </div>
       </div>
       <div class="search-wrap">
-        <input class="search-input" placeholder="חיפוש לקוח..." oninput="renderClients(this.value)">
+        <input class="search-input" placeholder="חיפוש לקוח..." oninput="debouncedRender('renderClients',this.value)">
       </div>
       <div class="content"><div class="client-grid" id="clients-grid"></div>
         <div id="clients-empty" class="empty-main" style="display:none">
@@ -889,7 +889,7 @@ textarea.form-input{resize:vertical;min-height:80px}
         </div>
       </div>
       <div class="search-wrap">
-        <input class="search-input" placeholder="חיפוש מסמכים..." oninput="renderDocs(this.value)">
+        <input class="search-input" placeholder="חיפוש מסמכים..." oninput="debouncedRender('renderDocs',this.value)">
       </div>
       <div class="content"><div id="docs-list"></div>
         <div id="docs-empty" class="empty-main" style="display:none">

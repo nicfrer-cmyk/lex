@@ -102,6 +102,10 @@ await esbuild.build({
   format: 'iife',
   target: 'es2019',
   outfile: path.join(outDir, 'platform.js'),
+  // ~600KB unminified (supabase-js + docxtemplater + buffer), parsed before anything
+  // else on every page load. Minifying is safe here: it's a self-contained IIFE whose
+  // only public surface is the window.* properties it assigns.
+  minify: true,
   logLevel: 'info',
 });
 
@@ -129,6 +133,10 @@ fs.writeFileSync(path.join(outDir, '_headers'), [
   // Report-only first: inline onclick handlers/styles are still everywhere, and a wrong
   // enforced policy would break the site for every user at once.
   `  Content-Security-Policy-Report-Only: ${CSP}`,
+  // Vendor bundles never change in place (every build stamps a new ?v=), so the browser
+  // can keep them instead of re-downloading ~3MB of libraries on each visit.
+  '/vendor/*',
+  '  Cache-Control: public, max-age=31536000, immutable',
   '/',
   '  Cache-Control: no-cache, must-revalidate',
   '/index.html',

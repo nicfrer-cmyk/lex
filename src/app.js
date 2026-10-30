@@ -171,10 +171,20 @@ async function loadDB() {
 // closing the tab while a save is in flight asks first.
 let _saveChain = Promise.resolve();
 let _savesPending = 0;
+// A save that is queued but hasn't started yet. Every save uploads the whole current
+// db, so further saveDB() calls made while one is waiting just join it — a burst of
+// edits (typing in the diary, ticking several tasks) becomes one upload, not one each.
+let _queuedSave = null;
+function queueSave() {
+  if (_queuedSave) return _queuedSave;
+  const p = _saveChain.then(() => { _queuedSave = null; return Platform.saveDB(db); });
+  _queuedSave = p;
+  _saveChain = p.catch(() => {});
+  return p;
+}
 async function saveDB() {
   _savesPending++;
-  const run = _saveChain.then(() => Platform.saveDB(db));
-  _saveChain = run.catch(() => {});
+  const run = queueSave();
   const statusEl = document.getElementById('save-status');
   let outcome = null;
   try {
@@ -287,6 +297,14 @@ function getNextCaseSubNumber(clientId) {
   if (!db.counters.caseCounters) db.counters.caseCounters = {};
   if (!db.counters.caseCounters[clientId]) db.counters.caseCounters[clientId] = 1;
   return cl.clientNumber + '/' + db.counters.caseCounters[clientId]++;
+}
+
+// Search boxes re-render a whole list (innerHTML over every case/client/document) —
+// on each keystroke that stalls typing on a large office. Waits for a short pause.
+const _renderTimers = {};
+function debouncedRender(fnName, value) {
+  clearTimeout(_renderTimers[fnName]);
+  _renderTimers[fnName] = setTimeout(() => { const f = window[fnName] || globalThis[fnName]; if (typeof f === 'function') f(value); }, 180);
 }
 
 function refreshAll() {
