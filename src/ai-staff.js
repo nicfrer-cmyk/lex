@@ -71,6 +71,13 @@ async function aiRenderTeam(host) {
     sb.from('ai_settings').select('emergency_stop,automations_paused,ai_provider_mode').maybeSingle(),
     sb.from('ai_jobs').select('id').eq('trigger_type', 'schedule').gte('created_at', new Date(Date.now() - 2 * 86400000).toISOString()).limit(1),
   ]);
+  // 42703 = העמודה visible לא קיימת: המיגרציה של הצוות טרם רצה. זה מצב צפוי
+  // בפריסה הראשונה (הלקוח עולה דרך נטליפיי לפני שה-SQL הורץ), לא תקלה.
+  if (error && (error.code === '42703' || /column .*visible/i.test(error.message || ''))) {
+    host.innerHTML = aiEmpty('הצוות עדיין לא הוקם בשרת',
+      'יש להריץ את המיגרציה 20261031000000_ai_staff.sql ולפרוס את ai-worker, ai-cron ו-ai-gateway. ההוראות ב-docs/AI_STAFF_HE.md.');
+    return;
+  }
   if (error) throw error;
   if (!agents || !agents.length) {
     host.innerHTML = aiEmpty('הצוות עדיין לא הוקם', 'יש להריץ את המיגרציה 20261031000000_ai_staff.sql. ההוראות ב-docs/AI_STAFF_HE.md.');
