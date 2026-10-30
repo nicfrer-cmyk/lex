@@ -107,6 +107,15 @@ npx cap sync android                       # סנכרון אנדרואיד
 - **ה':** שמירות מאוחדות; `platform.js` מוקטן; cache ל-vendor; CI ב-GitHub Actions.
 - **ו':** ליטיגציה וחוזים, צדדים, מחשבון מועדים, חיוב ושעות, "השבוע במשרד", גרסאות מסמכים (`src/practice.js`).
 
+**31.10.2026 — בקרת משרד וצוות ה-AI:**
+- **בקרת משרד** (`src/office-checks.js`): 20 בדיקות דטרמיניסטיות שרצות בדפדפן על `db` (תיקים רדומים, מועדים בלי הכנה, משימות באיחור, לקוחות בלי עדכון, שעות לא מחויבות, דרישות פתוחות, נאמנות בתיק סגור, חוזים שמסתיימים). ממצא → "פתח תיק" / "+ משימה" / "טופל". הגדרות ב-`db.settings.officeChecks`, מצב ב-`db.checkState`. החליף את ממשק `automations.js` (מנוע השרת `automation-engine` נשאר כפי שהוא).
+- **צוות ה-AI** (`src/ai-staff.js`, `supabase/migrations/20261031000000_ai_staff.sql`, `_shared/staff-tools.ts`): 11 תפקידים עם לוח ושגרה; סוכני מסמכים מושבתים (לא נמחקים). `ai_work_items` = תוצרים (תמיד טיוטה עד אישור), `ai_owner_tasks` = מה שרק הבעלים יכול לעשות. `ai-cron` מריץ `routines`. הצ׳אט הצף = מנהל/ת המשרד ומאציל (`delegateToAgent`). מדריך: `docs/AI_STAFF_HE.md`.
+
+**ממתין לבעלים — צוות ה-AI** (פקודות ב-`docs/AI_STAFF_HE.md`, סעיף "לפרוס"):
+- [ ] להריץ את `20261031000000_ai_staff.sql` (SQL Editor או `db query --linked -f`). **טרם רץ בייצור.**
+- [ ] לפרוס `ai-worker`, `ai-cron`, `ai-gateway`. **טרם נפרסו** — בלי זה הכלים החדשים והשגרות לא קיימים בשרת.
+- [ ] להפעיל את המתזמן (`bash scripts/setup-cron.sh`), ולהשלים את "מה נדרש ממך" בלשונית הגדרות וחיבורים (Brave Search, Google OAuth, WhatsApp, פרסום לרשתות, רשימת תפוצה).
+
 **ממתין לבעלים** (פירוט ב-`docs/DEPLOY_RUNBOOK_HE.md`):
 - [x] מיגרציות שלב א' ו-ב' רצו בייצור ב-30.10.2026 (14 משרדים, 14 snapshots, 0 policies ישנות).
 - [x] נפרסו מ-master ב-30.10.2026: webdav, ai-gateway, ai-comms, ai-cron, ai-worker, ai-learn, webhook-whatsapp, automation-engine.
