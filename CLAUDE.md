@@ -108,8 +108,8 @@ npx cap sync android                       # סנכרון אנדרואיד
 - **ו':** ליטיגציה וחוזים, צדדים, מחשבון מועדים, חיוב ושעות, "השבוע במשרד", גרסאות מסמכים (`src/practice.js`).
 
 **ממתין לבעלים** (פירוט ב-`docs/DEPLOY_RUNBOOK_HE.md`):
-- [ ] להריץ ב-SQL Editor את `20261030000000_stage_a_security.sql` ואת `20261030000001_stage_b_restore.sql`. **שלב א' לא רץ בייצור.**
-- [ ] לפרוס את Edge Functions: webdav, ai-gateway, ai-comms, ai-cron, ai-worker, ai-learn, webhook-whatsapp, automation-engine.
+- [x] מיגרציות שלב א' ו-ב' רצו בייצור ב-30.10.2026 (14 משרדים, 14 snapshots, 0 policies ישנות).
+- [x] נפרסו מ-master ב-30.10.2026: webdav, ai-gateway, ai-comms, ai-cron, ai-worker, ai-learn, webhook-whatsapp, automation-engine.
 - [ ] לעבור מ-CSP במצב Report-Only ל-CSP נאכף, אחרי שמוודאים בקונסול שאין הפרות.
 
 **משימות פתוחות:**
