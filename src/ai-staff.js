@@ -68,7 +68,7 @@ async function aiRenderTeam(host) {
     sb.from('ai_work_items').select('id', { count: 'exact', head: true }).eq('status', 'draft'),
     sb.from('ai_approvals').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
     sb.from('ai_jobs').select('id,status').in('status', ['queued', 'running']),
-    sb.from('ai_settings').select('emergency_stop,automations_paused,ai_provider_mode').maybeSingle(),
+    sb.from('ai_settings').select('emergency_stop,automations_paused,ai_provider_mode,routines_enabled').maybeSingle(),
     sb.from('ai_jobs').select('id').eq('trigger_type', 'schedule').gte('created_at', new Date(Date.now() - 2 * 86400000).toISOString()).limit(1),
   ]);
   // 42703 = העמודה visible לא קיימת: המיגרציה של הצוות טרם רצה. זה מצב צפוי
@@ -95,13 +95,14 @@ async function aiRenderTeam(host) {
 
   host.innerHTML = `
     ${aiStaffHero('צוות ה-AI שלך',
-      `${active} מתוך ${agents.length} עובדים פעילים · ${schedulerOn ? 'המתזמן פעיל — הצוות עובד לפי לוח' : 'המתזמן עדיין לא הופעל — הצוות רץ בלחיצה בלבד'}`,
+      `${active} מתוך ${agents.length} עובדים פעילים · ${!st.routines_enabled ? 'עבודה לפי לוח כבויה — הצוות רץ בלחיצה בלבד' : schedulerOn ? 'המתזמן פעיל — הצוות עובד לפי לוח' : 'המתזמן עדיין לא הופעל — הצוות רץ בלחיצה בלבד'}`,
       [
         { value: drafts || 0, label: 'טיוטות לאישור', alert: !!drafts, onclick: "aiNav('work')" },
         { value: pending || 0, label: 'אישורים ממתינים', alert: !!pending, onclick: "aiNav('approvals')" },
         { value: (jobs || []).length, label: 'עובדים כרגע', onclick: "aiNav('advanced');aiAdvNav('jobs')" },
       ],
       stopped ? `<div class="st-hero-warn">⛔ ${st.emergency_stop ? 'עצירת חירום פעילה' : 'הצוות מושהה'} — שום סוכן לא רץ. <a href="#" onclick="aiNav('setup');return false">להגדרות</a></div>`
+        : !st.routines_enabled ? `<div class="st-hero-warn soft">⏱ הצוות עדיין לא עובד לבד. כשתהיה מוכן: הגדרות וחיבורים ← "הצוות עובד לבד לפי לוח". <a href="#" onclick="aiNav('setup');return false">להגדרות ›</a></div>`
         : !schedulerOn ? `<div class="st-hero-warn soft">⏱ כדי שהצוות יעבוד לבד גם כשהמחשב כבוי, צריך להפעיל את המתזמן פעם אחת. <a href="#" onclick="aiNav('setup');return false">מה נדרש ממך ›</a></div>` : '')}
 
     ${aiCommandBarHtml()}
@@ -311,7 +312,8 @@ async function aiRenderSetup(host) {
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
         <button class="btn ${st.emergency_stop ? 'btn-success' : 'btn-danger'}" onclick="aiToggleEmergency(${!st.emergency_stop})">
           ${st.emergency_stop ? '▶ בטל עצירת חירום' : '⛔ עצור את כל הצוות'}</button>
-        <label class="ai-switch"><input type="checkbox" ${st.automations_paused ? 'checked' : ''} onchange="aiSaveToggle('automations_paused',this.checked)"><span>השהה שגרות אוטומטיות (הצוות רץ רק בלחיצה)</span></label>
+        <label class="ai-switch"><input type="checkbox" ${st.routines_enabled ? 'checked' : ''} onchange="aiSaveToggle('routines_enabled',this.checked)"><span><strong>הצוות עובד לבד לפי לוח</strong> (כבוי = רץ רק בלחיצה)</span></label>
+        <label class="ai-switch"><input type="checkbox" ${st.automations_paused ? 'checked' : ''} onchange="aiSaveToggle('automations_paused',this.checked)"><span>השהה זמנית את כל השגרות</span></label>
         <label class="ai-switch"><input type="checkbox" ${st.outbound_messages_paused ? 'checked' : ''} onchange="aiSaveToggle('outbound_messages_paused',this.checked)"><span>השהה הודעות יוצאות</span></label>
       </div>
       ${st.emergency_stop ? `<div class="alert alert-danger" style="margin-top:10px">הצוות עצור מאז ${aiFmtDate(st.emergency_stop_at)}.</div>` : ''}

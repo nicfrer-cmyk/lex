@@ -52,8 +52,10 @@ async function enqueueRoutines(sb: ReturnType<typeof admin>) {
     if (Date.parse(a.next_run_at) > now.getTime()) continue;
 
     const { data: st } = await sb.from('ai_settings')
-      .select('emergency_stop, automations_paused').eq('office_id', a.office_id).maybeSingle();
-    if (st?.emergency_stop || st?.automations_paused) {
+      .select('emergency_stop, automations_paused, routines_enabled').eq('office_id', a.office_id).maybeSingle();
+    // routines_enabled הוא opt-in לכל משרד (ראה 20261031000001): בלי הפעלה
+    // מפורשת לא מריצים סוכנים על חשבון בעל המערכת.
+    if (!st?.routines_enabled || st?.emergency_stop || st?.automations_paused) {
       // המשרד עצר — מדלגים על הריצה הזו, אבל מקדמים את הלוח כדי לא להציף כשהוא יחזור.
       await sb.from('ai_agents').update({ next_run_at: next }).eq('id', a.id);
       skipped++;
