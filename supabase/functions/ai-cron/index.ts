@@ -44,7 +44,7 @@ Deno.serve(async (req) => {
   const sb = admin();
   try {
     const body = await req.json().catch(() => ({}));
-    const tasks = (body.tasks as string[]) || ['reap', 'drain', 'automations', 'learn'];
+    const tasks = (body.tasks as string[]) || ['reap', 'drain', 'learn'];
     const out: Record<string, unknown> = {};
 
     // 1. שחרור jobs שננעלו ע"י worker שמת (deploy באמצע, timeout).
@@ -53,9 +53,16 @@ Deno.serve(async (req) => {
       out.reaped = error ? { error: error.message } : data;
     }
 
-    // 2. הרצת האוטומציות — לפני הניקוז, כדי שמה שהן יוצרות ייקלט באותה סבב.
+    // 2. האוטומציות הישנות — כבויות. automation-engine (tickAll) מריץ את אותם
+    // כללים מתוך אותה טבלה כל 5 דקות, עם execution_level, cooldown ושעות שקטות.
+    // המנוע הישן התעלם מכל אלה והפך כל פעולה לעבודת סוכן בתשלום — כך ששני
+    // המנועים יחד הריצו כל כלל פעמיים. ה-cron שכבר מתוזמן בבסיס הנתונים
+    // שולח את 'automations' במפורש, ולכן הכיבוי כאן ולא רק בברירת המחדל.
+    // הפעלה חוזרת (לבדיקה בלבד): { legacyAutomations: true }.
     if (tasks.includes('automations')) {
-      out.automations = await runAutomations(sb);
+      out.automations = body.legacyAutomations === true
+        ? await runAutomations(sb)
+        : { skipped: 'legacy engine disabled — automation-engine handles rules' };
     }
 
     // 3. ניקוז התור.

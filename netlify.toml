@@ -10,6 +10,22 @@
   [headers.values]
     Cache-Control = "no-cache, must-revalidate"
 
+# Security headers for the whole site (a law office's client data).
+# - Enforced now: no framing (clickjacking), no MIME sniffing, no full-URL referrers to
+#   third parties, and no camera/mic/location for any page.
+# - The Content-Security-Policy is Report-Only first: the app still relies on inline
+#   onclick handlers and inline styles, and a wrong enforced CSP would break the site for
+#   every user at once. Once the browser console shows no violations in daily use, rename
+#   the header to Content-Security-Policy to enforce it.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=(), payment=()"
+    Content-Security-Policy-Report-Only = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https://syxutnwbpjsvzlwfpvyc.supabase.co; connect-src 'self' https://syxutnwbpjsvzlwfpvyc.supabase.co wss://syxutnwbpjsvzlwfpvyc.supabase.co; worker-src 'self' blob:; frame-src 'self' blob: https://syxutnwbpjsvzlwfpvyc.supabase.co; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+
 [[redirects]]
   from = "/*"
   to = "/index.html"

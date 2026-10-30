@@ -548,6 +548,27 @@ async function aiRenderApprovals(host) {
       </div>`).join('')}` : ''}`;
 }
 
+// Who an outbound message actually goes to. The card used to show only the message
+// text, while the recipient (`payload.to`, chosen freely by the model) stayed hidden —
+// so an injected instruction could route a client's data to any address and the
+// approver would only see the client's name. Now recipient, channel and subject are
+// always shown, with a warning when the address isn't one on file for the client.
+function ApprovalRecipient(a, payload) {
+  const to = payload.to || payload.phone || payload.email || '';
+  if (!to && !payload.channel && !payload.subject) return '';
+  const cl = a.client_id ? (db.clients || []).find(c => c.id === a.client_id) : null;
+  const norm = (v) => String(v || '').toLowerCase().replace(/[\s\-()+]/g, '');
+  const known = cl ? [cl.email, cl.phone].filter(Boolean).map(norm) : [];
+  const mismatch = to && known.length && !known.includes(norm(to));
+  const channelLabel = { email: 'דוא"ל', whatsapp: 'וואטסאפ', sms: 'SMS' }[payload.channel] || payload.channel || '';
+  return `<div class="ai-payload" style="margin-top:10px">
+      ${to ? `<div><strong>נמען:</strong> ${escapeHtml(to)}</div>` : ''}
+      ${channelLabel ? `<div><strong>ערוץ:</strong> ${escapeHtml(channelLabel)}</div>` : ''}
+      ${payload.subject ? `<div><strong>נושא:</strong> ${escapeHtml(payload.subject)}</div>` : ''}
+    </div>
+    ${mismatch ? `<div class="alert alert-danger" style="margin:8px 0">⚠ הנמען אינו כתובת/טלפון השמורים של הלקוח${cl && cl.name ? ' ' + escapeHtml(cl.name) : ''}. בדוק/י היטב לפני אישור.</div>` : ''}`;
+}
+
 function ApprovalCard(a) {
   const matter = aiCaseName(a.matter_id);
   const client = aiClientName(a.client_id);
@@ -574,6 +595,8 @@ function ApprovalCard(a) {
 
     ${a.reason_required ? `<div class="alert alert-warning" style="margin:10px 0">
       <strong>למה נדרש אישור:</strong> ${escapeHtml(a.reason_required)}</div>` : ''}
+
+    ${ApprovalRecipient(a, payload)}
 
     ${content ? `<div class="form-group" style="margin-top:10px">
       <label class="form-label">התוכן המוצע — ניתן לערוך לפני האישור</label>
@@ -669,7 +692,11 @@ async function aiApproveAndApply(id) {
   } catch (e) {
     notify('שגיאה: ' + e.message);
     try {
-      await aiSb().from('ai_approvals').update({ status: 'failed', apply_error: e.message }).eq('id', id);
+      // Only an approval that wasn't applied may be marked failed. Unconditionally
+      // writing 'failed' hid actions that had in fact run (e.g. the error came from
+      // the follow-up bookkeeping), inviting a second, duplicate application.
+      await aiSb().from('ai_approvals').update({ status: 'failed', apply_error: e.message })
+        .eq('id', id).in('status', ['pending', 'approved']).is('applied_at', null);
     } catch (e2) { /* ההודעה למשתמש כבר יצאה */ }
     btns.forEach(b => b.disabled = false);
   }
@@ -759,10 +786,14 @@ async function aiApplyApproval(a) {
     case 'create_matter': {
       const clientId = p.client || p.clientId || '';
       if (!db.clients.find(c => c.id === clientId)) throw new Error('הלקוח לא נמצא');
+      // caseType/stage come from the model's proposal — only known values are stored
+      // (same rule as the in-app agent's createCase), never free text.
+      const caseType = CASE_STAGES[p.caseType] ? p.caseType : 'debt';
+      const stages = CASE_STAGES[caseType];
       db.cases.unshift({
-        id: uid(), name: String(p.name || ''), caseType: p.caseType || 'debt',
+        id: uid(), name: String(p.name || ''), caseType,
         client: clientId, amount: Number(p.amount) || 0,
-        stage: p.stage || (p.caseType === 'general' ? 'פתיחה' : 'איסוף מסמכים'),
+        stage: stages.includes(p.stage) ? p.stage : stages[0],
         status: 'active', number: p.number || '', notes: p.notes || '',
         court: p.court || '', courtNumber: '',
         debtorName: p.debtorName || '', debtorId: '', debtorAddress: '',

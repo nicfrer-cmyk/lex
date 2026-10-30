@@ -8,16 +8,17 @@
 // and the "spec.json exists but its docx doesn't" orphan case, so both surface the
 // same way instead of one being invisible in the list.
 function tmFileRow(folderName, name, specBadge) {
-  const fEsc = folderName.replace(/'/g, "\\'");
-  const nEsc = name.replace(/'/g, "\\'");
-  return `<div class="doc-item" onclick="tmOpenFile('${fEsc}','${nEsc}')">
-    <div class="doc-icon doc">${(name.split('.').pop() || '').slice(0, 3).toUpperCase()}</div>
+  // jsArg (app.js), not quote-replacing: the browser decodes &#39; back into a quote
+  // before running the handler, so a crafted file name could break out of the string.
+  const args = `${jsArg(folderName)},${jsArg(name)}`;
+  return `<div class="doc-item" onclick="tmOpenFile(${args})">
+    <div class="doc-icon doc">${escapeHtml((name.split('.').pop() || '').slice(0, 3).toUpperCase())}</div>
     <div style="flex:1">
       <div>${escapeHtml(name)}</div>
       ${specBadge || ''}
     </div>
-    <button class="btn btn-sm" onclick="event.stopPropagation();tmOpenFile('${fEsc}','${nEsc}')">👁 פתח</button>
-    <button class="btn btn-sm btn-danger" onclick="event.stopPropagation();tmDeleteFile('${fEsc}','${nEsc}')">מחק</button>
+    <button class="btn btn-sm" onclick="event.stopPropagation();tmOpenFile(${args})">👁 פתח</button>
+    <button class="btn btn-sm btn-danger" onclick="event.stopPropagation();tmDeleteFile(${args})">מחק</button>
   </div>`;
 }
 
@@ -68,7 +69,7 @@ async function tmRender() {
       </div>`;
     }).join('');
   } catch (e) {
-    wrap.innerHTML = '<div class="empty">שגיאה בטעינה: ' + e.message + '</div>';
+    wrap.innerHTML = '<div class="empty">שגיאה בטעינה: ' + escapeHtml(e.message) + '</div>';
   }
 }
 

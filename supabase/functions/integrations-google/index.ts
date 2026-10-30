@@ -115,7 +115,7 @@ async function handleCallback(sb: ReturnType<typeof admin>, url: URL) {
      box-shadow:0 4px 16px rgba(15,23,41,.08)}
      h1{font-size:18px;margin:0 0 8px}p{color:#4b5768;font-size:14px;margin:0}</style></head>
      <body><div class="box"><h1>${ok ? '✓ החיבור הושלם' : '✗ החיבור נכשל'}</h1>
-     <p>${msg}</p><p style="margin-top:12px;font-size:12px">אפשר לסגור את החלון הזה.</p></div>
+     <p>${String(msg).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch] as string))}</p><p style="margin-top:12px;font-size:12px">אפשר לסגור את החלון הזה.</p></div>
      <script>setTimeout(function(){try{window.close()}catch(e){}
      ${SITE_URL ? `if(!window.closed)location.href=${JSON.stringify(SITE_URL)}` : ''}},2500)</script>
      </body></html>`,

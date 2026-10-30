@@ -137,6 +137,14 @@ async function enforceStorageQuota(officeId, incomingBytes) {
   }
 }
 
+// Picked files are read fully into memory (and, for now, into a plain number array),
+// so an unbounded pick of a multi-GB file could freeze or crash the tab.
+const MAX_PICK_BYTES = 100 * 1024 * 1024;
+function notifyTooLarge(files) {
+  const msg = `הקובץ גדול מדי (מעל 100MB) ולא נטען: ${files.map(f => f.name).join(', ')}`;
+  if (typeof window.notify === 'function') window.notify(msg); else console.warn(msg);
+}
+
 async function currentOffice() {
   if (_officeCache) return _officeCache;
   const { data: { user } } = await supabase.auth.getUser();
@@ -298,9 +306,17 @@ window.Platform = {
     clearOfficeCache();
   },
   async signOut() {
-    await supabase.auth.signOut();
+    // Cleared FIRST: signing out fires SIGNED_OUT, and auth.js reloads the page on
+    // it — a remembered refresh token still in localStorage at that moment would
+    // silently sign the user straight back in. Also cleared even if signOut() fails
+    // (offline), so "sign out" never leaves a long-lived token behind.
     clearRememberedSession();
     clearOfficeCache();
+    try {
+      await supabase.auth.signOut();
+    } finally {
+      clearRememberedSession();
+    }
   },
   async resetPasswordForEmail(email) {
     const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
@@ -628,6 +644,7 @@ window.Platform = {
       input.onchange = () => {
         const file = input.files && input.files[0];
         if (!file) { cleanup(); resolve(null); return; }
+        if (file.size > MAX_PICK_BYTES) { cleanup(); notifyTooLarge([file]); resolve(null); return; }
         const reader = new FileReader();
         reader.onload = () => {
           const bytes = Array.from(new Uint8Array(reader.result));
@@ -652,8 +669,11 @@ window.Platform = {
       input.style.display = 'none';
       const cleanup = () => { if (input.parentNode) input.parentNode.removeChild(input); };
       input.onchange = async () => {
-        const files = Array.from(input.files || []);
+        const picked = Array.from(input.files || []);
         cleanup();
+        const tooLarge = picked.filter(f => f.size > MAX_PICK_BYTES);
+        if (tooLarge.length) notifyTooLarge(tooLarge);
+        const files = picked.filter(f => f.size <= MAX_PICK_BYTES);
         if (!files.length) { resolve([]); return; }
         const results = await Promise.all(files.map(file => new Promise((res) => {
           const reader = new FileReader();

@@ -191,6 +191,45 @@ function escapeHtml(s) {
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
+// A value passed as a JS string argument inside an onclick="..." attribute. Removing or
+// backslash-escaping quotes isn't enough: the browser decodes HTML entities (&#39;)
+// before the handler runs, so a file name like `x'),alert(1),('` stayed executable.
+// JSON.stringify makes a valid JS literal, escapeHtml protects the attribute boundary.
+// Use WITHOUT surrounding quotes: onclick="f(${jsArg(v)})"
+function jsArg(v) {
+  return escapeHtml(JSON.stringify(String(v == null ? '' : v)));
+}
+// Values that end up in a class name or are compared as enums (status, stage keys,
+// file extensions): anything outside a plain token becomes empty instead of markup.
+function safeToken(v) {
+  return String(v == null ? '' : v).replace(/[^\w-]/g, '');
+}
+// A user-chosen colour going into style="": only a hex/rgb(a)/named colour is allowed.
+function safeColor(v, fallback) {
+  const s = String(v == null ? '' : v).trim();
+  return /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%]+\)|[a-z]+|var\(--[\w-]+\))$/i.test(s) ? s : (fallback || 'transparent');
+}
+// HTML converted from an uploaded .docx (mammoth does no sanitisation of its own): keeps
+// the document's text formatting, drops anything active — scripts, frames, event
+// handlers, javascript:/data: links — before it is put into innerHTML for preview.
+function sanitizeDocHtml(html) {
+  const doc = new DOMParser().parseFromString(`<body>${html || ''}</body>`, 'text/html');
+  doc.querySelectorAll('script,style,iframe,object,embed,link,meta,base,form,input,button,textarea,select,svg,math').forEach(n => n.remove());
+  doc.querySelectorAll('*').forEach(el => {
+    for (const attr of Array.from(el.attributes)) {
+      const name = attr.name.toLowerCase();
+      const val = attr.value.trim().toLowerCase();
+      if (name.startsWith('on') || name === 'style' || name === 'srcset') { el.removeAttribute(attr.name); continue; }
+      if (name === 'href' || name === 'src' || name === 'xlink:href' || name === 'action') {
+        const okImg = name === 'src' && el.tagName === 'IMG' && /^data:image\/(png|jpe?g|gif|webp|bmp);/.test(val);
+        const okLink = name === 'href' && /^(https?:|mailto:|#)/.test(val);
+        if (!okImg && !okLink) el.removeAttribute(attr.name);
+      }
+    }
+    if (el.tagName === 'A') { el.setAttribute('target', '_blank'); el.setAttribute('rel', 'noopener noreferrer'); }
+  });
+  return doc.body.innerHTML;
+}
 function getNextClientNumber() {
   if (!db.counters) db.counters = { nextClientNumber: 1, caseCounters: {} };
   return String(db.counters.nextClientNumber++);
@@ -761,12 +800,12 @@ function renderCasesTable(cases){
         ${c.debtorName?`<div style="font-size:11px;color:var(--text3)">${c.caseType==='general'?'צד':'חייב'}: ${escapeHtml(c.debtorName)}</div>`:''}
       </td>
       <td style="color:var(--accent2);font-weight:600">${c.amount?'₪'+c.amount.toLocaleString():'—'}</td>
-      <td style="color:var(--text2);font-size:12px">${c.stage}</td>
+      <td style="color:var(--text2);font-size:12px">${escapeHtml(c.stage)}</td>
       <td style="color:var(--text3);font-size:12px">${c.opened||''}</td>
       <td style="font-size:12px;color:var(--warning)">${feeLabel(c)}</td>
       <td>
         <div style="display:flex;align-items:center;gap:4px">
-          <span class="badge badge-${c.status}">${smap[c.status]||c.status}</span>
+          <span class="badge badge-${safeToken(c.status)}">${escapeHtml(smap[c.status]||c.status)}</span>
           ${hasAtf?'<span title="יש הסכם שכ״ט" style="font-size:10px;color:var(--success)">✓שכ"ט</span>':''}
           ${hasPoa?'<span title="יש ייפוי כוח" style="font-size:10px;color:var(--success)">✓י"כ</span>':''}
         </div>
@@ -791,7 +830,7 @@ function renderCasesBoard(cases){
         ${c.debtorName?`<div class="kanban-card-sub">${escapeHtml(c.debtorName)}</div>`:''}
         <div class="kanban-card-amount">${c.amount?'₪'+c.amount.toLocaleString():'—'}</div>
         <div class="kanban-card-foot">
-          <span class="badge badge-${c.status}" style="font-size:10px;padding:2px 7px">${smap[c.status]||c.status}</span>
+          <span class="badge badge-${safeToken(c.status)}" style="font-size:10px;padding:2px 7px">${escapeHtml(smap[c.status]||c.status)}</span>
           <span class="kanban-days">${days!==null?days+' ימים':''}</span>
         </div>
       </div>`;
@@ -844,8 +883,8 @@ function trustTabHtml(caseId, trust) {
     const reversed = t.status==='reversed';
     const statusLabel = {draft:'טיוטה',pending:'ממתין לאישור',paid:'שולם',cancelled:'בוטל',reversed:'הופך'}[t.status]||'';
     return `<tr style="${reversed?'opacity:0.5;text-decoration:line-through':''}">
-      <td style="font-size:12px;color:var(--text3)">${t.date||''}</td>
-      <td style="font-size:12px">${TRUST_TX_LABELS[t.type]||t.type}</td>
+      <td style="font-size:12px;color:var(--text3)">${escapeHtml(t.date||'')}</td>
+      <td style="font-size:12px">${escapeHtml(TRUST_TX_LABELS[t.type]||t.type)}</td>
       <td style="font-size:12px">${escapeHtml(t.category||t.source||'')}</td>
       <td style="font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(t.description||'')}">${escapeHtml(t.description||'')}${t.payee?' · '+escapeHtml(t.payee):''}</td>
       <td style="font-size:12px;font-weight:600;color:${isIn?'var(--success)':'var(--danger)'}">${isIn?'+':'-'}₪${(t.amount||0).toLocaleString()}</td>
@@ -854,7 +893,7 @@ function trustTabHtml(caseId, trust) {
       <td style="font-size:11px;color:var(--text3)">${statusLabel}</td>
       <td>
         <div style="display:flex;gap:4px">
-          ${t.receiptFilePath?`<button class="btn btn-sm" title="פתח קבלה" onclick="Platform.openFile('${t.receiptFilePath}','${(t.receiptFilename||'receipt').replace(/'/g,"")}')">🧾</button>`:''}
+          ${t.receiptFilePath?`<button class="btn btn-sm" title="פתח קבלה" onclick="Platform.openFile(${jsArg(t.receiptFilePath)},${jsArg(t.receiptFilename||'receipt')})">🧾</button>`:''}
           ${!reversed&&t.status!=='cancelled'&&canReverse?`<button class="btn btn-sm" style="color:var(--danger)" title="בטל תנועה" onclick="reverseTrustTransaction('${caseId}','${t.id}')">↩</button>`:''}
         </div>
       </td>
@@ -931,7 +970,7 @@ function openCaseDetail(id) {
         </div>
       </div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px">
-        <span class="badge badge-${c.status}" style="font-size:13px;padding:4px 12px">${smap[c.status]}</span>
+        <span class="badge badge-${safeToken(c.status)}" style="font-size:13px;padding:4px 12px">${smap[c.status]}</span>
         <div style="display:flex;align-items:center;gap:8px">
           ${caseTimeSecs>0?`<span style="font-size:12px;color:var(--text3)">⏱ ${Math.floor(caseTimeSecs/3600)}:${String(Math.floor((caseTimeSecs%3600)/60)).padStart(2,'0')} שעות</span>`:''}
           <button id="case-timer-btn" class="btn btn-sm ${timerRunning&&timerCaseId===id?'btn-danger':timerRunning?'':'btn-success'}" onclick="toggleCaseTimer('${id}')">${timerRunning&&timerCaseId===id?'⏹ עצור · '+formatDuration(timerSeconds):timerRunning?'▶ טיימר פועל לתיק אחר':'▶ הפעל טיימר'}</button>
@@ -944,7 +983,7 @@ function openCaseDetail(id) {
       <div class="stat"><div class="stat-label">${c.caseType==='general'?'סכום / שווי':'סכום חוב'}</div><div class="stat-value" style="color:var(--accent2);font-size:20px">${c.amount?'₪'+c.amount.toLocaleString():'—'}</div></div>
       <div class="stat"><div class="stat-label">${c.caseType==='general'?'התקבל בפועל':'גבוי בפועל'}</div><div class="stat-value" style="color:var(--success);font-size:20px">₪${totalCollected.toLocaleString()}</div></div>
       <div class="stat"><div class="stat-label">שכ"ט צפוי</div><div class="stat-value" style="color:var(--warning);font-size:18px">₪${expectedFee.toLocaleString()}</div></div>
-      <div class="stat"><div class="stat-label">שלב</div><div style="font-size:14px;font-weight:600;color:var(--navy);margin-top:4px">${c.stage}</div>
+      <div class="stat"><div class="stat-label">שלב</div><div style="font-size:14px;font-weight:600;color:var(--navy);margin-top:4px">${escapeHtml(c.stage)}</div>
         <div class="stage-bar">${stages.map((s,i)=>`<div class="stage-step ${i<stageIdx?'done':i===stageIdx?'current':''}"></div>`).join('')}</div>
       </div>
     </div>
@@ -1067,7 +1106,7 @@ function openCaseDetail(id) {
         </div>
         ${(c.diary||[]).map((e,idx)=>({e,idx})).reverse().map(({e,idx})=>`<div style="background:var(--bg3);border-radius:var(--radius);padding:12px;margin-bottom:8px;border-right:2px solid var(--border2)">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:4px">
-            <div style="font-size:11px;color:var(--text3)">${e.date}</div>
+            <div style="font-size:11px;color:var(--text3)">${escapeHtml(e.date)}</div>
             <div style="display:flex;gap:4px;flex-shrink:0">
               <button class="btn btn-sm" style="padding:1px 6px;font-size:11px" onclick="editDiary('${id}',${idx})">✏</button>
               <button class="btn btn-sm" style="padding:1px 6px;font-size:11px;color:var(--danger);border:none" onclick="delDiary('${id}',${idx})">✕</button>
@@ -1086,7 +1125,7 @@ function openCaseDetail(id) {
         ${caseTime.length?caseTime.map(t=>`<div class="fin-row">
           <div>
             <div style="font-weight:500;color:var(--navy)">${escapeHtml(t.description||'—')}</div>
-            <div style="font-size:11px;color:var(--text3)">${formatDuration(t.duration)} | ${t.date||''}</div>
+            <div style="font-size:11px;color:var(--text3)">${formatDuration(t.duration)} | ${escapeHtml(t.date||'')}</div>
           </div>
           <button class="btn btn-sm" style="color:var(--danger);border:none;padding:2px 6px" onclick="delTimeEntry('${t.id}')">✕</button>
         </div>`).join(''):'<div class="empty" style="padding:12px 0">אין רשומות שעות</div>'}
@@ -1327,7 +1366,7 @@ function efilingItemsHtml(caseId, bundleId, items) {
         <button class="btn btn-sm" title="${isMain ? 'סמן כנספח' : 'סמן כמסמך ראשי'}" onclick="setEfilingRole('${caseId}','${bundleId}','${it.id}','${isMain ? 'nispach' : 'main'}')">🔀</button>
         <button class="btn btn-sm" title="הזז למעלה" onclick="moveEfilingItem('${caseId}','${bundleId}','${it.id}',-1)" ${i === 0 ? 'disabled' : ''}>↑</button>
         <button class="btn btn-sm" title="הזז למטה" onclick="moveEfilingItem('${caseId}','${bundleId}','${it.id}',1)" ${i === items.length - 1 ? 'disabled' : ''}>↓</button>
-        ${it.filePath ? `<button class="btn btn-sm" title="פתח" onclick="efilingOpenFile('${(it.filePath || '').replace(/\\/g, '/')}','${it.ext || ''}','${(it.origName || it.title || '').replace(/\\/g, '')}')">👁</button>` : ''}
+        ${it.filePath ? `<button class="btn btn-sm" title="פתח" onclick="efilingOpenFile(${jsArg((it.filePath || '').replace(/\\/g, '/'))},${jsArg(it.ext || '')},${jsArg(it.origName || it.title || '')})">👁</button>` : ''}
         <button class="btn btn-sm" title="הסר" style="color:var(--danger)" onclick="deleteEfilingItem('${caseId}','${bundleId}','${it.id}')">✕</button>
       </div>
     </div>`;
@@ -1614,7 +1653,7 @@ async function ef2PaginateDocxHtml(buffer) {
   const measure = document.createElement('div');
   measure.style.cssText = `position:fixed;left:-99999px;top:0;width:${EF2_HTML_PX_W}px;font-family:David,'Times New Roman',serif;font-size:${ef2Px(12)}px;line-height:1.5;direction:rtl;text-align:right`;
   document.body.appendChild(measure);
-  measure.innerHTML = result.value || '<p><i>מסמך ריק</i></p>';
+  measure.innerHTML = sanitizeDocHtml(result.value) || '<p><i>מסמך ריק</i></p>';
   const nodes = Array.from(measure.childNodes);
   measure.innerHTML = '';
   let current = document.createElement('div');
@@ -2376,7 +2415,7 @@ ${fieldsBlock}
     try { quotaNote = ` (נוצלו ${await Platform.getAIUsageThisMonth()} פעולות AI החודש)`; } catch (e) { /* non-critical */ }
     document.getElementById('rq-result').innerHTML =
       `<div class="alert alert-success">המסמך "${escapeHtml(filename)}" נוצר ונשמר לתיק${quotaNote}.</div>
-       <button class="btn btn-primary" onclick="Platform.openFile('${filePath}','${filename.replace(/'/g, "\\'")}')">⬇ פתח שוב</button>`;
+       <button class="btn btn-primary" onclick="Platform.openFile(${jsArg(filePath)},${jsArg(filename)})">⬇ פתח שוב</button>`;
     await Platform.openFile(filePath, filename);
     if (currentPanel === 'case-detail' && currentCaseId === rqCurrentCaseId) reopenCaseDetailKeepingTab(rqCurrentCaseId);
   } catch (e) {
@@ -2438,7 +2477,7 @@ function renderClients(filter='') {
   empty.style.display='none';
   grid.innerHTML=clients.map(c=>`<div class="client-card" onclick="openClientDetail('${c.id}')">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-      <div class="client-avatar" style="background:${c.color};color:${c.textColor};margin-bottom:0">${c.initials}</div>
+      <div class="client-avatar" style="background:${safeColor(c.color)};color:${safeColor(c.textColor)};margin-bottom:0">${escapeHtml(c.initials)}</div>
       <div style="flex:1;min-width:0">
         ${c.clientNumber?`<div style="font-size:10px;color:var(--accent2);font-weight:700;letter-spacing:0.04em">מספר לקוח: ${escapeHtml(c.clientNumber)}</div>`:''}
         <div style="font-weight:600;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(c.name)}</div>
@@ -2510,7 +2549,7 @@ function openClientDetail(id) {
   document.getElementById('client-detail-body').innerHTML=`
     ${typeof AiClientActions==='function'?AiClientActions(id):''}
     <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px">
-      <div class="client-avatar" style="background:${cl.color||'rgba(37,99,235,0.15)'};color:${cl.textColor||'var(--accent2)'};width:56px;height:56px;font-size:18px;margin-bottom:0">
+      <div class="client-avatar" style="background:${safeColor(cl.color,'rgba(37,99,235,0.15)')};color:${safeColor(cl.textColor,'var(--accent2)')};width:56px;height:56px;font-size:18px;margin-bottom:0">
         ${escapeHtml(cl.initials||cl.name.substring(0,2).toUpperCase())}
       </div>
       <div>
@@ -2555,8 +2594,8 @@ function openClientDetail(id) {
             ${c.number?`<span style="font-size:11px;color:var(--text3)">#${escapeHtml(c.number)}</span>`:''}
           </td>
           <td style="color:var(--accent2);font-weight:600">${c.amount?'₪'+c.amount.toLocaleString():'—'}</td>
-          <td style="font-size:12px;color:var(--text2)">${c.stage}</td>
-          <td><span class="badge badge-${c.status}">${smap[c.status]||c.status}</span></td>
+          <td style="font-size:12px;color:var(--text2)">${escapeHtml(c.stage)}</td>
+          <td><span class="badge badge-${safeToken(c.status)}">${escapeHtml(smap[c.status]||c.status)}</span></td>
         </tr>`).join('')}
       </tbody></table>`:'<div class="empty" style="padding:16px">אין תיקים ללקוח זה</div>'}
     </div>
@@ -3051,7 +3090,7 @@ function renderFinance(){
     return `<div class="fin-row" onclick="openCaseDetail('${c.id}')" style="cursor:pointer">
       <div style="flex:2;min-width:0">
         <div style="font-weight:500;color:var(--navy);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(c.name)}</div>
-        <div style="font-size:11px;color:var(--text3)">${smap[c.status]||c.status} | ${feeTypeLabel(c)}</div>
+        <div style="font-size:11px;color:var(--text3)">${escapeHtml(smap[c.status]||c.status)} | ${escapeHtml(feeTypeLabel(c))}</div>
       </div>
       <div style="flex:1;text-align:left">
         <div style="font-size:10px;color:var(--text3)">שכ"ט צפוי</div>
@@ -3259,7 +3298,7 @@ async function delDoc(id,inDetail=false){const d0=db.docs.find(d=>d.id===id);if(
 function docItemHtml(d, opts={}) {
   const inDetail = !!opts.inDetail;
   return `<div class="doc-item" ${d.filePath?`onclick="previewDoc('${d.id}')"`:''}>
-    <div class="doc-icon ${d.ext}">${(d.ext||'').toUpperCase()}</div>
+    <div class="doc-icon ${safeToken(d.ext)}">${escapeHtml((d.ext||'').toUpperCase())}</div>
     <div style="flex:1;min-width:0">
       <div style="font-size:13px;font-weight:500;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(d.name)}</div>
       <div style="font-size:11px;color:var(--text3)">${d.date||''} ${d.notes?'· '+escapeHtml(d.notes):''}</div>
@@ -3364,14 +3403,14 @@ async function renderPreviewBody(filePath, ext, filename) {
     } else if (/\.docx$/i.test(filename || '') && window.mammoth) {
       const { buffer } = await Platform.downloadFileBytes(filePath);
       const result = await window.mammoth.convertToHtml({ arrayBuffer: new Uint8Array(buffer).buffer });
-      box.innerHTML = `<div style="padding:12px;text-align:right;font-size:13px;line-height:1.7;max-height:60vh;overflow-y:auto">${result.value || '<i>מסמך ריק</i>'}</div>`;
+      box.innerHTML = `<div style="padding:12px;text-align:right;font-size:13px;line-height:1.7;max-height:60vh;overflow-y:auto">${sanitizeDocHtml(result.value) || '<i>מסמך ריק</i>'}</div>`;
     } else {
       box.innerHTML = `<div class="empty">אין תצוגה מקדימה עבור סוג קובץ זה</div>`;
     }
     return true;
   } catch (e) {
     if (myToken !== docPreviewToken) return true;
-    box.innerHTML = `<div class="empty">שגיאה בטעינת המסמך: ${e.message}</div>`;
+    box.innerHTML = `<div class="empty">שגיאה בטעינת המסמך: ${escapeHtml(e.message)}</div>`;
     return false;
   }
 }
@@ -3644,7 +3683,7 @@ async function renderBatchPreview(f) {
     } else if (/\.docx$/i.test(f.filename) && window.mammoth) {
       const result = await window.mammoth.convertToHtml({ arrayBuffer: new Uint8Array(f.buffer).buffer });
       if (myToken !== batchPreviewToken) return; // a later step's preview has since taken over this box
-      box.innerHTML = `<div style="padding:12px;text-align:right;font-size:13px;line-height:1.6;width:100%">${result.value || '<i>מסמך ריק</i>'}</div>`;
+      box.innerHTML = `<div style="padding:12px;text-align:right;font-size:13px;line-height:1.6;width:100%">${sanitizeDocHtml(result.value) || '<i>מסמך ריק</i>'}</div>`;
     } else {
       box.innerHTML = `<div class="empty">📄 ${f.filename}<br><span style="font-size:11px">אין תצוגה מקדימה עבור סוג קובץ זה</span></div>`;
     }
@@ -3769,7 +3808,7 @@ function renderDashboard(){
       </div>
       <div style="font-size:11px;color:var(--text3)">${escapeHtml(c.debtorName||'')} ${c.amount?'| ₪'+c.amount.toLocaleString():''}</div>
     </div>
-    <span class="badge badge-${c.status}">${smap[c.status]}</span>
+    <span class="badge badge-${safeToken(c.status)}">${smap[c.status]}</span>
   </div>`).join('')||'<div class="empty">אין תיקים</div>';
 
   const upEvts=db.events.filter(e=>e.date>=today).sort((a,b)=>a.date>b.date?1:-1).slice(0,3);

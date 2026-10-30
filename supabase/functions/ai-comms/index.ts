@@ -21,6 +21,13 @@ import { getTelephonyProvider, TELEPHONY_REQUIREMENTS } from '../_shared/provide
 import { normalizePhone } from '../_shared/security.ts';
 import { ALWAYS_APPROVE } from '../_shared/approvals.ts';
 
+// סוגי הפעולות ש-send_approved מוציא החוצה — אותה רשימה שב-aiApplyApproval
+// (src/ai-center.js) מפנה לכאן.
+const MESSAGE_ACTIONS = new Set([
+  'draft_message', 'draft_email', 'send_message', 'send_email', 'send_whatsapp',
+  'send_legal_notice', 'send_letter_opposing',
+]);
+
 Deno.serve(async (req) => {
   const pre = preflight(req);
   if (pre) return pre;
@@ -74,19 +81,15 @@ async function sendApproved(
     return json({ ok: true, already_sent: true, message: 'ההודעה כבר נשלחה.' });
   }
 
-  // תפיסה אטומית של השורה לפני השליחה. הבדיקה לעיל לבדה היא read-then-act:
-  // שתי בקשות במקביל (לחיצה כפולה, או retry של הדפדפן על תשובה איטית) היו
-  // שתיהן רואות approved+applied_at=null ושולחות — כלומר הלקוח מקבל את
-  // אותה הודעה פעמיים. ה-UPDATE המותנה מצליח רק לאחת מהן.
-  const { data: claimed, error: claimErr } = await sb.from('ai_approvals')
-    .update({ applied_at: new Date().toISOString() })
-    .eq('id', approvalId).eq('status', 'approved').is('applied_at', null)
-    .select('id');
-  if (claimErr) throw new AppError('db_error', claimErr.message, 500);
-  if (!claimed || !claimed.length) {
-    return json({ ok: true, already_sent: true, message: 'ההודעה כבר בטיפול או נשלחה.' });
+  // send_approved שולח הודעות בלבד. אישור של פעולה אחרת (משימה, תיק) אינו
+  // "כרטיס" לשליחת הודעה, גם אם ה-payload שלו נראה כמו הודעה.
+  if (!MESSAGE_ACTIONS.has(approval.action_type)) {
+    throw new AppError('bad_request', 'אישור זה אינו של הודעה יוצאת.', 400);
   }
 
+  // ⚠ כל הבדיקות לקריאה בלבד (הרשאה, מפסקים, נמען, ספק, opt-out) רצות
+  // **לפני** התפיסה. בעבר התפיסה הייתה ראשונה, ובדיקה שנכשלה אחריה השאירה את
+  // האישור מסומן כ"כבר נשלח" — ההודעה לא יצאה ואי אפשר היה לנסות שוב.
   // ---- הרשאת תפקיד ----
   if (!['owner', 'lawyer'].includes(caller.role)) {
     throw new AppError('forbidden', 'רק עורך דין או בעל המשרד יכולים לשלוח הודעה מאושרת.', 403);
@@ -123,8 +126,8 @@ async function sendApproved(
   const db = await loadOfficeDb(sb, caller.officeId);
   const client = payload.clientId ? db.clients.find((c) => c.id === payload.clientId) : null;
 
-  let result: { ok: boolean; externalId?: string; error?: string };
   let recipient = '';
+  let send: () => Promise<{ ok: boolean; externalId?: string; error?: string }>;
 
   if (channel === 'email') {
     recipient = String(payload.to || client?.email || '');
@@ -138,7 +141,7 @@ async function sendApproved(
       throw new AppError('provider_mock',
         'Gmail אינו מחובר (מצב הדגמה) — ההודעה לא נשלחה. חבר חשבון במסך החיבורים.', 503);
     }
-    result = await provider.send({
+    send = () => provider.send({
       to: recipient, subject: String(payload.subject || 'הודעה מהמשרד'), body: content,
     });
   } else {
@@ -158,8 +161,23 @@ async function sendApproved(
       throw new AppError('provider_mock',
         'WhatsApp אינו מחובר (מצב הדגמה) — ההודעה לא נשלחה. חבר חשבון במסך החיבורים.', 503);
     }
-    result = await provider.sendText(recipient, content);
+    send = () => provider.sendText(recipient, content);
   }
+
+  // תפיסה אטומית של השורה לפני השליחה. הבדיקה לעיל לבדה היא read-then-act:
+  // שתי בקשות במקביל (לחיצה כפולה, או retry של הדפדפן על תשובה איטית) היו
+  // שתיהן רואות approved+applied_at=null ושולחות — כלומר הלקוח מקבל את
+  // אותה הודעה פעמיים. ה-UPDATE המותנה מצליח רק לאחת מהן.
+  const { data: claimed, error: claimErr } = await sb.from('ai_approvals')
+    .update({ applied_at: new Date().toISOString() })
+    .eq('id', approvalId).eq('status', 'approved').is('applied_at', null)
+    .select('id');
+  if (claimErr) throw new AppError('db_error', claimErr.message, 500);
+  if (!claimed || !claimed.length) {
+    return json({ ok: true, already_sent: true, message: 'ההודעה כבר בטיפול או נשלחה.' });
+  }
+
+  const result = await send();
 
   // ---- תיעוד ----
   const { data: thread } = await sb.from('communication_threads').upsert({
@@ -280,6 +298,24 @@ async function createCalendarEvent(
     .select('emergency_stop').eq('office_id', caller.officeId).maybeSingle();
   if (settings?.emergency_stop) throw new AppError('emergency_stop', 'עצירת חירום פעילה.', 423);
 
+  // תוכן האירוע נלקח **רק** מההצעה שאושרה, לא מגוף הבקשה. בעבר כל אישור
+  // מאושר (גם של משימה) שימש "כרטיס" ליצירת אירוע בכל כותרת ומועד שהדפדפן שלח.
+  const { data: approval } = await sb.from('ai_approvals')
+    .select('action_type, proposed_payload, edited_payload')
+    .eq('id', approvalId).eq('office_id', caller.officeId).maybeSingle();
+  if (!approval) throw new AppError('not_found', 'האישור לא נמצא.', 404);
+  if (!['create_event', 'create_deadline'].includes(approval.action_type)) {
+    throw new AppError('bad_request', 'אישור זה אינו של אירוע ביומן.', 400);
+  }
+  const ev = (approval.edited_payload || approval.proposed_payload || {}) as Record<string, unknown>;
+  const date = String(ev.date || '');
+  if (!/^d{4}-d{2}-d{2}$/.test(date)) throw new AppError('bad_request', 'תאריך האירוע בהצעה אינו תקין.', 400);
+  const time = /^d{2}:d{2}$/.test(String(ev.time || '')) ? String(ev.time) : '09:00';
+  const startLocal = `${date}T${time}:00`;
+  const [hh, mm] = time.split(':').map(Number);
+  const endH = Math.min(23, hh + 1);
+  const endLocal = `${date}T${String(endH).padStart(2, '0')}:${String(endH === hh ? 59 : mm).padStart(2, '0')}:00`;
+
   // תפיסה אטומית, כמו בשליחת הודעה: בלעדיה אותו אישור היה יכול ליצור את
   // אותו אירוע שוב ושוב בכל לחיצה.
   const { data: claimed } = await sb.from('ai_approvals')
@@ -303,10 +339,10 @@ async function createCalendarEvent(
   }
 
   const result = await provider.createEvent({
-    title: String(body.title || 'אירוע'),
-    start: String(body.start), end: String(body.end),
-    location: body.location ? String(body.location) : undefined,
-    description: body.description ? String(body.description) : undefined,
+    title: String(ev.title || 'אירוע'),
+    start: startLocal, end: endLocal,
+    location: ev.location ? String(ev.location) : undefined,
+    description: ev.notes ? String(ev.notes) : undefined,
   });
 
   await sb.from('ai_approvals').update(
@@ -319,7 +355,7 @@ async function createCalendarEvent(
     officeId: caller.officeId, actorType: 'user', userId: caller.userId,
     action: result.ok ? 'calendar_event_created' : 'calendar_event_failed',
     entityType: 'calendar_event', entityId: result.externalId || null,
-    after: { title: body.title, start: body.start, error: result.error },
+    after: { title: ev.title, start: startLocal, error: result.error },
     severity: result.ok ? 'info' : 'warning', req,
   });
 
