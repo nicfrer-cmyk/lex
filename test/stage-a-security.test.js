@@ -23,7 +23,9 @@ test('Platform.saveDB refuses to save before a successful load (no blank-blob ov
   const src = read('src/platform.web.js');
   const saveBody = src.slice(src.indexOf('async saveDB(dbObj)'), src.indexOf('async saveFile('));
   assert.match(saveBody, /if \(!_dbLoaded\)\s*\{\s*throw/, 'saveDB must throw when nothing was loaded');
-  assert.match(saveBody, /if \(!_dbRowExisted\)[\s\S]*?\.insert\(/, 'a missing row is inserted, not upserted');
+  assert.match(saveBody, /if \(!_dbUpdatedAt\)[\s\S]*?\.insert\(/, 'a missing row is inserted, not upserted');
+  assert.ok(!/\.upsert\(/.test(saveBody), 'saveDB must never blind-upsert the office blob');
+  assert.match(saveBody, /\.eq\('updated_at', _dbUpdatedAt\)/, 'updates are version-checked');
   const loadBody = src.slice(src.indexOf('async loadDB()'), src.indexOf('async saveDB('));
   assert.match(loadBody, /_dbLoaded = true/);
 });

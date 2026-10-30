@@ -162,22 +162,29 @@ export type CrmDb = {
   [k: string]: unknown;
 };
 
-const EMPTY_DB: CrmDb = {
-  cases: [], clients: [], tasks: [], events: [], docs: [], payments: [], leads: [],
-  timeEntries: [], trustTransactions: [], efilingBundles: {}, counters: {}, settings: {},
-};
-
-/** ממלא קולקציות חסרות — משרד חדש, או blob ישן שנשמר לפני שקולקציה נוספה. */
+/**
+ * ממלא קולקציות חסרות — משרד חדש, או blob ישן שנשמר לפני שקולקציה נוספה.
+ *
+ * ⚠ כל ברירת מחדל נוצרת מחדש בכל קריאה. בעבר זה היה spread של אובייקט
+ * EMPTY_DB קבוע, ולכן המערכים היו משותפים בין קריאות: משימה שנוספה למשרד
+ * שאין לו `tasks` נכנסה למערך המשותף, והמשרד הבא באותו worker "ירש" אותה.
+ *
+ * counters חייב לכלול nextClientNumber — בלעדיו הלקוח הראשון שנוצר בדפדפן
+ * אחרי blob שהשרת יצר מקבל את המספר "NaN".
+ */
 function normalizeDb(raw: unknown): CrmDb {
   const d = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
-  const out = { ...EMPTY_DB, ...d } as CrmDb;
+  const out = { ...d } as CrmDb;
   for (const k of ['cases', 'clients', 'tasks', 'events', 'docs', 'payments', 'leads',
                    'timeEntries', 'trustTransactions'] as const) {
     if (!Array.isArray(out[k])) (out as Record<string, unknown>)[k] = [];
   }
   for (const k of ['efilingBundles', 'counters', 'settings'] as const) {
-    if (!out[k] || typeof out[k] !== 'object') (out as Record<string, unknown>)[k] = {};
+    if (!out[k] || typeof out[k] !== 'object' || Array.isArray(out[k])) (out as Record<string, unknown>)[k] = {};
   }
+  const counters = out.counters as Record<string, unknown>;
+  if (!(Number(counters.nextClientNumber) >= 1)) counters.nextClientNumber = 1;
+  if (!counters.caseCounters || typeof counters.caseCounters !== 'object') counters.caseCounters = {};
   return out;
 }
 

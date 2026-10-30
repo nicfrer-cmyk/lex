@@ -7,6 +7,7 @@ import { Buffer } from 'buffer';
 import Docxtemplater from 'docxtemplater';
 import { createClient } from '@supabase/supabase-js';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase-config.js';
+import { mergeDb, deepCopy } from './db-merge.js';
 
 window.Buffer = Buffer;
 window.process = window.process || { browser: true, env: {}, version: '' };
@@ -89,9 +90,13 @@ let _officeCache = null; // { officeId, role }
 // empty default, and saving it would overwrite the office's whole real blob (cases,
 // clients, trust ledger) — which is exactly what a transient load failure used to cause.
 let _dbLoaded = false;
-// Whether the office's app_data row existed at load. If it didn't, the first save
-// inserts rather than upserts, so a row a server writer created meanwhile isn't wiped.
-let _dbRowExisted = false;
+// The version (updated_at) and exact content of the blob as last loaded or saved.
+// Both are needed for a safe save: the version detects that someone else (another
+// tab/lawyer, the voice agent, WhatsApp, automations) wrote since; the content is the
+// baseline of the three-way merge that keeps both sides' changes (see db-merge.js).
+// _dbUpdatedAt === null after a successful load means the row didn't exist yet.
+let _dbUpdatedAt = null;
+let _dbBaseline = null;
 
 // Sums file sizes under an office's storage folder. Supabase Storage's list() isn't
 // recursive, so this walks the two known shapes by hand: documents/ (flat) and
@@ -475,30 +480,74 @@ window.Platform = {
   // ---- db (whole-object blob per OFFICE, see supabase-schema-phase1.sql) ----
   async loadDB() {
     const { officeId } = await currentOffice();
-    const { data, error } = await supabase.from('app_data').select('data').eq('office_id', officeId).maybeSingle();
+    const { data, error } = await supabase.from('app_data').select('data, updated_at').eq('office_id', officeId).maybeSingle();
     if (error) throw error;
-    _dbRowExisted = !!data;
+    _dbUpdatedAt = data ? data.updated_at : null;
+    _dbBaseline = data ? deepCopy(data.data) : null;
     _dbLoaded = true;
     return data ? data.data : null;
   },
 
+  /**
+   * Save with a version check and a three-way merge.
+   *
+   * The blob used to be upserted whole with no check, so every browser save silently
+   * erased whatever a server writer (voice agent tasks/callbacks, WhatsApp leads,
+   * automations) or another lawyer had written since this page loaded. Now the update
+   * only succeeds if the row is still at the version we loaded; otherwise the current
+   * row is re-read, merged into dbObj field by field (db-merge.js), and retried.
+   *
+   * @returns {{merged: boolean, renumbered: Array<{name,from,to}>}}
+   */
   async saveDB(dbObj) {
     if (!_dbLoaded) {
       throw new Error('נתוני המשרד לא נטענו מהשרת, ולכן השמירה נחסמה כדי לא לדרוס אותם. רענן/י את הדף.');
     }
     const { officeId } = await currentOffice();
-    if (!_dbRowExisted) {
-      const { error } = await supabase.from('app_data').insert({ office_id: officeId, data: dbObj });
-      if (error && error.code === '23505') {
-        throw new Error('נתוני המשרד נוצרו במקביל ממקום אחר. רענן/י את הדף לפני שממשיכים.');
+    const outcome = { merged: false, renumbered: [] };
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+      // What is actually sent. The baseline is taken from this copy, not the live
+      // object, because the user can keep editing db while the request is in flight.
+      const payload = deepCopy(dbObj);
+
+      if (!_dbUpdatedAt) {
+        // The row didn't exist at load (a new office). insert, not upsert: a server
+        // writer may have created it meanwhile, and upsert would wipe what it wrote.
+        const { data, error } = await supabase.from('app_data')
+          .insert({ office_id: officeId, data: payload }).select('updated_at').maybeSingle();
+        if (!error) {
+          _dbUpdatedAt = data ? data.updated_at : null;
+          _dbBaseline = payload;
+          return outcome;
+        }
+        if (error.code !== '23505') throw error;
+      } else {
+        const { data, error } = await supabase.from('app_data')
+          .update({ data: payload })
+          .eq('office_id', officeId)
+          .eq('updated_at', _dbUpdatedAt)
+          .select('updated_at');
+        if (error) throw error;
+        if (data && data.length) {
+          _dbUpdatedAt = data[0].updated_at;
+          _dbBaseline = payload;
+          return outcome;
+        }
       }
-      if (error) throw error;
-      _dbRowExisted = true;
-      return true;
+
+      // Someone wrote since our version: read the current row, merge it in, retry.
+      const { data: fresh, error: readErr } = await supabase.from('app_data')
+        .select('data, updated_at').eq('office_id', officeId).maybeSingle();
+      if (readErr) throw readErr;
+      if (!fresh) throw new Error('שורת הנתונים של המשרד לא נמצאה. רענן/י את הדף.');
+      const stats = mergeDb(dbObj, fresh.data, _dbBaseline || {});
+      outcome.merged = true;
+      outcome.renumbered.push(...stats.renumbered);
+      _dbUpdatedAt = fresh.updated_at;
+      _dbBaseline = deepCopy(fresh.data);
     }
-    const { error } = await supabase.from('app_data').upsert({ office_id: officeId, data: dbObj }, { onConflict: 'office_id' });
-    if (error) throw error;
-    return true;
+    throw new Error('הנתונים שונו במקביל ולא ניתן היה לשמור. רענן/י את הדף ונסה/י שוב.');
   },
 
   // ---- files (Supabase Storage, private bucket, path-scoped to the OFFICE) ----

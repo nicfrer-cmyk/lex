@@ -70,6 +70,9 @@ async function loadDB() {
     if (!db.efilingBundles) db.efilingBundles = {};
     if (!db.counters) db.counters = { nextClientNumber: 1, caseCounters: {} };
     if (!db.counters.caseCounters) db.counters.caseCounters = {};
+    // A blob first created server-side (voice agent / WhatsApp lead) used to carry
+    // `counters: {}` — with no nextClientNumber the next client got the number "NaN".
+    if (!(Number(db.counters.nextClientNumber) >= 1)) db.counters.nextClientNumber = 1;
     let dirty = false;
     // db.efilingBundles[caseId] used to be a single {items:[...]} object (one filing
     // per case) — now it's a list of named filings, since a real case can need several
@@ -123,8 +126,9 @@ async function saveDB() {
   const run = _saveChain.then(() => Platform.saveDB(db));
   _saveChain = run.catch(() => {});
   const statusEl = document.getElementById('save-status');
+  let outcome = null;
   try {
-    await run;
+    outcome = await run;
   } catch (e) {
     console.error('saveDB failed:', e);
     if (statusEl) statusEl.textContent = 'השמירה נכשלה ⚠';
@@ -136,6 +140,13 @@ async function saveDB() {
   if (statusEl) {
     statusEl.textContent = 'נשמר ✓';
     setTimeout(()=>statusEl.textContent='', 2000);
+  }
+  // Someone else (another lawyer, the voice agent, WhatsApp) wrote meanwhile and their
+  // changes were merged into db — show them where it's cheap to re-render.
+  if (outcome && outcome.merged && currentPanel === 'dashboard') renderDashboard();
+  if (outcome && outcome.renumbered && outcome.renumbered.length) {
+    notify('מספר לקוח שונה כי נוצר במקביל לקוח עם אותו מספר: ' +
+      outcome.renumbered.map(r => `${r.name} ${r.from}→${r.to}`).join(', '));
   }
   refreshSidebar();
 }
