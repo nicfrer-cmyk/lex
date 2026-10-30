@@ -24,6 +24,65 @@ import { json, preflight, errorResponse } from '../_shared/http.ts';
 import { timingSafeEqual, stableHash } from '../_shared/crypto.ts';
 import { audit } from '../_shared/audit.ts';
 import { todayISO, addDaysISO, daysBetweenISO, heToISO, wrapUntrusted } from '../_shared/security.ts';
+import { nextRunAt, Schedule } from '../_shared/staff-tools.ts';
+
+// ============================================================
+// שגרות הצוות
+// ============================================================
+//
+// סוכן עם `schedule` רץ לבד: כשהגיע next_run_at נוצר job עם routine_goal,
+// ו-next_run_at מתקדם. מפתח idempotency של סוכן+תאריך מונע ריצה כפולה גם
+// אם שני טיקים רצים במקביל. סוכן בלי next_run_at מקבל אחד (בלי לרוץ על
+// העבר — מי שמדליק שגרה ביום שלישי לא רוצה את "יום ראשון" שהוחמץ).
+async function enqueueRoutines(sb: ReturnType<typeof admin>) {
+  const now = new Date();
+  const { data: agents, error } = await sb.from('ai_agents')
+    .select('id, office_id, slug, name, schedule, routine_goal, next_run_at')
+    .eq('status', 'active').eq('visible', true).not('schedule', 'is', null);
+  if (error) return { error: error.message };
+
+  let scheduled = 0, enqueued = 0, skipped = 0;
+  for (const a of agents || []) {
+    const next = nextRunAt(a.schedule as Schedule, now);
+    if (!a.next_run_at) {
+      await sb.from('ai_agents').update({ next_run_at: next }).eq('id', a.id);
+      scheduled++;
+      continue;
+    }
+    if (Date.parse(a.next_run_at) > now.getTime()) continue;
+
+    const { data: st } = await sb.from('ai_settings')
+      .select('emergency_stop, automations_paused').eq('office_id', a.office_id).maybeSingle();
+    if (st?.emergency_stop || st?.automations_paused) {
+      // המשרד עצר — מדלגים על הריצה הזו, אבל מקדמים את הלוח כדי לא להציף כשהוא יחזור.
+      await sb.from('ai_agents').update({ next_run_at: next }).eq('id', a.id);
+      skipped++;
+      continue;
+    }
+
+    const key = await stableHash('routine', a.id, todayISO());
+    const { error: insErr } = await sb.from('ai_jobs').insert({
+      office_id: a.office_id, agent_id: a.id, job_type: 'routine', priority: 6,
+      trigger_type: 'schedule', idempotency_key: key,
+      payload: { goal: a.routine_goal || `בצע/י את שגרת העבודה שלך (${a.name}).`, routine: true, slug: a.slug },
+    });
+    // הפרה של idempotency = כבר נוצר היום. לא שגיאה.
+    if (insErr && !/duplicate|unique|idempot/i.test(insErr.message)) {
+      console.error('[routines] enqueue failed', a.slug, insErr.message);
+      continue;
+    }
+    await sb.from('ai_agents').update({ next_run_at: next, last_scheduled_at: now.toISOString() }).eq('id', a.id);
+    if (!insErr) {
+      enqueued++;
+      await audit(sb, {
+        officeId: a.office_id, actorType: 'system', agentId: a.id,
+        action: 'routine_enqueued', entityType: 'ai_agent', entityId: a.id,
+        after: { slug: a.slug, next }, severity: 'info',
+      });
+    }
+  }
+  return { scheduled, enqueued, skipped, agents: (agents || []).length };
+}
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -44,8 +103,13 @@ Deno.serve(async (req) => {
   const sb = admin();
   try {
     const body = await req.json().catch(() => ({}));
-    const tasks = (body.tasks as string[]) || ['reap', 'drain', 'learn'];
+    const tasks = (body.tasks as string[]) || ['reap', 'routines', 'drain', 'learn'];
     const out: Record<string, unknown> = {};
+
+    // שגרות הצוות: סוכן עם לוח שהגיע זמנו נכנס לתור כ-job אחד ליום.
+    if (tasks.includes('routines')) {
+      out.routines = await enqueueRoutines(sb);
+    }
 
     // 1. שחרור jobs שננעלו ע"י worker שמת (deploy באמצע, timeout).
     if (tasks.includes('reap')) {

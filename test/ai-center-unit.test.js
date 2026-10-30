@@ -463,8 +463,11 @@ const GATEWAY_SRC = fsSync.readFileSync(
   path.join(__dirname, '..', 'supabase', 'functions', 'ai-gateway', 'index.ts'), 'utf8');
 const CRON_SRC = fsSync.readFileSync(
   path.join(__dirname, '..', 'supabase', 'functions', 'ai-cron', 'index.ts'), 'utf8');
+// שתי הזריעות: המקורית, וזו של צוות ה-AI (31.10.2026) שמוסיפה תפקידים ומשביתה אחרים.
 const SEED_SRC = fsSync.readFileSync(
-  path.join(__dirname, '..', 'supabase', 'migrations', '20260804000001_ai_center_seed.sql'), 'utf8');
+  path.join(__dirname, '..', 'supabase', 'migrations', '20260804000001_ai_center_seed.sql'), 'utf8')
+  + '\n' + fsSync.readFileSync(
+  path.join(__dirname, '..', 'supabase', 'migrations', '20261031000000_ai_staff.sql'), 'utf8');
 
 /** slugים של סוכנים כפי שהם מוגדרים בזריעה. */
 function seededAgents() {

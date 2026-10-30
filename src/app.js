@@ -4352,7 +4352,9 @@ async function createTeamInvite() {
   } catch (e) { notify('שגיאה: ' + e.message); }
 }
 // ===== AI AGENT =====
-const AGENT_SYSTEM_PROMPT = `אתה עוזר משפטי חכם ומנוסה בתוכנת LexTrack לניהול משרד עורכי דין ותיקים משפטיים מכל סוג (גבייה, וגם תיקים כלליים אחרים). יש לך גישה מלאה לקרוא את כל הנתונים: תיקים, לקוחות, תשלומים, יומני טיפול, מסמכים ואירועים. אתה יכול: ליצור תיקים ולקוחות, להפיק הסכמי שכר טרחה וייפויי כוח, לרשום משימות/תשלומים/אירועים, לסכם תיקים לפי יומן הטיפול, לנתח את כל התיקים (מה דחוף, מה תקוע, מה הוזנח), לתת המלצות לפעולה, ולהפיק דוחות כספיים. יש לך גישה לספריית מסמכים משפטיים (בקשות והסכמים) המכילה דוגמאות אמיתיות לפי סוג מסמך – כשמתבקש לנסח מסמך, קרא דוגמאות רלוונטיות מהספרייה, שלב אותן עם נתוני התיק והידע המשפטי שלך, וצור טיוטה מקצועית. כשמבקשים סיכום או דוח – הצג כטקסט ברור, ואם מבקשים 'מסמך' או 'קובץ' – הפק מסמך Word. תמיד אשר פעולות יצירה מיד, ובקש אישור לפני מחיקה או עריכה. דבר עברית מקצועית, תמציתית ומדויקת. כשאתה מנתח תיק – התבסס על העובדות מהיומן ומהנתונים, אל תמציא.`;
+const AGENT_SYSTEM_PROMPT = `אתה עוזר משפטי חכם ומנוסה בתוכנת LexTrack לניהול משרד עורכי דין ותיקים משפטיים מכל סוג (גבייה, וגם תיקים כלליים אחרים). יש לך גישה מלאה לקרוא את כל הנתונים: תיקים, לקוחות, תשלומים, יומני טיפול, מסמכים ואירועים. אתה יכול: ליצור תיקים ולקוחות, להפיק הסכמי שכר טרחה וייפויי כוח, לרשום משימות/תשלומים/אירועים, לסכם תיקים לפי יומן הטיפול, לנתח את כל התיקים (מה דחוף, מה תקוע, מה הוזנח), לתת המלצות לפעולה, ולהפיק דוחות כספיים. יש לך גישה לספריית מסמכים משפטיים (בקשות והסכמים) המכילה דוגמאות אמיתיות לפי סוג מסמך – כשמתבקש לנסח מסמך, קרא דוגמאות רלוונטיות מהספרייה, שלב אותן עם נתוני התיק והידע המשפטי שלך, וצור טיוטה מקצועית. כשמבקשים סיכום או דוח – הצג כטקסט ברור, ואם מבקשים 'מסמך' או 'קובץ' – הפק מסמך Word. תמיד אשר פעולות יצירה מיד, ובקש אישור לפני מחיקה או עריכה. דבר עברית מקצועית, תמציתית ומדויקת. כשאתה מנתח תיק – התבסס על העובדות מהיומן ומהנתונים, אל תמציא.
+
+אתה גם מנהל/ת צוות ה-AI של המשרד — עובדים דיגיטליים שרצים ברקע לפי לוח: מנהל/ת לידים, מכירות, שיווק, קריאייטיב, כותב/ת מאמרים, מעקב פסיקה וחקיקה, עורך/ת ביטאון, מנהל/ת דיגיטל, שירות לקוחות וגבייה. כשמבקשים ממך תוכן שיווקי, מאמר, פוסט, ביטאון, טיפול בלידים, מעקב מכירות, עדכון ללקוחות או גבייה — אל תכתוב את זה בעצמך: השתמש ב-delegateToAgent עם יעד מפורט, ואמור למשתמש שהמשימה הועברה ושהתוצאה תופיע ב"עוזר AI" תחת "תוצרים" או "אישורים". לשאלות "מה הצוות עשה" — teamStatus ו-listWorkItems. שום דבר שהצוות מכין לא נשלח ולא מפורסם בלי אישור של בעל המשרד.`;
 
 const AGENT_TOOLS = [
   { name:'createCase', description:'צור תיק חדש במערכת (גבייה או תיק כללי)',
@@ -4486,6 +4488,25 @@ const AGENT_TOOLS = [
       fileName:{type:'string',description:'שם הקובץ'}
     }}
   },
+  // ---- צוות ה-AI: המנהל מאציל ורואה מה הצוות עשה (ai-center.js, ai-gateway) ----
+  { name:'teamStatus', description:'מצב צוות ה-AI: מי בצוות (slug, שם, תפקיד), הלוח של כל אחד, הריצה האחרונה, וכמה תוצרים ואישורים ממתינים לבעל המשרד',
+    input_schema:{ type:'object', properties:{} }
+  },
+  { name:'delegateToAgent', description:'העבר משימה לחבר צוות AI שרץ ברקע. slugs: lead-intake (לידים), sales-conversion (מכירות), marketing-manager (תוכנית שיווק), creative (פוסטים/רילס), content-writer (מאמרים), legal-watch (חדשות פסיקה וחקיקה), newsletter-editor (ביטאון), digital-manager (לוח פרסומים/דיגיטל), client-service (עדכוני לקוחות), finance-collections (גבייה). התוצאה תופיע ב"עוזר AI" תחת תוצרים או אישורים.',
+    input_schema:{ type:'object', required:['agentSlug','goal'], properties:{
+      agentSlug:{type:'string',description:'ה-slug של הסוכן'},
+      goal:{type:'string',description:'יעד מפורט וברור בעברית: מה להכין, לאיזה ערוץ, באיזה טון, לאיזה לקוח/תיק'},
+      caseId:{type:'string',description:'מזהה תיק להקשר (אופציונלי)'},
+      clientId:{type:'string',description:'מזהה לקוח להקשר (אופציונלי)'}
+    }}
+  },
+  { name:'listWorkItems', description:'תוצרים שהצוות הכין (פוסטים, מאמרים, ביטאון, תוכניות, דוחות) לפי סטטוס: draft (ממתין לאישור), approved, published',
+    input_schema:{ type:'object', properties:{
+      status:{type:'string',enum:['draft','approved','scheduled','published','rejected','any'],description:'ברירת מחדל draft'},
+      kind:{type:'string',description:'post / article / newsletter / campaign / brief / report / lead_followup (אופציונלי)'},
+      limit:{type:'number',description:'עד 30'}
+    }}
+  },
   { name:'draftDocument', description:'נסח מסמך משפטי חדש: קרא דוגמאות מהספרייה + נתוני התיק + הוראות → צור טיוטה Word ושמור לתיק',
     input_schema:{ type:'object', required:['documentType','instructions'], properties:{
       caseId:{type:'string',description:'מזהה תיק לקבלת נתונים (אופציונלי)'},
@@ -4605,7 +4626,7 @@ function agentAddStatus(text) {
 }
 
 function agentToolLabel(n) {
-  return ({createCase:'פותח תיק',createClient:'יוצר לקוח',generateATF:'יוצר הסכם שכ"ט',generatePOA:'יוצר ייפוי כוח',addTask:'מוסיף משימה',addPayment:'רושם תשלום',addEvent:'מוסיף אירוע',addDiaryEntry:'מוסיף ליומן',searchCases:'מחפש תיקים',listCases:'טוען תיקים',getCaseDetails:'קורא פרטי תיק',getClientDetails:'קורא פרטי לקוח',listAllCases:'מסכם תיקים',summarizeCase:'מכין סיכום תיק',analyzeCaseload:'מנתח עומס תיקים',getRecommendations:'מכין המלצות',getFinancialReport:'מכין דוח כספי',searchEverything:'מחפש בכל הנתונים',generateReport:'מפיק מסמך Word',listLibraryFolders:'סורק ספריית מסמכים',listDocumentsInFolder:'מחפש מסמכי עיון',readLibraryDocument:'קורא מסמך עיון',draftDocument:'מנסח מסמך משפטי'})[n]||n;
+  return ({createCase:'פותח תיק',createClient:'יוצר לקוח',generateATF:'יוצר הסכם שכ"ט',generatePOA:'יוצר ייפוי כוח',addTask:'מוסיף משימה',addPayment:'רושם תשלום',addEvent:'מוסיף אירוע',addDiaryEntry:'מוסיף ליומן',searchCases:'מחפש תיקים',listCases:'טוען תיקים',getCaseDetails:'קורא פרטי תיק',getClientDetails:'קורא פרטי לקוח',listAllCases:'מסכם תיקים',summarizeCase:'מכין סיכום תיק',analyzeCaseload:'מנתח עומס תיקים',getRecommendations:'מכין המלצות',getFinancialReport:'מכין דוח כספי',searchEverything:'מחפש בכל הנתונים',generateReport:'מפיק מסמך Word',listLibraryFolders:'סורק ספריית מסמכים',listDocumentsInFolder:'מחפש מסמכי עיון',readLibraryDocument:'קורא מסמך עיון',draftDocument:'מנסח מסמך משפטי',teamStatus:'בודק את הצוות',delegateToAgent:'מעביר משימה לצוות',listWorkItems:'קורא תוצרים'})[n]||n;
 }
 
 async function agentSend() {
@@ -4688,6 +4709,49 @@ async function agentCallAPI(messages, opts) {
 async function agentExecTool(name, input) {
   try {
     switch(name) {
+      // ---- צוות ה-AI (השרת). הצ'אט הוא מנהל המשרד: הוא מאציל, לא מבצע. ----
+      case 'teamStatus': {
+        if (typeof aiSb !== 'function') return 'שגיאה: מרכז ה-AI לא נטען.';
+        const [{ data: agents }, { data: runs }, { count: drafts }, { count: pending }] = await Promise.all([
+          aiSb().from('ai_agents').select('id,slug,name,icon,status,schedule,next_run_at,description').eq('visible', true).order('sort_order'),
+          aiSb().from('ai_runs').select('agent_id,status,goal,created_at').order('created_at', { ascending: false }).limit(150),
+          aiSb().from('ai_work_items').select('id', { count: 'exact', head: true }).eq('status', 'draft'),
+          aiSb().from('ai_approvals').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
+        ]);
+        const last = new Map();
+        for (const r of runs || []) if (!last.has(r.agent_id)) last.set(r.agent_id, r);
+        const lines = (agents || []).map(a => {
+          const r = last.get(a.id);
+          const sched = typeof aiScheduleLabel === 'function' ? aiScheduleLabel(a.schedule) : (a.schedule ? 'לפי לוח' : 'לפי דרישה');
+          return `${a.icon || '•'} ${a.name} [${a.slug}] · ${a.status === 'active' ? 'פעיל' : 'מושבת'} · ${sched}` +
+            `\n  ${a.description || ''}\n  ריצה אחרונה: ${r ? `${aiRelTime(r.created_at)} (${r.status})` : 'טרם רץ'}`;
+        });
+        lines.push('', `טיוטות שממתינות לאישור: ${drafts || 0} · אישורים ממתינים: ${pending || 0}`);
+        return lines.join('\n');
+      }
+      case 'delegateToAgent': {
+        if (typeof aiInvoke !== 'function') return 'שגיאה: מרכז ה-AI לא נטען.';
+        const body = { action: 'run', agent_slug: String(input.agentSlug || ''), goal: String(input.goal || ''), trigger_type: 'manual', job_type: 'delegated' };
+        if (input.caseId) body.matter_id = input.caseId;
+        if (input.clientId) body.client_id = input.clientId;
+        const r = await aiInvoke('ai-gateway', body);
+        if (!r || !r.run_id) return 'שגיאה: לא התקבלה תשובה מהשרת.';
+        if (typeof aiScheduleDrain === 'function') aiScheduleDrain();
+        return `המשימה הועברה לסוכן ${body.agent_slug}${r.deduplicated ? ' (בקשה זהה כבר רצה)' : ''}. היא רצה ברקע; התוצאה תופיע ב"עוזר AI" בלשונית "תוצרים" או "אישורים".`;
+      }
+      case 'listWorkItems': {
+        if (typeof aiSb !== 'function') return 'שגיאה: מרכז ה-AI לא נטען.';
+        let q = aiSb().from('ai_work_items').select('id,kind,title,channel,status,summary,created_at')
+          .order('created_at', { ascending: false }).limit(Math.min(30, Number(input.limit) || 15));
+        const st = input.status || 'draft';
+        if (st !== 'any') q = q.eq('status', st);
+        if (input.kind) q = q.eq('kind', input.kind);
+        const { data, error } = await q;
+        if (error) return 'שגיאה: ' + error.message;
+        if (!data || !data.length) return 'אין תוצרים שתואמים.';
+        const kindHe = typeof AI_WORK_KIND_HE !== 'undefined' ? AI_WORK_KIND_HE : {};
+        return data.map(w => `[${w.id}] ${kindHe[w.kind] || w.kind} · ${w.channel} · ${w.status} · ${aiRelTime(w.created_at)}\n  ${w.title}${w.summary ? '\n  ' + String(w.summary).slice(0, 200) : ''}`).join('\n\n');
+      }
       case 'createCase': {
         if (!input.name || !input.name.trim()) return 'שגיאה: חסר שם תיק.';
         let clientId = '';

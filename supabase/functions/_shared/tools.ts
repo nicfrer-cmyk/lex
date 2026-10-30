@@ -1128,7 +1128,9 @@ function feeDesc(c: CrmCase): string {
 // רישום וביצוע
 // ============================================================
 
-export const TOOL_MAP: Map<string, ToolDef> = new Map(TOOLS.map((t) => [t.slug, t]));
+// כלי צוות ה-AI (תוצרים, ערכת מותג, חיפוש, האצלה) מוגדרים בקובץ נפרד.
+import { STAFF_TOOLS } from './staff-tools.ts';
+export const TOOL_MAP: Map<string, ToolDef> = new Map([...TOOLS, ...STAFF_TOOLS].map((t) => [t.slug, t]));
 
 /**
  * מריץ כלי אחרי ולידציה.

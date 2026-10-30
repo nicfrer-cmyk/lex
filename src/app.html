@@ -590,6 +590,60 @@ textarea.form-input{resize:vertical;min-height:80px}
   .oc-item{flex-direction:column;align-items:stretch}.oc-item-actions{justify-content:flex-start}
   .oc-setting{flex-wrap:wrap}.oc-setting-param{width:100%;justify-content:flex-end}
 }
+
+/* ===== צוות ה-AI (ai-staff.js) ===== */
+.st-hero{background:linear-gradient(135deg,var(--navy) 0%,#1d3f6e 60%,#2457a6 100%);color:#fff;border-radius:var(--radius-lg);padding:20px 24px;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;box-shadow:var(--shadow-md);margin-bottom:16px;position:relative}
+.st-hero-title{font-size:20px;font-weight:700}
+.st-hero-sub{font-size:12.5px;color:rgba(255,255,255,.72);margin-top:4px;max-width:520px}
+.st-hero-stats{display:flex;gap:8px;flex-wrap:wrap}
+.st-stat{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.18);border-radius:var(--radius);padding:10px 16px;min-width:108px;text-align:center;color:#fff;cursor:pointer;font-family:'Heebo',sans-serif;transition:background .15s}
+.st-stat:hover{background:rgba(255,255,255,.18)}
+.st-stat.alert{background:rgba(252,165,165,.18);border-color:rgba(252,165,165,.5)}
+.st-stat-num{font-size:24px;font-weight:700;line-height:1}
+.st-stat-label{font-size:11px;color:rgba(255,255,255,.8);margin-top:4px}
+.st-hero-warn{flex-basis:100%;background:rgba(220,38,38,.25);border:1px solid rgba(252,165,165,.5);border-radius:var(--radius);padding:8px 12px;font-size:12.5px}
+.st-hero-warn.soft{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.2)}
+.st-hero-warn a{color:#fff;font-weight:700;text-decoration:underline}
+.st-section-title{font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin:18px 0 8px}
+.st-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+.st-agent{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px 16px;box-shadow:var(--shadow-sm);display:flex;flex-direction:column;gap:8px;transition:box-shadow .15s}
+.st-agent:hover{box-shadow:var(--shadow-md)}
+.st-agent.off{opacity:.62}
+.st-agent-head{display:flex;align-items:center;gap:10px}
+.st-agent-icon{width:40px;height:40px;border-radius:12px;background:var(--accent-dim);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0}
+.st-agent-titles{flex:1;min-width:0}
+.st-agent-name{font-size:14.5px;font-weight:700;color:var(--navy)}
+.st-agent-sched{font-size:11.5px;color:var(--text3);margin-top:2px}
+.st-agent-desc{font-size:12.5px;color:var(--text2);line-height:1.5;flex:1}
+.st-agent-last{font-size:11.5px;color:var(--text3);display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.st-agent-last a{color:var(--accent)}
+.st-agent-actions{display:flex;gap:6px;flex-wrap:wrap}
+.st-work{background:var(--bg2);border:1px solid var(--border);border-right:4px solid var(--warning);border-radius:var(--radius-lg);padding:14px 16px;margin-bottom:10px;box-shadow:var(--shadow-sm)}
+.st-work-approved{border-right-color:var(--success)}
+.st-work-published{border-right-color:var(--accent)}
+.st-work-rejected,.st-work-archived{border-right-color:var(--border2);opacity:.75}
+.st-work-head{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.st-work-kind{font-size:12px;font-weight:700;color:var(--accent2)}
+.st-work-meta{display:flex;gap:8px;align-items:center;font-size:11.5px;color:var(--text3);flex-wrap:wrap}
+.st-work-title{font-size:15px;font-weight:700;color:var(--navy);margin-top:6px}
+.st-work-summary{font-size:12.5px;color:var(--text2);margin-top:4px}
+.st-work-body{margin-top:8px}
+.st-work-body>summary{cursor:pointer;font-size:12px;color:var(--text3);user-select:none;margin-bottom:6px}
+.st-work-text{white-space:pre-wrap;line-height:1.75;font-size:13.5px;background:var(--bg3);border-radius:var(--radius);padding:12px;max-height:520px;overflow:auto}
+.st-work-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.st-brand-grid{grid-template-columns:repeat(auto-fill,minmax(260px,1fr))}
+.st-owner-task{display:flex;align-items:flex-start;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)}
+.st-owner-task:last-child{border-bottom:none}
+.st-owner-task.done{opacity:.55}
+.st-owner-task.done .st-owner-title{text-decoration:line-through}
+.st-owner-title{font-size:13.5px;font-weight:600;color:var(--text)}
+.st-owner-kind{font-size:10.5px;font-weight:700;color:var(--accent2);background:var(--accent-dim);border-radius:8px;padding:1px 7px;margin-left:4px}
+.st-owner-unlocks{font-size:12px;color:var(--success);margin-top:3px}
+.st-adv-nav{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+@media (max-width:768px){
+  .st-hero{padding:16px}.st-hero-stats{width:100%}.st-stat{flex:1;min-width:0;padding:8px}
+  .st-grid{grid-template-columns:1fr}
+}
 </style>
 </head>
 <body>
@@ -726,7 +780,7 @@ textarea.form-input{resize:vertical;min-height:80px}
          app.js:1015,1738,2364,2491,3071-3074). הוספה בכל מקום אחר הייתה מזיזה
          את כל האינדקסים ומדליקה בשקט את הפריט הלא נכון בסיידבר. -->
     <div class="nav-item" id="nav-ai-center-item" onclick="nav('ai-center',this)">
-      <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="2.2"/><path d="M8 1v2.4M8 12.6V15M1 8h2.4M12.6 8H15M3.05 3.05l1.7 1.7M11.25 11.25l1.7 1.7M12.95 3.05l-1.7 1.7M4.75 11.25l-1.7 1.7"/></svg>מרכז AI
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="2.2"/><path d="M8 1v2.4M8 12.6V15M1 8h2.4M12.6 8H15M3.05 3.05l1.7 1.7M11.25 11.25l1.7 1.7M12.95 3.05l-1.7 1.7M4.75 11.25l-1.7 1.7"/></svg>עוזר AI
       <span class="nav-badge" id="ai-nav-badge" style="display:none"></span>
     </div>
     <div class="nav-item" id="nav-automations-item" onclick="nav('automations',this)">
@@ -1060,7 +1114,7 @@ textarea.form-input{resize:vertical;min-height:80px}
 
     <div id="panel-ai-center" class="panel">
       <div class="topbar">
-        <div class="topbar-title">מרכז שליטה AI</div>
+        <div class="topbar-title">עוזר AI — הצוות הדיגיטלי</div>
         <div class="topbar-actions">
           <button class="btn btn-sm" onclick="renderAiCenter()">↻ רענן</button>
           <button class="btn btn-sm btn-danger" onclick="aiToggleEmergency(true)" title="עוצר מיידית את כל הסוכנים">⛔ עצירת חירום</button>

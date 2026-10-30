@@ -35,18 +35,19 @@ const AGENT_ROLE_RESTRICTIONS: Record<string, string[]> = {
 
 /** ניתוב כוונה → סוכן, כשלא נמסר סוכן מפורש (תיבת הפקודה החופשית, סעיף 4.2). */
 const INTENT_ROUTES: Array<{ re: RegExp; agent: string; jobType: string }> = [
-  { re: /נסח|טיוט(ה|ת)|הכן\s+(בקשה|תגובה|מכתב|כתב|תצהיר|הסכם)/, agent: 'legal-drafting', jobType: 'draft_document' },
-  { re: /בדוק\s+טיוטה|ביקורת|צד\s+שכנגד\s+יטען|חולשו?ת/, agent: 'legal-review', jobType: 'review_draft' },
-  { re: /סכם\s+(לי\s+)?(את\s+)?(תיק|התיק)|סיכום\s+תיק/, agent: 'matter-summary', jobType: 'summarize_matter' },
-  { re: /נתח\s+(את\s+)?(ה)?מסמך|חלץ|סתיר(ה|ות)|מסמכים\s+חסרים/, agent: 'document-analysis', jobType: 'analyze_document' },
+  // סוכני מסמכים (ניסוח, ביקורת, סיכום, ניתוח, מחקר) הושבתו בכוונה — בעל
+  // המשרד עובד על מסמכים ישירות עם Claude. בקשות כאלה נופלות למנהל המשרד,
+  // שעונה מהנתונים ומסביר איפה לעשות את זה.
   { re: /ליד|פניה\s+חדשה|פנייה\s+חדשה/, agent: 'lead-intake', jobType: 'process_lead' },
-  { re: /מועד|דיון|התיישנות|לוח\s+זמנים|דדליין/, agent: 'deadlines-risk', jobType: 'check_deadlines' },
-  { re: /גביי?ה|תשלום|חוב|שכר\s?טרחה|כספים|חשבונית/, agent: 'finance-collections', jobType: 'finance_report' },
-  { re: /הודעה\s+ל|עדכון\s+ל|תשובה\s+ל|תזכורת/, agent: 'client-service', jobType: 'draft_client_update' },
-  { re: /מחקר|פסיק(ה|ות)|הלכ(ה|ות)|אסמכת/, agent: 'legal-research', jobType: 'legal_research' },
-  { re: /שיווק|תוכן|פוסט|קמפיין|מודעה/, agent: 'marketing-content', jobType: 'content_plan' },
-  { re: /הצעת\s+שכר|מעקב\s+אחרי\s+הצעה|המר(ה|ות)/, agent: 'sales-conversion', jobType: 'sales_followup' },
-  { re: /פתח\s+תיק|פתיחת\s+תיק/, agent: 'matter-opening', jobType: 'open_matter' },
+  { re: /גביי?ה|תשלום|חוב|חשבונית|דרישת\s+תשלום/, agent: 'finance-collections', jobType: 'finance_report' },
+  { re: /הודעה\s+ל|עדכון\s+ל|תשובה\s+ל|תזכורת\s+ל/, agent: 'client-service', jobType: 'draft_client_update' },
+  { re: /פסיק(ה|ות)|חקיקה|הלכ(ה|ות)|חדשות\s+משפטיות/, agent: 'legal-watch', jobType: 'legal_watch' },
+  { re: /מאמר|כתבה\s+לאתר|בלוג/, agent: 'content-writer', jobType: 'article' },
+  { re: /ביטאון|ניוזלטר|דיוור/, agent: 'newsletter-editor', jobType: 'newsletter' },
+  { re: /פוסט|רילס|סטורי|קריאייטיב|סקריפט/, agent: 'creative', jobType: 'post' },
+  { re: /שיווק|קמפיין|תוכנית\s+תוכן|מודעה/, agent: 'marketing-manager', jobType: 'content_plan' },
+  { re: /דיגיטל|פרסומים|ביקורות|גוגל\s+עסק/, agent: 'digital-manager', jobType: 'digital_report' },
+  { re: /הצעת\s+שכר|מעקב\s+אחרי\s+הצעה|המר(ה|ות)|מכירות/, agent: 'sales-conversion', jobType: 'sales_followup' },
 ];
 
 Deno.serve(async (req) => {

@@ -22,7 +22,7 @@
 'use strict';
 
 // ===== מצב =====
-let aiTab = 'overview';
+let aiTab = 'team';
 let aiBusy = false;
 let aiCache = { agents: null, settings: null, integrations: null };
 let aiRealtimeChannel = null;
@@ -125,20 +125,16 @@ const AI_APPROVER_ONLY = 'הפעולה לא בוצעה — אישור פעולו
 // אין URL routing במערכת (nav() ב-app.js:157 רק מחליף .active על פאנלים),
 // ולכן 12 ה"מסכים" של הפרומט הם טאבים בתוך פאנל אחד.
 
+// שש לשוניות במקום 13. הצוות, התוצרים והאישורים הם מה שבעל המשרד צריך
+// כל יום; כל השאר (הרצות, תור, למידה, עלויות, יומן) חי תחת "מתקדם"
+// (ai-staff.js) — לא נמחק, רק יצא מהדרך.
 const AI_TABS = [
-  { id: 'overview',       label: 'סקירה',      icon: '▦' },
-  { id: 'approvals',      label: 'אישורים',    icon: '✋' },
-  { id: 'inbox',          label: 'תיבה',       icon: '◨' },
-  { id: 'agents',         label: 'סוכנים',     icon: '◈' },
-  { id: 'runs',           label: 'הרצות',      icon: '≡' },
-  { id: 'jobs',           label: 'תור',        icon: '⋮' },
-  { id: 'learning',       label: 'למידה',      icon: '◎' },
-  { id: 'automations',    label: 'אוטומציות',  icon: '↻' },
-  { id: 'communications', label: 'תקשורת',     icon: '✉' },
-  { id: 'integrations',   label: 'חיבורים',    icon: '⚯' },
-  { id: 'costs',          label: 'עלויות',     icon: '₪' },
-  { id: 'audit',          label: 'יומן',       icon: '⎘' },
-  { id: 'settings',       label: 'הגדרות',     icon: '⚙' },
+  { id: 'team',           label: 'הצוות',            icon: '◈' },
+  { id: 'work',           label: 'תוצרים',           icon: '▤' },
+  { id: 'approvals',      label: 'אישורים',          icon: '✋' },
+  { id: 'inbox',          label: 'לידים',            icon: '◨' },
+  { id: 'setup',          label: 'הגדרות וחיבורים',  icon: '⚙' },
+  { id: 'advanced',       label: 'מתקדם',            icon: '⋯' },
 ];
 
 function renderAiCenter() {
@@ -151,14 +147,13 @@ function renderAiCenter() {
   document.getElementById('ai-tabs').innerHTML = tabsHtml;
   host.innerHTML = '<div class="empty">טוען...</div>';
 
+  // הפונקציות של הצוות מוגדרות ב-ai-staff.js, שנטען אחרי קובץ זה; הן
+  // נפתרות בזמן הקריאה ולא בזמן הטעינה, ולכן הסדר לא משנה.
   const fn = {
-    overview: aiRenderOverview, approvals: aiRenderApprovals, inbox: aiRenderInbox,
-    agents: aiRenderAgents, runs: aiRenderRuns, jobs: aiRenderJobs,
-    learning: aiRenderLearning,
-    automations: aiRenderAutomations, communications: aiRenderCommunications,
-    integrations: aiRenderIntegrations, costs: aiRenderCosts,
-    audit: aiRenderAudit, settings: aiRenderSettings,
-  }[aiTab];
+    team: (h) => aiRenderTeam(h), work: (h) => aiRenderWork(h),
+    approvals: aiRenderApprovals, inbox: aiRenderInbox,
+    setup: (h) => aiRenderSetup(h), advanced: (h) => aiRenderAdvanced(h),
+  }[aiTab] || ((h) => aiRenderTeam(h));
 
   Promise.resolve()
     .then(() => fn(host))
@@ -2174,22 +2169,22 @@ async function aiOfficeId() {
 /** מונים בטאבים — מספר האישורים הממתינים הוא המידע הכי דחוף במסך. */
 async function aiRefreshBadges() {
   try {
-    const [{ count: approvals }, { count: jobs }, { count: insights }] = await Promise.all([
+    const [{ count: approvals }, { count: jobs }, { count: drafts }] = await Promise.all([
       aiSb().from('ai_approvals').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
       aiSb().from('ai_jobs').select('id', { count: 'exact', head: true }).in('status', ['queued', 'running']),
-      // .catch: מיגרציית הלמידה (20260804000002) עשויה טרם לרוץ. בלי זה
+      // .catch: מיגרציית הצוות (20261031000000) עשויה טרם לרוץ. בלי זה
       // Promise.all היה נכשל כולו, והמונה של האישורים הממתינים — הדבר
       // החשוב באמת בסרגל — היה נעלם בגלל תכונה משנית.
-      aiSb().from('ai_learning_insights').select('id', { count: 'exact', head: true })
-        .eq('status', 'proposed').then(r => r, () => ({ count: 0 })),
+      aiSb().from('ai_work_items').select('id', { count: 'exact', head: true })
+        .eq('status', 'draft').then(r => r, () => ({ count: 0 })),
     ]);
     const setCount = (id, n) => {
       const el = document.getElementById('ai-count-' + id);
       if (el) { el.textContent = n ? String(n) : ''; el.style.display = n ? '' : 'none'; }
     };
     setCount('approvals', approvals || 0);
-    setCount('jobs', jobs || 0);
-    setCount('learning', insights || 0);
+    setCount('work', drafts || 0);
+    setCount('advanced', jobs || 0);
     // ⚠ הסמן בתפריט הראשי סופר **רק** אישורים ממתינים. תובנות למידה
     // אינן דחופות — הן ימתינו שבוע בלי נזק — ומיזוג שלהן לאותו מספר היה
     // הופך את הסמן שאומר "יש פעולה שממתינה לך" לרעש.
