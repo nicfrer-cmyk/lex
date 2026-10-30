@@ -4,14 +4,59 @@ const { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
         Footer, PageNumber } = __req('docx');
 
 // ===== OFFICE INFO =====
-const OFFICE = {
-  name: 'ירין אשואל',
-  license: '99198',
-  address: 'הכנסת 11/4, חולון',
-  phone: '053-678-5147',
-  email: 'nicfrer@gmail.com',
-  title: 'משרד עורכי דין ירין אשואל'
+// The office's identity as printed on generated documents (letterhead, signature line).
+// It used to be one lawyer's details hardcoded here, so every office using the system
+// got that lawyer's name, license and phone on its documents. Now each office keeps its
+// own profile in db.settings.officeProfile (edited by the owner in Settings), and this
+// object is refreshed from it by applyOfficeProfile() after every load.
+const OFFICE = { name: '', license: '', address: '', phone: '', email: '', title: '' };
+
+// The original office's details — applied once, automatically, only to the account
+// they belong to (matched by its sign-in email), so its documents stay identical.
+const LEGACY_OFFICE_PROFILE = {
+  lawyerName: 'ירין אשואל', license: '99198', address: 'הכנסת 11/4, חולון',
+  phone: '053-678-5147', email: 'nicfrer@gmail.com', firmTitle: 'משרד עורכי דין ירין אשואל',
 };
+
+function officeProfile() {
+  return (db.settings && db.settings.officeProfile) || {};
+}
+function applyOfficeProfile() {
+  const p = officeProfile();
+  OFFICE.name = p.lawyerName || '';
+  OFFICE.license = p.license || '';
+  OFFICE.address = p.address || '';
+  OFFICE.phone = p.phone || '';
+  OFFICE.email = p.email || '';
+  OFFICE.title = p.firmTitle || (p.lawyerName ? `משרד עורכי דין ${p.lawyerName}` : '');
+  const brand = OFFICE.name ? `${OFFICE.name}, עו"ד` : (OFFICE.title || '');
+  document.title = brand ? `LexTrack – ${brand}` : 'LexTrack';
+  const sub = document.querySelector('.logo-sub');
+  if (sub) sub.textContent = brand ? `${brand} | ניהול המשרד` : 'ניהול המשרד';
+}
+// One-time seeding after load: the original account gets its existing details; any
+// other office starts empty and is reminded to fill them in before drafting documents.
+async function ensureOfficeProfile() {
+  if (!db.settings) db.settings = {};
+  if (!db.settings.officeProfile) {
+    let email = '';
+    try { email = ((await Platform.getUser()) || {}).email || ''; } catch (e) { /* offline — retry next load */ }
+    if (email && email.toLowerCase() === LEGACY_OFFICE_PROFILE.email) {
+      db.settings.officeProfile = { ...LEGACY_OFFICE_PROFILE };
+      saveDB().catch(() => {});
+    }
+  }
+  applyOfficeProfile();
+}
+// Letterhead line under the title, built only from the fields the office filled in.
+function officeContactLine() {
+  return [
+    OFFICE.address && `רח' ${OFFICE.address}`,
+    OFFICE.phone && `טל': ${OFFICE.phone}`,
+    OFFICE.email,
+    OFFICE.license && `רישיון: ${OFFICE.license}`,
+  ].filter(Boolean).join(' | ');
+}
 
 // Stage lists per case type — single source of truth (used to be the same 7-value
 // collection-pipeline array hardcoded in ~5 places). Cases saved before caseType
@@ -116,6 +161,7 @@ async function loadDB() {
     });
     if (dirty) await Platform.saveDB(db);
   }
+  await ensureOfficeProfile();
   refreshAll();
 }
 
@@ -639,7 +685,7 @@ function localMonthKey(d){
 // the percent portion). Hourly wasn't computed anywhere despite being a selectable
 // fee type — it's now (hours logged in timeEntries) × feeFixed-as-hourly-rate.
 function calcExpectedFee(c){
-  const vatMult = c.feeVat==='yes' ? 1+((officeVatRate||18)/100) : 1;
+  const vatMult = c.feeVat==='yes' ? 1+((officeVatRate ?? 18)/100) : 1;
   let base = 0;
   if (c.feeType==='percent') base = (c.amount||0)*((c.feePct||15)/100);
   else if (c.feeType==='fixed') base = c.feeFixed||0;
@@ -660,7 +706,7 @@ function calcExpectedFee(c){
 // `0 >= 0` made an unset debt amount look fully collected with zero payments.
 function calcCollectedFee(c){
   if (c.feeType==='hourly') return calcExpectedFee(c);
-  const vatMult = c.feeVat==='yes' ? 1+((officeVatRate||18)/100) : 1;
+  const vatMult = c.feeVat==='yes' ? 1+((officeVatRate ?? 18)/100) : 1;
   const cPay=db.payments.filter(p=>p.caseId===c.id&&p.type==='debt').reduce((s,p)=>s+(p.amount||0),0);
   const debtAmount=c.amount||0;
   const fixedEarned=(debtAmount>0 && cPay>=debtAmount)?(c.feeFixed||0):0;
@@ -785,8 +831,8 @@ function renderCasesTable(cases){
   const feeLabel=feeTypeLabel;
   tbody.innerHTML=cases.map(c=>{
     const cl=db.clients.find(x=>x.id===c.client);
-    const hasAtf=c.legalDocs&&c.legalDocs.atf;
-    const hasPoa=c.legalDocs&&c.legalDocs.poa;
+    const hasAtf=c.legalDocs&&c.legalDocs.atfDraft;
+    const hasPoa=c.legalDocs&&c.legalDocs.poaDraft;
     return `<tr onclick="openCaseDetail('${c.id}')">
       <td>
         <div style="display:flex;align-items:center;gap:6px">
@@ -2008,9 +2054,43 @@ function formatDateHE(iso) {
   return `${d}.${m}.${y}`;
 }
 
-async function fillLegalTemplate(type, data, caseObj) {
+// The one way a .docx template is filled. All formatting stays in the template;
+// this only substitutes values.
+// - nullGetter: a tag with no value prints nothing, not the word "undefined"
+//   (docxtemplater's default) — which had reached real documents.
+// - Template errors (an unclosed {{tag}}, a tag split by Word into a broken form) come
+//   back as docxtemplater's opaque "Multi error"; they're translated to which tag is
+//   broken and how to fix the template.
+// docxtemplater already joins placeholders that Word split across several XML runs
+// inside one paragraph, which is the job merge_runs.py did for the Python pipeline.
+const DOCX_OPTIONS = { paragraphLoop: true, linebreaks: true, delimiters: { start: '{{', end: '}}' }, nullGetter: () => '' };
+function docxTemplateErrorHE(e, templateName) {
+  const errs = (e && e.properties && Array.isArray(e.properties.errors)) ? e.properties.errors : [e];
+  const parts = errs.slice(0, 5).map(x => {
+    const p = (x && x.properties) || {};
+    const tag = p.xtag || p.context || '';
+    const id = p.id || '';
+    if (id === 'unclosed_tag' || id === 'unopened_tag') return `תג לא סגור או לא פתוח${tag ? ` ("${tag}")` : ''}`;
+    if (id === 'duplicate_open_tag' || id === 'duplicate_close_tag') return `סוגריים כפולים${tag ? ` ליד "${tag}"` : ''}`;
+    if (id === 'unclosed_loop' || id === 'closing_tag_does_not_match_opening_tag') return `לולאה ({{#...}}) שלא נסגרה כראוי${tag ? ` ("${tag}")` : ''}`;
+    return (x && x.message) || 'שגיאה לא מוכרת';
+  });
+  return `התבנית${templateName ? ` "${templateName}"` : ''} פגומה: ${parts.join('; ')}. יש לפתוח אותה ב-Word ולתקן את התגים ({{שם_שדה}}), ואז לייבא מחדש.`;
+}
+function renderDocxTemplate(buffer, data, templateName) {
   const PizZip = __req('pizzip');
   const Docxtemplater = __req('docxtemplater');
+  let doc;
+  try {
+    doc = new Docxtemplater(new PizZip(Buffer.from(buffer)), DOCX_OPTIONS);
+    doc.render(data);
+  } catch (e) {
+    throw new Error(docxTemplateErrorHE(e, templateName));
+  }
+  return doc.getZip().generate({ type: 'nodebuffer' });
+}
+
+async function fillLegalTemplate(type, data, caseObj) {
   const isAtf = type === 'atf';
   const templateName = isAtf ? 'טמפלט_הסכם_שכר_טרחה.docx' : 'טמפלט_ייפוי_כוח.docx';
   const res = await Platform.readTemplate(templateName);
@@ -2039,17 +2119,19 @@ async function fillLegalTemplate(type, data, caseObj) {
     'תאריך': `יום ${day} לחודש ${monthName}, ${year}`,
   };
 
-  const zip = new PizZip(templateBuf);
-  const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true, delimiters: { start: '{{', end: '}}' } });
-  doc.render(placeholders);
-  const outBuf = doc.getZip().generate({ type: 'nodebuffer' });
+  const outBuf = renderDocxTemplate(templateBuf, placeholders, templateName);
 
   const dateStr = now.toLocaleDateString('he-IL');
-  const prefix = isAtf ? 'הסכם שכ"ט' : 'ייפוי כח';
+  // Spelled out: the sanitizer below replaces '"', which turned 'הסכם שכ"ט' into 'שכ_ט'.
+  const prefix = isAtf ? 'הסכם שכר טרחה' : 'ייפוי כוח';
   const label = caseObj.caseSubNumber || caseObj.name || '';
   const filename = `${prefix} – ${label} – ${dateStr}.docx`.replace(/[\\/:*?"<>|]/g, '_');
   const filePath = await Platform.saveFile({ buffer: Array.from(outBuf), filename });
 
+  // Registered as a case document like every other generated file, so it shows in the
+  // case's documents tab (it used to exist only as a path on caseObj.legalDocs).
+  if (!db.docs) db.docs = [];
+  db.docs.unshift({ id: uid(), name: prefix, cat: isAtf ? 'הסכמים' : 'ייפויי כוח', caseId: caseObj.id, notes: '', date: dateStr, ext: 'doc', filePath, origName: filename });
   if (!caseObj.legalDocs) caseObj.legalDocs = {};
   if (isAtf) {
     caseObj.legalDocs.atfDraft = true;
@@ -2126,8 +2208,15 @@ function extractDocxPlaceholders(buffer) {
   const PizZip = __req('pizzip');
   const Docxtemplater = __req('docxtemplater');
   const zip = new PizZip(Buffer.from(buffer));
-  const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true, delimiters: { start: '{{', end: '}}' } });
-  const text = doc.getFullText();
+  let doc;
+  // Constructing compiles the template, so a broken template fails here — at import /
+  // validation time, with a readable message — instead of at generation time.
+  try { doc = new Docxtemplater(zip, DOCX_OPTIONS); }
+  catch (e) { throw new Error(docxTemplateErrorHE(e)); }
+  // Headers and footers can hold tags too (case number, date on every page); checking
+  // only the body let a tag there go unvalidated and print empty.
+  const parts = [''].concat(Object.keys(zip.files).filter(n => /^word\/(header|footer)\d*\.xml$/.test(n)));
+  const text = parts.map(p => { try { return p ? doc.getFullText(p) : doc.getFullText(); } catch (e) { return ''; } }).join('\n');
   const tags = new Set();
   const re = /\{\{([^}]+)\}\}/g;
   let m;
@@ -2353,7 +2442,11 @@ ${fieldsBlock}
 ## פורמט פלט חובה:
 החזר אך ורק אובייקט JSON תקין שמפתחותיו הם בדיוק שמות השדות שלמעלה (${spec.aiFields.map(f => `"${f.placeholder}"`).join(', ')}), בלי טקסט לפני או אחרי, בלי backticks.`;
 
-    const system = 'אתה עוזר משפטי במשרד עורכי דין ישראלי המתמחה בהוצאה לפועל. אתה כותב פרקים לבקשות המוגשות ללשכת ההוצאה לפועל או לבית משפט. כתוב בעברית משפטית תקנית, בגוף שלישי. הסתמך אך ורק על העובדות שסופקו — אסור להמציא עובדות, תאריכים, סכומים או סעיפי חוק. החזר אך ורק JSON תקין, בלי טקסט לפני או אחרי, בלי backticks.';
+    // Venue-aware: the same request flow now serves civil litigation too, so the role is
+    // taken from the case's own venue instead of always "an Execution Office specialist".
+    const system = (isExecutionOfficeCase(caseObj)
+      ? 'אתה עוזר משפטי במשרד עורכי דין ישראלי המתמחה בהוצאה לפועל. אתה כותב פרקים לבקשות המוגשות ללשכת ההוצאה לפועל.'
+      : 'אתה עוזר משפטי במשרד עורכי דין ישראלי המתמחה בליטיגציה אזרחית. אתה כותב פרקים לבקשות ולכתבי טענות המוגשים לבית המשפט.') + ' כתוב בעברית משפטית תקנית, בגוף שלישי. הסתמך אך ורק על העובדות שסופקו — אסור להמציא עובדות, תאריכים, סכומים או סעיפי חוק. החזר אך ורק JSON תקין, בלי טקסט לפני או אחרי, בלי backticks.';
 
     const model = mapRequestModel(spec.model);
     const messages = [{ role: 'user', content: prompt }];
@@ -2390,13 +2483,18 @@ ${fieldsBlock}
 
     statusEl.textContent = 'ממזג מסמך...';
     const { buffer: templateBuf } = await Platform.tmReadFileBytes('תבניות', docxFile);
-    const placeholders = { ...systemValues, ...inputValues, ...aiValues };
-    const PizZip = __req('pizzip');
-    const Docxtemplater = __req('docxtemplater');
-    const zip = new PizZip(Buffer.from(templateBuf));
-    const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true, delimiters: { start: '{{', end: '}}' } });
-    doc.render(placeholders);
-    const outBuf = doc.getZip().generate({ type: 'nodebuffer' });
+    // The AI fills only its own declared fields, typed as the spec says (list → array of
+    // strings, otherwise a string). Spreading its whole reply last used to let it
+    // overwrite real case data (debtor name, file number) and the user's own inputs.
+    const aiOnly = {};
+    for (const f of spec.aiFields) {
+      const v = aiValues[f.placeholder];
+      aiOnly[f.placeholder] = f.list
+        ? (Array.isArray(v) ? v.map(x => String(x == null ? '' : x).trim()).filter(Boolean) : [String(v || '').trim()].filter(Boolean))
+        : (Array.isArray(v) ? v.map(String).join('\n') : String(v == null ? '' : v));
+    }
+    const placeholders = { ...aiOnly, ...inputValues, ...systemValues };
+    const outBuf = renderDocxTemplate(templateBuf, placeholders, docxFile);
 
     const dateStr = new Date().toLocaleDateString('he-IL');
     const label = caseObj.caseSubNumber || caseObj.name || '';
@@ -3951,6 +4049,12 @@ async function openSettingsModal() {
     document.getElementById('settings-subscription-section').style.display = isOwner ? '' : 'none';
     document.getElementById('settings-danger-zone').style.display = isOwner ? '' : 'none';
     document.getElementById('settings-versions-section').style.display = isOwner ? '' : 'none';
+    const op = officeProfile();
+    for (const [id, key] of OFFICE_PROFILE_FIELDS) {
+      const el = document.getElementById(id);
+      el.value = op[key] || '';
+      el.disabled = !isOwner;
+    }
     _currentOfficeName = office.name || '';
     if (isOwner) { renderTeamSection(); renderErrorsSection(); renderSubscriptionSection(); }
   } catch (e) { /* office info is best-effort in this modal */ }
@@ -4017,11 +4121,25 @@ async function settingsChangePassword() {
     await customAlert('נשלח אימייל עם קישור לאיפוס סיסמה. בדוק/י את תיבת הדואר.');
   } catch (e) { notify('שגיאה: ' + e.message); }
 }
+const OFFICE_PROFILE_FIELDS = [
+  ['op-firm-title', 'firmTitle'], ['op-lawyer-name', 'lawyerName'], ['op-license', 'license'],
+  ['op-phone', 'phone'], ['op-address', 'address'], ['op-email', 'email'],
+];
 function saveSettings() {
   const officeName = document.getElementById('settings-office-name');
   if (officeName && !officeName.disabled) {
-    const vatRate = parseFloat(document.getElementById('settings-vat-rate').value) || 18;
-    Platform.updateOfficeInfo({ name: officeName.value.trim(), vatRate }).catch(e => notify('שגיאה בשמירת פרטי משרד: ' + e.message));
+    const rawVat = parseFloat(document.getElementById('settings-vat-rate').value);
+    // 0 is a real rate (an exempt dealer, עוסק פטור) — `|| 18` used to turn it into 18.
+    const vatRate = Number.isFinite(rawVat) && rawVat >= 0 ? rawVat : 18;
+    Platform.updateOfficeInfo({ name: officeName.value.trim(), vatRate })
+      .then(() => { officeVatRate = vatRate; })
+      .catch(e => notify('שגיאה בשמירת פרטי משרד: ' + e.message));
+    const next = {};
+    for (const [id, key] of OFFICE_PROFILE_FIELDS) next[key] = document.getElementById(id).value.trim();
+    if (!db.settings) db.settings = {};
+    db.settings.officeProfile = next;
+    applyOfficeProfile();
+    saveDB().catch(() => {});
   }
   closeModal('modal-settings'); notify('הגדרות נשמרו ✓');
 }
@@ -4188,7 +4306,7 @@ async function createTeamInvite() {
   } catch (e) { notify('שגיאה: ' + e.message); }
 }
 // ===== AI AGENT =====
-const AGENT_SYSTEM_PROMPT = `אתה עוזר משפטי חכם ומנוסה בתוכנת LexTrack של עו״ד ירין אשואל לניהול תיקים משפטיים מכל סוג (גבייה, וגם תיקים כלליים אחרים). יש לך גישה מלאה לקרוא את כל הנתונים: תיקים, לקוחות, תשלומים, יומני טיפול, מסמכים ואירועים. אתה יכול: ליצור תיקים ולקוחות, להפיק הסכמי שכר טרחה וייפויי כוח, לרשום משימות/תשלומים/אירועים, לסכם תיקים לפי יומן הטיפול, לנתח את כל התיקים (מה דחוף, מה תקוע, מה הוזנח), לתת המלצות לפעולה, ולהפיק דוחות כספיים. יש לך גישה לספריית מסמכים משפטיים (בקשות והסכמים) המכילה דוגמאות אמיתיות לפי סוג מסמך – כשמתבקש לנסח מסמך, קרא דוגמאות רלוונטיות מהספרייה, שלב אותן עם נתוני התיק והידע המשפטי שלך, וצור טיוטה מקצועית. כשמבקשים סיכום או דוח – הצג כטקסט ברור, ואם מבקשים 'מסמך' או 'קובץ' – הפק מסמך Word. תמיד אשר פעולות יצירה מיד, ובקש אישור לפני מחיקה או עריכה. דבר עברית מקצועית, תמציתית ומדויקת. כשאתה מנתח תיק – התבסס על העובדות מהיומן ומהנתונים, אל תמציא.`;
+const AGENT_SYSTEM_PROMPT = `אתה עוזר משפטי חכם ומנוסה בתוכנת LexTrack לניהול משרד עורכי דין ותיקים משפטיים מכל סוג (גבייה, וגם תיקים כלליים אחרים). יש לך גישה מלאה לקרוא את כל הנתונים: תיקים, לקוחות, תשלומים, יומני טיפול, מסמכים ואירועים. אתה יכול: ליצור תיקים ולקוחות, להפיק הסכמי שכר טרחה וייפויי כוח, לרשום משימות/תשלומים/אירועים, לסכם תיקים לפי יומן הטיפול, לנתח את כל התיקים (מה דחוף, מה תקוע, מה הוזנח), לתת המלצות לפעולה, ולהפיק דוחות כספיים. יש לך גישה לספריית מסמכים משפטיים (בקשות והסכמים) המכילה דוגמאות אמיתיות לפי סוג מסמך – כשמתבקש לנסח מסמך, קרא דוגמאות רלוונטיות מהספרייה, שלב אותן עם נתוני התיק והידע המשפטי שלך, וצור טיוטה מקצועית. כשמבקשים סיכום או דוח – הצג כטקסט ברור, ואם מבקשים 'מסמך' או 'קובץ' – הפק מסמך Word. תמיד אשר פעולות יצירה מיד, ובקש אישור לפני מחיקה או עריכה. דבר עברית מקצועית, תמציתית ומדויקת. כשאתה מנתח תיק – התבסס על העובדות מהיומן ומהנתונים, אל תמציא.`;
 
 const AGENT_TOOLS = [
   { name:'createCase', description:'צור תיק חדש במערכת (גבייה או תיק כללי)',
@@ -4856,6 +4974,9 @@ async function agentExecTool(name, input) {
       }
       case 'draftDocument': {
         const ddType = input.documentType || '';
+        if (!OFFICE.title && !OFFICE.name) {
+          return 'לא ניתן להפיק מסמך: פרטי המשרד (שם, רישיון, כתובת) עוד לא מולאו. יש למלא אותם בהגדרות ← "פרטי המשרד במסמכים".';
+        }
 
         // Route ATF and POA to template-based generation
         if (ddType === 'הסכם שכ"ט' || ddType === 'הסכם שכר טרחה') {
@@ -4918,8 +5039,10 @@ async function agentExecTool(name, input) {
           ddCaseCtx = '\n\n=== נתוני התיק ===\n' + (await agentExecTool('getCaseDetails', { caseId: input.caseId }));
         }
 
-        // Party roles (court vs enforcement)
-        const ddIsHp = ddType.includes('הוצאה לפועל') || ddType.includes('ל"פ');
+        // Party roles (court vs enforcement). The case's own venue decides when there is a
+        // case — the model's free-text documentType alone used to frame an Execution Office
+        // motion as a court one ("התובע/הנתבע") whenever it didn't happen to name the venue.
+        const ddIsHp = ddType.includes('הוצאה לפועל') || ddType.includes('ל"פ') || (ddCaseObj ? isExecutionOfficeCase(ddCaseObj) : false);
         const ddPlaintiffLabel = ddIsHp ? 'הזוכה' : 'התובע';
         const ddDefendantLabel = ddIsHp ? 'החייב' : 'הנתבע';
         const ddClientName = ddCaseObj && ddCaseObj.client ? (db.clients.find(x=>x.id===ddCaseObj.client)||{}).name||'' : '';
@@ -4934,12 +5057,12 @@ async function agentExecTool(name, input) {
 
 ## פורמט פלט חובה (אין להוסיף טקסט מחוץ לסמנים):
 ##TITLE## [כותרת המסמך]
-##OPEN## [פסקת פתיחה: "בית המשפט הנכבד מתבקש בזאת..."]
+##OPEN## [פסקת פתיחה: "${ddIsHp ? 'כבוד ראש ההוצאה לפועל מתבקש בזאת' : 'בית המשפט הנכבד מתבקש בזאת'}..."]
 ##ARGUES## ואילו נימוקי הבקשה:
 ##ARG## [טיעון ראשון]
 ##ARG## [טיעון שני]
 ##CLOSE## מן הדין ומן הצדק להיעתר לבקשה.
-##SIGN## ${OFFICE.name}, עו"ד
+##SIGN## ${OFFICE.name ? OFFICE.name + ', עו"ד' : 'בא/ת כוח המבקש/ת'}
 
 לציטוטים: ##QUOTE## טקסט ##ENDQUOTE##`;
 
@@ -4950,7 +5073,9 @@ async function agentExecTool(name, input) {
         if (!ddText) return 'לא התקבל תוכן מהסוכן';
 
         // Build Type-3 docx
-        const MARGIN = 1418, HL = 32, TL = 36;
+        // Office document standard (CLAUDE.md): David 12 body, 16 underlined centred title,
+        // 1.15 line spacing, 2.5cm margins. docx sizes are half-points.
+        const MARGIN = 1418, HL = 24, TL = 32;
         const FNT = { name: 'David', cs: 'David' };
         const LANG = { value: 'he-IL', eastAsia: 'he-IL', bidi: 'he-IL' };
 
@@ -4972,7 +5097,7 @@ async function agentExecTool(name, input) {
         const ddDate = new Date().toLocaleDateString('he-IL');
         const ddChildren = [
           ddPara([ddRun(OFFICE.title,{bold:true,size:TL})],{center:true,after:60,line:240,border:{bottom:{style:BorderStyle.SINGLE,size:4,color:'3333AA'}}}),
-          ddPara([ddRun(`רח' ${OFFICE.address} | טל': ${OFFICE.phone} | ${OFFICE.email} | רישיון: ${OFFICE.license}`,{size:20,color:'555555'})],{center:true,after:240,line:240}),
+          ddPara([ddRun(officeContactLine(),{size:20,color:'555555'})],{center:true,after:240,line:240}),
         ];
         if (ddCaseObj) {
           ddChildren.push(ddPara([ddRun(`${ddPlaintiffLabel}: ${ddClientName}`)],{right:true,after:0}));
@@ -5033,7 +5158,7 @@ async function agentExecTool(name, input) {
         const ddFilePath = await Platform.saveFile({ buffer:Array.from(ddBuf), filename:ddFilename });
         if (ddCaseObj) {
           if (!db.docs) db.docs = [];
-          db.docs.push({ id:uid(), caseId:input.caseId, name:ddFilename, ext:'docx', cat:ddType, date:ddDate, notes:'נוצר ע"י סוכן AI', filePath:ddFilePath });
+          db.docs.push({ id:uid(), caseId:input.caseId, name:ddFilename, origName:ddFilename, ext:'doc', cat:ddType, date:ddDate, notes:'נוצר ע"י סוכן AI', filePath:ddFilePath });
           saveDB();
         }
         notify('טיוטה נשמרה! פותח...');
