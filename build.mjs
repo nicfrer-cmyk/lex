@@ -44,6 +44,8 @@ const html = appHtml.replace(
     'app.js',
     // practice.js (litigation/contracts/deadlines/billing) uses app.js's globals.
     'practice.js',
+    // office-checks.js (בקרת משרד) משתמש בגלובלים של app.js ו-practice.js.
+    'office-checks.js',
     'auth.js',
     'template-manager.js',
     // ai-center.js must load AFTER app.js: it calls app.js's globals (db, saveDB,
@@ -52,9 +54,6 @@ const html = appHtml.replace(
     // guards — so neither breaks if the other is missing, but this order is what
     // makes both halves actually work.
     'ai-center.js',
-    // automations.js נטען אחרי ai-center.js: הוא משתמש ב-aiSb/aiInvoke/
-    // aiUpdateChecked/aiJsAttr שלו, ובגלובלים של app.js.
-    'automations.js',
   ].map(s => `<script src="${s}?v=${buildVersion}"></script>`).join('\n')
 );
 fs.writeFileSync(path.join(outDir, 'index.html'), html, 'utf8');
@@ -64,10 +63,10 @@ fs.writeFileSync(path.join(outDir, 'index.html'), html, 'utf8');
 fs.copyFileSync(path.join(src, 'legal-content.js'), path.join(outDir, 'legal-content.js'));
 fs.copyFileSync(path.join(src, 'app.js'), path.join(outDir, 'app.js'));
 fs.copyFileSync(path.join(src, 'practice.js'), path.join(outDir, 'practice.js'));
+fs.copyFileSync(path.join(src, 'office-checks.js'), path.join(outDir, 'office-checks.js'));
 fs.copyFileSync(path.join(src, 'auth.js'), path.join(outDir, 'auth.js'));
 fs.copyFileSync(path.join(src, 'template-manager.js'), path.join(outDir, 'template-manager.js'));
 fs.copyFileSync(path.join(src, 'ai-center.js'), path.join(outDir, 'ai-center.js'));
-fs.copyFileSync(path.join(src, 'automations.js'), path.join(outDir, 'automations.js'));
 // sw.js is registered via navigator.serviceWorker.register('/sw.js'), not a <script>
 // tag — must stay at the site root (not versioned/cache-busted) so its scope covers
 // the whole origin; a service worker can only control paths at or below its own URL.

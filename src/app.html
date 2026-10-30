@@ -516,6 +516,80 @@ textarea.form-input{resize:vertical;min-height:80px}
   .ai-cmdbar-row{flex-direction:column}
   .ai-msg-out,.ai-msg-in{margin-right:0;margin-left:0}
 }
+
+/* ===== בקרת משרד (office-checks.js) ===== */
+.oc-hero{background:linear-gradient(135deg,var(--navy) 0%,var(--navy-light) 100%);color:#fff;border-radius:var(--radius-lg);padding:22px 24px;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;box-shadow:var(--shadow-md);margin-bottom:16px}
+.oc-hero-main{display:flex;align-items:center;gap:18px}
+.oc-hero-num{font-size:52px;font-weight:700;line-height:1;min-width:64px;text-align:center;color:#fff}
+.oc-hero-num.oc-ok{color:#4ade80}
+.oc-hero-title{font-size:18px;font-weight:700}
+.oc-hero-sub{font-size:12px;color:rgba(255,255,255,.7);margin-top:4px}
+.oc-hero-high{color:#fca5a5;font-weight:700}
+.oc-hero-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.oc-run{background:#fff;color:var(--navy);border:none;border-radius:var(--radius);padding:11px 20px;font-size:14px;font-weight:700;font-family:'Heebo',sans-serif;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.2);transition:transform .1s}
+.oc-run:hover{transform:translateY(-1px)}.oc-run:active{transform:scale(.98)}
+.oc-ghost{background:rgba(255,255,255,.1)!important;border-color:rgba(255,255,255,.25)!important;color:#fff!important}
+.oc-cats{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px}
+.oc-cat{background:var(--bg2);border:1px solid var(--border);border-radius:20px;padding:6px 12px;font-size:12.5px;font-family:'Heebo',sans-serif;color:var(--text2);cursor:pointer;display:flex;gap:6px;align-items:center;transition:all .15s}
+.oc-cat b{background:var(--bg3);border-radius:10px;padding:0 7px;font-size:11px;color:var(--text)}
+.oc-cat:hover{border-color:var(--cat,var(--accent))}
+.oc-cat.active{border-color:var(--cat,var(--accent));color:var(--cat,var(--accent));background:var(--bg2);font-weight:600}
+.oc-cat.active b{background:var(--cat,var(--accent));color:#fff}
+.oc-cat-empty{opacity:.55}
+.oc-group{margin-bottom:18px}
+.oc-group-title{font-size:13px;font-weight:700;color:var(--navy);margin:0 0 8px;display:flex;align-items:center;gap:6px;padding-right:10px;border-right:3px solid var(--cat,var(--accent))}
+.oc-group-title span{color:var(--text3);font-weight:500;font-size:12px}
+.oc-item{background:var(--bg2);border:1px solid var(--border);border-right:4px solid var(--cat,var(--accent));border-radius:var(--radius);padding:12px 14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:12px;box-shadow:var(--shadow-sm)}
+.oc-item.oc-sev-high{background:linear-gradient(90deg,rgba(220,38,38,.04),var(--bg2) 40%)}
+.oc-item.oc-sev-low{opacity:.85}
+.oc-item-main{flex:1;min-width:0}
+.oc-item-title{font-size:14px;font-weight:600;color:var(--navy);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.oc-item-detail{font-size:12px;color:var(--text3);margin-top:3px}
+.oc-sev{font-size:10.5px;font-weight:700;color:var(--danger);background:rgba(220,38,38,.1);border-radius:10px;padding:1px 7px}
+.oc-item-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;flex-shrink:0}
+.oc-dismiss{color:var(--text3)}
+.oc-linked{font-size:12px;color:var(--success);font-weight:600;padding:5px 8px}
+.oc-empty{text-align:center;padding:48px 20px;background:var(--bg2);border:1px dashed var(--border2);border-radius:var(--radius-lg)}
+.oc-empty-icon{width:56px;height:56px;border-radius:50%;background:rgba(22,163,74,.12);color:var(--success);font-size:28px;font-weight:700;display:flex;align-items:center;justify-content:center;margin:0 auto 12px}
+.oc-empty-title{font-size:16px;font-weight:700;color:var(--navy)}
+.oc-empty-sub{font-size:12.5px;color:var(--text3);margin-top:6px;max-width:420px;margin-inline:auto}
+.oc-muted-row{font-size:12px;color:var(--text3);text-align:center;padding:10px}
+.oc-muted-row a{color:var(--accent)}
+.oc-settings{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px 18px;margin-bottom:18px;box-shadow:var(--shadow-sm)}
+.oc-settings-head{font-size:12.5px;color:var(--text3);margin-bottom:10px}
+.oc-settings-cat{font-size:12px;font-weight:700;color:var(--navy);margin:14px 0 6px;padding-right:8px;border-right:3px solid var(--cat,var(--accent))}
+.oc-setting{display:flex;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid var(--border)}
+.oc-setting:last-child{border-bottom:none}
+.oc-setting.off .oc-setting-main{opacity:.5}
+.oc-setting-main{flex:1;min-width:0}
+.oc-setting-label{font-size:13.5px;font-weight:600;color:var(--text)}
+.oc-setting-desc{font-size:12px;color:var(--text3)}
+.oc-setting-param{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text3);flex-shrink:0}
+.oc-setting-param .form-input{width:88px;padding:5px 8px;font-size:13px;text-align:center}
+.oc-switch{position:relative;display:inline-block;width:38px;height:22px;flex-shrink:0}
+.oc-switch input{opacity:0;width:0;height:0}
+.oc-switch span{position:absolute;inset:0;background:var(--border2);border-radius:22px;cursor:pointer;transition:.2s}
+.oc-switch span::before{content:'';position:absolute;width:16px;height:16px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s}
+.oc-switch input:checked+span{background:var(--success)}
+.oc-switch input:checked+span::before{transform:translateX(16px)}
+.oc-dash-card{cursor:pointer;padding:14px 16px;transition:box-shadow .15s}
+.oc-dash-card:hover{box-shadow:var(--shadow-md)}
+.oc-dash-head{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.oc-dash-num{font-size:22px;font-weight:700;color:var(--danger);margin-left:6px}
+.oc-dash-num.oc-ok{color:var(--success)}
+.oc-dash-title{font-size:14px;font-weight:700;color:var(--navy)}
+.oc-dash-link{font-size:12px;color:var(--accent);font-weight:600}
+.oc-dash-list{margin-top:10px}
+.oc-dash-row{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13px;border-top:1px solid var(--border)}
+.oc-dash-dot{width:8px;height:8px;border-radius:50%;background:var(--cat,var(--accent));flex-shrink:0}
+.oc-dash-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+.oc-dash-meta{font-size:11px;color:var(--text3);white-space:nowrap}
+.oc-dash-more{font-size:12px;color:var(--text3);padding-top:6px}
+@media (max-width:768px){
+  .oc-hero{padding:16px}.oc-hero-num{font-size:40px}.oc-run{width:100%}.oc-hero-actions{width:100%}
+  .oc-item{flex-direction:column;align-items:stretch}.oc-item-actions{justify-content:flex-start}
+  .oc-setting{flex-wrap:wrap}.oc-setting-param{width:100%;justify-content:flex-end}
+}
 </style>
 </head>
 <body>
@@ -656,7 +730,7 @@ textarea.form-input{resize:vertical;min-height:80px}
       <span class="nav-badge" id="ai-nav-badge" style="display:none"></span>
     </div>
     <div class="nav-item" id="nav-automations-item" onclick="nav('automations',this)">
-      <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h5M9.6 4h4.4M2 8h8.6M2 12h5M9.6 12h4.4"/><circle cx="8.2" cy="4" r="1.4"/><circle cx="12.2" cy="8" r="1.4"/><circle cx="8.2" cy="12" r="1.4"/></svg>מרכז האוטומציות
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h5M9.6 4h4.4M2 8h8.6M2 12h5M9.6 12h4.4"/><circle cx="8.2" cy="4" r="1.4"/><circle cx="12.2" cy="8" r="1.4"/><circle cx="8.2" cy="12" r="1.4"/></svg>בקרת משרד
       <span class="nav-badge" id="auto-nav-badge" style="display:none"></span>
     </div>
     <div class="nav-item" id="nav-billing-item" onclick="nav('billing',this)">
@@ -976,16 +1050,12 @@ textarea.form-input{resize:vertical;min-height:80px}
          מחליף .active על פאנלים, בלי hash ובלי History API. -->
     <div id="panel-automations" class="panel">
       <div class="topbar">
-        <div class="topbar-title">מרכז האוטומציות</div>
+        <div class="topbar-title">בקרת משרד</div>
         <div class="topbar-actions">
-          <button class="btn btn-sm" onclick="renderAutomations()">↻ רענן</button>
-          <button class="btn btn-sm btn-danger" id="auto-pause-btn" onclick="autoTogglePause()">⏸ השהה הכל</button>
+          <button class="btn btn-sm" onclick="renderOfficeChecks()">↻ רענן</button>
         </div>
       </div>
-      <div class="content">
-        <div class="tabs" id="auto-tabs"></div>
-        <div id="auto-body"></div>
-      </div>
+      <div class="content" id="oc-body"></div>
     </div>
 
     <div id="panel-ai-center" class="panel">
@@ -1664,21 +1734,5 @@ textarea.form-input{resize:vertical;min-height:80px}
 
 
   <!-- מרכז האוטומציות: בדיקה יבשה / פרטי הרצה -->
-  <div class="modal" id="modal-auto-dry">
-    <div class="modal-box" style="max-width:760px">
-      <div class="modal-head"><div class="modal-title">בדיקת אוטומציה</div>
-        <button class="modal-x" onclick="closeModal('modal-auto-dry')">&times;</button></div>
-      <div class="modal-body" id="auto-dry-body"></div>
-    </div>
-  </div>
-
-  <div class="modal" id="modal-auto-settings">
-    <div class="modal-box" style="max-width:640px">
-      <div class="modal-head"><div class="modal-title" id="auto-settings-title">הגדרות אוטומציה</div>
-        <button class="modal-x" onclick="closeModal('modal-auto-settings')">&times;</button></div>
-      <div class="modal-body" id="auto-settings-body"></div>
-    </div>
-  </div>
-
 </body>
 </html>

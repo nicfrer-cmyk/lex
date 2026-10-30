@@ -363,7 +363,7 @@ function nav(id, el) {
   if(id==='templates' && typeof tmRender==='function') tmRender();
   if(id==='billing' && typeof renderBilling==='function') renderBilling();
   if(id==='ai-center' && typeof renderAiCenter==='function') renderAiCenter();
-  if(id==='automations' && typeof renderAutomations==='function') renderAutomations();
+  if(id==='automations' && typeof renderOfficeChecks==='function') renderOfficeChecks();
 }
 
 // ===== MOBILE DRAWER (sidebar-as-drawer on small screens) =====
@@ -3956,6 +3956,7 @@ function renderDashboard(){
   const upEvts=db.events.filter(e=>e.date>=today).sort((a,b)=>a.date>b.date?1:-1).slice(0,3);
   document.getElementById('d-events').innerHTML=upEvts.length?upEvts.map(eventRow).join(''):'<div class="empty">אין אירועים קרובים</div>';
   if (typeof practiceDashboard === 'function') practiceDashboard();
+  if (typeof officeChecksDashboard === 'function') officeChecksDashboard();
 }
 
 // ===== TABS =====
