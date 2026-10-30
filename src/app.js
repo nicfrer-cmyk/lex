@@ -112,11 +112,56 @@ async function loadDB() {
   refreshAll();
 }
 
+// Most of the ~60 call sites fire saveDB() without awaiting it, so this function owns
+// the user-facing outcome: saves run one at a time (overlapping saves from the same
+// tab used to race each other), a failure is shown instead of a silent "saved", and
+// closing the tab while a save is in flight asks first.
+let _saveChain = Promise.resolve();
+let _savesPending = 0;
 async function saveDB() {
-  await Platform.saveDB(db);
-  document.getElementById('save-status').textContent = 'נשמר ✓';
-  setTimeout(()=>document.getElementById('save-status').textContent='', 2000);
+  _savesPending++;
+  const run = _saveChain.then(() => Platform.saveDB(db));
+  _saveChain = run.catch(() => {});
+  const statusEl = document.getElementById('save-status');
+  try {
+    await run;
+  } catch (e) {
+    console.error('saveDB failed:', e);
+    if (statusEl) statusEl.textContent = 'השמירה נכשלה ⚠';
+    notify('⚠ השמירה נכשלה: ' + (e && e.message ? e.message : String(e)) + ' — השינויים האחרונים לא נשמרו בשרת.');
+    throw e;
+  } finally {
+    _savesPending--;
+  }
+  if (statusEl) {
+    statusEl.textContent = 'נשמר ✓';
+    setTimeout(()=>statusEl.textContent='', 2000);
+  }
   refreshSidebar();
+}
+window.addEventListener('beforeunload', (e) => {
+  if (_savesPending > 0) { e.preventDefault(); e.returnValue = ''; }
+});
+
+// Initial load failed (network blip, expired session): the in-memory db is the empty
+// default, so the app must not look usable — editing it would mean working on a blank
+// office. Platform.saveDB also refuses to save until a load succeeds.
+function showLoadFailure(e) {
+  console.error('loadDB failed:', e);
+  let el = document.getElementById('load-failure-gate');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'load-failure-gate';
+    el.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;direction:rtl';
+    el.innerHTML = `<div class="card" style="max-width:420px;padding:24px;text-align:center">
+      <div style="font-size:18px;font-weight:600;margin-bottom:10px">לא ניתן לטעון את נתוני המשרד</div>
+      <div id="load-failure-msg" style="font-size:13px;color:var(--text3);margin-bottom:16px"></div>
+      <button class="btn btn-primary" onclick="location.reload()">נסה שוב</button>
+    </div>`;
+    document.body.appendChild(el);
+  }
+  const msg = navigator.onLine === false ? 'אין חיבור לאינטרנט. בדוק/י את החיבור ונסה/י שוב.' : 'שגיאה: ' + (e && e.message ? e.message : String(e));
+  document.getElementById('load-failure-msg').textContent = msg;
 }
 
 function uid() { return Date.now().toString(36)+Math.random().toString(36).substr(2,5); }
@@ -4937,7 +4982,7 @@ let officeVatRate = 18; // updated in bootApp() from the office's actual configu
 async function bootApp() {
   const tmNav = document.getElementById('nav-templates-item');
   if (tmNav) tmNav.style.display = '';
-  loadDB();
+  loadDB().catch(showLoadFailure);
   try {
     const office = await Platform.getOfficeInfo();
     officeVatRate = office.vat_rate ?? 18;

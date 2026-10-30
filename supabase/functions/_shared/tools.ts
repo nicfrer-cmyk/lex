@@ -588,7 +588,13 @@ export const TOOLS: ToolDef[] = [
       let text = typeof cached === 'string' ? cached : '';
 
       if (!text) {
-        const { data, error } = await ctx.sb.storage.from('documents').download(String(doc.filePath));
+        // ctx.sb הוא service_role (בלי storage RLS), ו-filePath מגיע מהבלוב שכל חבר
+        // משרד יכול לשכתב — לכן הנתיב חייב להיות בתוך תיקיית המשרד הזה.
+        const fp = String(doc.filePath);
+        if (fp.includes('..') || fp.includes('\\') || !fp.startsWith(`${ctx.officeId}/`)) {
+          return fail('נתיב הקובץ של המסמך אינו שייך למשרד.');
+        }
+        const { data, error } = await ctx.sb.storage.from('documents').download(fp);
         if (error) return fail('לא ניתן לקרוא את הקובץ: ' + error.message);
         const ext = String(doc.origName || doc.name || '').split('.').pop()?.toLowerCase() || '';
         if (['txt', 'csv', 'json', 'md'].includes(ext)) {

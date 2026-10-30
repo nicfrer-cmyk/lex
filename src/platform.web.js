@@ -85,6 +85,14 @@ const PLAN_STORAGE_LIMIT_GB = 20;
 // schema comments on why v1 doesn't support multi-office membership/switching).
 let _officeCache = null; // { officeId, role }
 
+// loadDB succeeded at least once this session. Until then the in-memory db is the
+// empty default, and saving it would overwrite the office's whole real blob (cases,
+// clients, trust ledger) — which is exactly what a transient load failure used to cause.
+let _dbLoaded = false;
+// Whether the office's app_data row existed at load. If it didn't, the first save
+// inserts rather than upserts, so a row a server writer created meanwhile isn't wiped.
+let _dbRowExisted = false;
+
 // Sums file sizes under an office's storage folder. Supabase Storage's list() isn't
 // recursive, so this walks the two known shapes by hand: documents/ (flat) and
 // templates/<folder>/ (one level of subfolders) — mirrors tmListTree()'s traversal.
@@ -469,11 +477,25 @@ window.Platform = {
     const { officeId } = await currentOffice();
     const { data, error } = await supabase.from('app_data').select('data').eq('office_id', officeId).maybeSingle();
     if (error) throw error;
+    _dbRowExisted = !!data;
+    _dbLoaded = true;
     return data ? data.data : null;
   },
 
   async saveDB(dbObj) {
+    if (!_dbLoaded) {
+      throw new Error('נתוני המשרד לא נטענו מהשרת, ולכן השמירה נחסמה כדי לא לדרוס אותם. רענן/י את הדף.');
+    }
     const { officeId } = await currentOffice();
+    if (!_dbRowExisted) {
+      const { error } = await supabase.from('app_data').insert({ office_id: officeId, data: dbObj });
+      if (error && error.code === '23505') {
+        throw new Error('נתוני המשרד נוצרו במקביל ממקום אחר. רענן/י את הדף לפני שממשיכים.');
+      }
+      if (error) throw error;
+      _dbRowExisted = true;
+      return true;
+    }
     const { error } = await supabase.from('app_data').upsert({ office_id: officeId, data: dbObj }, { onConflict: 'office_id' });
     if (error) throw error;
     return true;

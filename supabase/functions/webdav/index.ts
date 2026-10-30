@@ -80,7 +80,26 @@ async function authenticate(req: Request): Promise<AuthedUser | null> {
     .eq('email', email)
     .maybeSingle();
   if (error || !data || data.token_hash !== tokenHash) return null;
+  // A credential row outlives the membership it was issued for — without this, staff
+  // removed from the office kept reading and overwriting its documents over WebDAV.
+  const { data: member, error: memberErr } = await admin
+    .from('office_members')
+    .select('user_id')
+    .eq('office_id', data.office_id)
+    .eq('user_id', data.user_id)
+    .maybeSingle();
+  if (memberErr || !member) return null;
   return { userId: data.user_id, officeId: data.office_id };
+}
+
+// filePath comes from the office's own app_data blob, which any member can rewrite,
+// and Storage is accessed here with service_role (no storage RLS). So the path itself
+// must be proven to sit inside this office's folder, or a member could point a doc at
+// another office's file and read/overwrite it through this bridge.
+function isOfficePath(officeId: string, filePath: string): boolean {
+  if (typeof filePath !== 'string') return false;
+  if (filePath.includes('..') || filePath.includes('\\') || filePath.startsWith('/')) return false;
+  return filePath.startsWith(`${officeId}/`);
 }
 
 interface DocRef { filePath: string; ext: string; name: string; }
@@ -96,6 +115,7 @@ async function resolveDoc(officeId: string, docId: string): Promise<DocRef | nul
   const docs = (data.data && data.data.docs) || [];
   const doc = docs.find((d: any) => d.id === docId);
   if (!doc || !doc.filePath) return null;
+  if (!isOfficePath(officeId, doc.filePath)) return null;
   return { filePath: doc.filePath, ext: doc.ext || '', name: doc.origName || doc.name || 'document' };
 }
 
