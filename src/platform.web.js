@@ -724,6 +724,18 @@ window.Platform = {
     if (error) throw error;
   },
 
+  // Removes a case document's stored bytes. Deleting only the db.docs row used to leave
+  // the file in Storage forever: still counted against the 20GB quota, and still
+  // holding client data the office believed it had deleted. Best-effort by design —
+  // the metadata delete must not fail because a file is already gone.
+  async deleteDocumentFile(filePath) {
+    if (!filePath) return;
+    const { officeId } = await currentOffice();
+    if (typeof filePath !== 'string' || filePath.includes('..') || !filePath.startsWith(`${officeId}/`)) return;
+    const { error } = await supabase.storage.from(BUCKET).remove([filePath]);
+    if (error) console.warn('deleteDocumentFile:', error.message);
+  },
+
   async tmDeleteFile(folderName, filename) {
     const { officeId } = await currentOffice();
     const path = `${officeId}/templates/${toSafeKey(folderName)}/${toSafeKey(filename)}`;

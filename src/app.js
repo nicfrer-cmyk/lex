@@ -1796,8 +1796,38 @@ async function downloadEfilingPDF(caseId, bundleId) {
 }
 
 async function deleteCase() {
-  if(!await customConfirm('למחוק תיק זה? הפעולה בלתי הפיכה.', {danger:true, okText:'מחק תיק', title:'מחיקת תיק'})) return;
   const id=currentCaseId;
+  const c=db.cases.find(x=>x.id===id);
+  if(!c) return;
+  // Financial records are never deleted with a case: the trust ledger and payment
+  // history are the office's accounting record (and the client's money). A case
+  // that has any is closed/archived instead, which keeps every record intact.
+  const trustCount=(db.trustTransactions||[]).filter(t=>t.caseId===id).length;
+  const payCount=(db.payments||[]).filter(p=>p.caseId===id).length;
+  if(trustCount||payCount){
+    const parts=[];
+    if(trustCount) parts.push(`${trustCount} תנועות נאמנות`);
+    if(payCount) parts.push(`${payCount} תשלומים`);
+    if(c.status==='closed'){
+      await customAlert(`לא ניתן למחוק תיק שיש בו ${parts.join(' ו-')}. התיק כבר סגור ושמור בארכיון, וכל הרישומים נשמרים.`, 'מחיקת תיק');
+      return;
+    }
+    if(await customConfirm(`לא ניתן למחוק תיק שיש בו ${parts.join(' ו-')} — אלה רישומים כספיים שחייבים להישמר. לסגור את התיק ולהעביר אותו לארכיון במקום? כל הנתונים יישמרו, ואפשר לפתוח אותו מחדש בכל עת.`, {okText:'סגור והעבר לארכיון', title:'מחיקת תיק'})){
+      c.status='closed';
+      c.archivedAt=new Date().toISOString();
+      if(!c.diary) c.diary=[];
+      c.diary.push({text:'התיק נסגר והועבר לארכיון', date:new Date().toLocaleString('he-IL')});
+      saveDB();
+      reopenCaseDetailKeepingTab(id);
+      notify('התיק נסגר והועבר לארכיון');
+    }
+    return;
+  }
+  if(!await customConfirm('למחוק תיק זה? יימחקו גם המשימות, האירועים, המסמכים (כולל הקבצים) ורישומי השעות שלו. הפעולה בלתי הפיכה.', {danger:true, okText:'מחק תיק', title:'מחיקת תיק'})) return;
+  if(timerCaseId===id){
+    clearInterval(timerInterval); timerRunning=false; timerSeconds=0; pendingTimerSecs=0; timerCaseId=null;
+  }
+  db.docs.filter(d=>d.caseId===id&&d.filePath).forEach(d=>Platform.deleteDocumentFile(d.filePath).catch(()=>{}));
   db.cases=db.cases.filter(c=>c.id!==id);
   db.tasks=db.tasks.filter(t=>t.caseId!==id);
   db.events=db.events.filter(e=>e.caseId!==id);
@@ -2619,7 +2649,7 @@ function renderTasks(){
   document.getElementById('tasks-done').innerHTML=done.length?done.map(row).join(''):'<div class="empty" style="padding:16px">ריק</div>';
 }
 
-function delTask(id,inDetail=false){db.tasks=db.tasks.filter(t=>t.id!==id);saveDB();if(inDetail)reopenCaseDetailKeepingTab(currentCaseId);else renderTasks();}
+async function delTask(id,inDetail=false){if(!await customConfirm('למחוק את המשימה?',{danger:true,okText:'מחק',title:'מחיקת משימה'}))return;db.tasks=db.tasks.filter(t=>t.id!==id);saveDB();if(inDetail)reopenCaseDetailKeepingTab(currentCaseId);else renderTasks();}
 
 // ===== CALENDAR =====
 let calDate=new Date();
@@ -2687,7 +2717,7 @@ function saveEvent(){
   saveDB();closeModal('modal-event');notify('אירוע נוסף! ✓');renderCalendar();
 }
 
-function delEvent(id,inDetail=false){db.events=db.events.filter(e=>e.id!==id);saveDB();if(inDetail)reopenCaseDetailKeepingTab(currentCaseId);else renderCalendar();}
+async function delEvent(id,inDetail=false){if(!await customConfirm('למחוק את האירוע מהיומן?',{danger:true,okText:'מחק',title:'מחיקת אירוע'}))return;db.events=db.events.filter(e=>e.id!==id);saveDB();if(inDetail)reopenCaseDetailKeepingTab(currentCaseId);else renderCalendar();}
 
 // ===== FINANCE =====
 function savePayment(){
@@ -2725,8 +2755,10 @@ function editPayment(id){
   document.getElementById('modal-payment').classList.add('open');
 }
 
-function delPayment(id){
+async function delPayment(id){
   const p=db.payments.find(x=>x.id===id);
+  if(!p) return;
+  if(!await customConfirm(`למחוק את התשלום על סך ₪${Number(p.amount||0).toLocaleString('he-IL')}? הסכום ייגרע מהנגבה בתיק.`,{danger:true,okText:'מחק תשלום',title:'מחיקת תשלום'}))return;
   if(p&&p.caseId&&p.type==='debt'){const c=db.cases.find(x=>x.id===p.caseId);if(c)c.collected=Math.max(0,(c.collected||0)-p.amount);}
   db.payments=db.payments.filter(x=>x.id!==id);
   saveDB();notify('תשלום נמחק');
@@ -3202,7 +3234,7 @@ function renderDocs(filter=''){
     ${docs.filter(d=>d.cat===cat).map(d=>docItemHtml(d)).join('')}
   </div>`).join('');
 }
-function delDoc(id,inDetail=false){db.docs=db.docs.filter(d=>d.id!==id);saveDB();if(inDetail)reopenCaseDetailKeepingTab(currentCaseId);else renderDocs();}
+async function delDoc(id,inDetail=false){const d0=db.docs.find(d=>d.id===id);if(!await customConfirm(`למחוק את המסמך${d0&&d0.name?' "'+d0.name+'"':''}? גם הקובץ עצמו יימחק.`,{danger:true,okText:'מחק מסמך',title:'מחיקת מסמך'}))return;if(d0&&d0.filePath)Platform.deleteDocumentFile(d0.filePath).catch(()=>{});db.docs=db.docs.filter(d=>d.id!==id);saveDB();if(inDetail)reopenCaseDetailKeepingTab(currentCaseId);else renderDocs();}
 
 // Shared row markup for both the global docs panel and the in-case docs tab. Clicking
 // the row opens the in-app preview (previewDoc); the ⋮ menu holds everything else —
@@ -3839,7 +3871,8 @@ function saveManualTime(){
   if(currentPanel==='dashboard') renderDashboard();
 }
 
-function delTimeEntry(id){
+async function delTimeEntry(id){
+  if(!await customConfirm('למחוק את רישום השעות?',{danger:true,okText:'מחק',title:'מחיקת רישום שעות'}))return;
   db.timeEntries=(db.timeEntries||[]).filter(t=>t.id!==id);
   saveDB();
   if(currentPanel==='case-detail') reopenCaseDetailKeepingTab(currentCaseId);
