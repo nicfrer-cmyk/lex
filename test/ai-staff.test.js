@@ -79,7 +79,7 @@ test('create_work_item accepts free-form metadata (the model adds its own keys)'
   const def = STAFF_TOOLS.find(t => t.slug === 'create_work_item');
   const out = validate({ kind: 'post', title: 'כותרת', body: 'גוף הפוסט הארוך מספיק', metadata: { visual_suggestion: 'x', post_number: 1 } }, def.schema);
   assert.equal(out.metadata.visual_suggestion, 'x');
-  assert.throws(() => validate({ kind: 'post', title: 'כותרת', body: 'גוף הפוסט', evil: 1 }, def.schema), /שדות לא מוכרים/);
+  assert.throws(() => validate({ kind: 'post', title: 'כותרת', body: 'גוף הפוסט הארוך מספיק', evil: 1 }, def.schema), /שדות לא מוכרים/);
 });
 
 test('fetch_url refuses private and non-http targets', async () => {
