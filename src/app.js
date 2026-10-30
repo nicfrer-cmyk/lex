@@ -64,9 +64,22 @@ function officeContactLine() {
 // defaults to 'debt', so those cases keep behaving exactly as before with zero migration.
 const CASE_STAGES = {
   debt: ['איסוף מסמכים','התראה ראשונה','גישור','כתב תביעה','דיון','הוצאה לפועל','סגור'],
-  general: ['פתיחה','בטיפול','ממתין לצד ג\'','דיון','סגור']
+  general: ['פתיחה','בטיפול','ממתין לצד ג\'','דיון','סגור'],
+  // Civil litigation, in the order a claim moves through the courts under the 2018
+  // Civil Procedure Regulations.
+  litigation: ['הכנת כתב טענות','הוגש כתב תביעה','כתב הגנה','קדם משפט','הליכים מקדמיים','גישור / פשרה','הוכחות','סיכומים','פסק דין','ערעור','סגור'],
+  // Contracts and agreements, from first draft to the end of the term.
+  contract: ['טיוטה','משא ומתן','ממתין לחתימה','נחתם','בתוקף','חידוש / הארכה','הסתיים']
 };
+const CASE_TYPE_LABELS = { debt: 'גבייה', litigation: 'ליטיגציה אזרחית', contract: 'חוזים והסכמים', general: 'כללי' };
 function getCaseStages(c) { return CASE_STAGES[c && c.caseType] || CASE_STAGES.debt; }
+// Debt-collection cases are the only ones with a debtor and "collected" money; every
+// other type (litigation, contracts, general) talks about a counterparty and a value.
+function isDebtCase(c) { return !c || !c.caseType || c.caseType === 'debt'; }
+function caseAmountLabel(c) {
+  const t = c && c.caseType;
+  return t === 'litigation' ? 'סכום התביעה' : t === 'contract' ? 'שווי העסקה' : t === 'general' ? 'סכום / שווי' : 'סכום חוב';
+}
 
 // `leads` נוספה עבור מרכז ה-AI (קליטת לידים מוואטסאפ/מייל/שיחות). היא כלולה
 // כאן ולא רק ב-loadDB() כי השורה הזו היא מה שמשרד *חדש* מקבל — הבלוק ב-loadDB
@@ -327,7 +340,7 @@ function refreshSidebar() {
 // ===== NAV =====
 let currentPanel = 'dashboard';
 function nav(id, el) {
-  if ((id === 'finance' || id === 'analytics') && currentRole === 'secretary') { id = 'dashboard'; el = null; }
+  if ((id === 'finance' || id === 'analytics' || id === 'billing') && currentRole === 'secretary') { id = 'dashboard'; el = null; }
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   document.getElementById('panel-'+id).classList.add('active');
@@ -348,6 +361,7 @@ function nav(id, el) {
   if(id==='docs') renderDocs();
   if(id==='analytics') renderAnalytics();
   if(id==='templates' && typeof tmRender==='function') tmRender();
+  if(id==='billing' && typeof renderBilling==='function') renderBilling();
   if(id==='ai-center' && typeof renderAiCenter==='function') renderAiCenter();
   if(id==='automations' && typeof renderAutomations==='function') renderAutomations();
 }
@@ -569,12 +583,15 @@ function updateCaseTypeUI() {
   stageSel.innerHTML=stages.map(s=>`<option>${s}</option>`).join('');
   stageSel.value=stages.includes(prevValue)?prevValue:stages[0];
   const debtorTabBtn=document.querySelector(`[onclick="switchFormTab(this,'ctab-debtor')"]`);
-  const isGeneral=type==='general';
+  const isGeneral=type!=='debt';
   if(debtorTabBtn) debtorTabBtn.textContent=isGeneral?'צד קשור':'פרטי חייב';
   const alertEl=document.getElementById('debtor-tab-alert');
   if(alertEl) alertEl.style.display=isGeneral?'none':'';
   const lblName=document.getElementById('lbl-debtor-name');
-  if(lblName) lblName.textContent=isGeneral?'שם הצד השני':'שם החייב *';
+  if(lblName) lblName.textContent=isGeneral?'שם הצד שכנגד':'שם החייב *';
+  const lblAmount=document.getElementById('lbl-case-amount');
+  if(lblAmount) lblAmount.textContent=caseAmountLabel({caseType:type})+' (₪)';
+  if (typeof practiceCaseTypeUI === 'function') practiceCaseTypeUI(type);
   const lblType=document.getElementById('lbl-debtor-type');
   if(lblType) lblType.textContent=isGeneral?'סוג צד':'סוג חייב';
   const lblDesc=document.getElementById('lbl-debt-desc');
@@ -861,7 +878,7 @@ function renderCasesTable(cases){
       </td>
       <td>
         <div style="color:var(--text2);font-size:12px">${cl?escapeHtml(cl.name):'—'}</div>
-        ${c.debtorName?`<div style="font-size:11px;color:var(--text3)">${c.caseType==='general'?'צד':'חייב'}: ${escapeHtml(c.debtorName)}</div>`:''}
+        ${c.debtorName?`<div style="font-size:11px;color:var(--text3)">${isDebtCase(c)?'חייב':'צד שכנגד'}: ${escapeHtml(c.debtorName)}</div>`:''}
       </td>
       <td style="color:var(--accent2);font-weight:600">${c.amount?'₪'+c.amount.toLocaleString():'—'}</td>
       <td style="color:var(--text2);font-size:12px">${escapeHtml(c.stage)}</td>
@@ -1044,18 +1061,20 @@ function openCaseDetail(id) {
 
     <!-- Stats row -->
     <div class="stats-grid" style="margin-bottom:16px">
-      <div class="stat"><div class="stat-label">${c.caseType==='general'?'סכום / שווי':'סכום חוב'}</div><div class="stat-value" style="color:var(--accent2);font-size:20px">${c.amount?'₪'+c.amount.toLocaleString():'—'}</div></div>
-      <div class="stat"><div class="stat-label">${c.caseType==='general'?'התקבל בפועל':'גבוי בפועל'}</div><div class="stat-value" style="color:var(--success);font-size:20px">₪${totalCollected.toLocaleString()}</div></div>
+      <div class="stat"><div class="stat-label">${caseAmountLabel(c)}</div><div class="stat-value" style="color:var(--accent2);font-size:20px">${c.amount?'₪'+c.amount.toLocaleString():'—'}</div></div>
+      <div class="stat"><div class="stat-label">${isDebtCase(c)?'גבוי בפועל':'התקבל בפועל'}</div><div class="stat-value" style="color:var(--success);font-size:20px">₪${totalCollected.toLocaleString()}</div></div>
       <div class="stat"><div class="stat-label">שכ"ט צפוי</div><div class="stat-value" style="color:var(--warning);font-size:18px">₪${expectedFee.toLocaleString()}</div></div>
       <div class="stat"><div class="stat-label">שלב</div><div style="font-size:14px;font-weight:600;color:var(--navy);margin-top:4px">${escapeHtml(c.stage)}</div>
         <div class="stage-bar">${stages.map((s,i)=>`<div class="stage-step ${i<stageIdx?'done':i===stageIdx?'current':''}"></div>`).join('')}</div>
       </div>
     </div>
 
+    ${typeof practiceCaseSection === 'function' ? practiceCaseSection(c) : ''}
+
     <!-- Debtor + Client info -->
     <div class="two-col" style="margin-bottom:0">
       ${c.debtorName?`<div class="debtor-card">
-        <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px">פרטי חייב</div>
+        <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px">${isDebtCase(c)?'פרטי חייב':'הצד שכנגד'}</div>
         <div style="font-weight:600;color:var(--navy);margin-bottom:4px">${escapeHtml(c.debtorName)} ${c.debtorId?'('+escapeHtml(c.debtorId)+')':''}</div>
         ${c.debtorAddress?`<div style="font-size:12px;color:var(--text2)">📍 ${escapeHtml(c.debtorAddress)}</div>`:''}
         ${c.debtorPhone?`<div style="font-size:12px;color:var(--text2)">📞 ${escapeHtml(c.debtorPhone)}</div>`:''}
@@ -1950,7 +1969,7 @@ async function deleteCase() {
   if(timerCaseId===id){
     clearInterval(timerInterval); timerRunning=false; timerSeconds=0; pendingTimerSecs=0; timerCaseId=null;
   }
-  db.docs.filter(d=>d.caseId===id&&d.filePath).forEach(d=>Platform.deleteDocumentFile(d.filePath).catch(()=>{}));
+  db.docs.filter(d=>d.caseId===id).forEach(d=>[d.filePath,...(d.versions||[]).map(v=>v.filePath)].filter(Boolean).forEach(fp=>Platform.deleteDocumentFile(fp).catch(()=>{})));
   db.cases=db.cases.filter(c=>c.id!==id);
   db.tasks=db.tasks.filter(t=>t.caseId!==id);
   db.events=db.events.filter(e=>e.caseId!==id);
@@ -2029,7 +2048,7 @@ function generateLegalDoc(type) {
         <div class="form-group"><label class="form-label">ת.ז / ח.פ</label><input class="form-input" id="poa-grantor-id" value="${escapeHtml(cl.idNum||'')}"></div>
       </div>
       <div class="form-group"><label class="form-label">נושא</label>
-        <input class="form-input" id="poa-matter" value="${escapeHtml(c.caseType!=='general'&&c.debtorName?'גביית חוב מ'+c.debtorName:c.name||'')}">
+        <input class="form-input" id="poa-matter" value="${escapeHtml(isDebtCase(c)&&c.debtorName?'גביית חוב מ'+c.debtorName:c.name||'')}">
       </div>
     `;
     openModal('modal-legal-gen');
@@ -3405,7 +3424,7 @@ function renderDocs(filter=''){
     ${docs.filter(d=>d.cat===cat).map(d=>docItemHtml(d)).join('')}
   </div>`).join('');
 }
-async function delDoc(id,inDetail=false){const d0=db.docs.find(d=>d.id===id);if(!await customConfirm(`למחוק את המסמך${d0&&d0.name?' "'+d0.name+'"':''}? גם הקובץ עצמו יימחק.`,{danger:true,okText:'מחק מסמך',title:'מחיקת מסמך'}))return;if(d0&&d0.filePath)Platform.deleteDocumentFile(d0.filePath).catch(()=>{});db.docs=db.docs.filter(d=>d.id!==id);saveDB();if(inDetail)reopenCaseDetailKeepingTab(currentCaseId);else renderDocs();}
+async function delDoc(id,inDetail=false){const d0=db.docs.find(d=>d.id===id);if(!await customConfirm(`למחוק את המסמך${d0&&d0.name?' "'+d0.name+'"':''}? גם הקובץ עצמו יימחק.`,{danger:true,okText:'מחק מסמך',title:'מחיקת מסמך'}))return;if(d0&&d0.filePath)Platform.deleteDocumentFile(d0.filePath).catch(()=>{});(d0&&d0.versions||[]).forEach(v=>Platform.deleteDocumentFile(v.filePath).catch(()=>{}));db.docs=db.docs.filter(d=>d.id!==id);saveDB();if(inDetail)reopenCaseDetailKeepingTab(currentCaseId);else renderDocs();}
 
 // Shared row markup for both the global docs panel and the in-case docs tab. Clicking
 // the row opens the in-app preview (previewDoc); the ⋮ menu holds everything else —
@@ -3429,6 +3448,7 @@ function docItemHtml(d, opts={}) {
         ${d.filePath?`<button onclick="closeAllOverflowMenus();downloadDoc('${d.id}')">⬇ הורדה למחשב</button>`:''}
         ${d.filePath&&!Platform.isMobile&&/\.docx$/i.test(d.origName||d.name||'')?`<button onclick="closeAllOverflowMenus();openInWordLinked('${d.id}')">🔗 פתח ב-Word (מקושר לאתר)</button>`:''}
         <button onclick="closeAllOverflowMenus();uploadNewVersion('${d.id}')">🔄 עדכן גרסה (אחרי עריכה)</button>
+        ${(d.versions||[]).length&&typeof practiceShowVersions==='function'?`<button onclick="closeAllOverflowMenus();practiceShowVersions('${d.id}')">📚 גרסאות קודמות (${d.versions.length})</button>`:''}
         ${d.filePath?`<button onclick="closeAllOverflowMenus();shareDocVia('${d.id}','email')">📧 שלח בדוא"ל</button>`:''}
         ${d.filePath?`<button onclick="closeAllOverflowMenus();shareDocVia('${d.id}','whatsapp')">💬 שלח בוואטסאפ</button>`:''}
         <button onclick="closeAllOverflowMenus();delDoc('${d.id}'${inDetail?',true':''})" style="color:var(--danger)">🗑 מחק</button>
@@ -3598,6 +3618,12 @@ async function uploadNewVersion(docId) {
     if (!result) return;
     notify('מעלה גרסה מעודכנת...');
     const filePath = await Platform.saveFile({ buffer: result.buffer, filename: result.filename });
+    // The previous file is kept as a version (it used to be overwritten and left as an
+    // orphan in Storage) — a lawyer must be able to show what a document said before.
+    if (d.filePath) {
+      if (!d.versions) d.versions = [];
+      d.versions.push({ id: uid(), filePath: d.filePath, origName: d.origName || d.name, date: d.date || '', replacedAt: new Date().toISOString() });
+    }
     d.filePath = filePath;
     d.origName = result.filename;
     d.ext = getExt(result.filename);
@@ -3929,6 +3955,7 @@ function renderDashboard(){
 
   const upEvts=db.events.filter(e=>e.date>=today).sort((a,b)=>a.date>b.date?1:-1).slice(0,3);
   document.getElementById('d-events').innerHTML=upEvts.length?upEvts.map(eventRow).join(''):'<div class="empty">אין אירועים קרובים</div>';
+  if (typeof practiceDashboard === 'function') practiceDashboard();
 }
 
 // ===== TABS =====
@@ -4330,7 +4357,7 @@ const AGENT_TOOLS = [
   { name:'createCase', description:'צור תיק חדש במערכת (גבייה או תיק כללי)',
     input_schema:{ type:'object', required:['name'], properties:{
       name:{type:'string',description:'שם התיק (לדוגמה: כהן נ׳ לוי)'},
-      caseType:{type:'string',enum:['debt','general'],description:'סוג התיק: debt=תיק גבייה (יש חייב וסכום חוב), general=תיק כללי. ברירת מחדל debt.'},
+      caseType:{type:'string',enum:['debt','litigation','contract','general'],description:'סוג התיק: debt=גבייה (חייב וסכום חוב), litigation=ליטיגציה אזרחית (תביעה בבית משפט), contract=חוזים והסכמים, general=כללי. ברירת מחדל debt.'},
       clientName:{type:'string',description:'שם הלקוח המזמין – יחפש לפי שם קיים'},
       debtorName:{type:'string',description:'שם החייב (בתיק גבייה) או הצד השני (בתיק כללי)'},
       debtorId:{type:'string',description:'ת.ז / ח.פ של הצד השני'},
@@ -4668,7 +4695,7 @@ async function agentExecTool(name, input) {
           const cl = db.clients.find(c=>c.name.includes(q)||q.includes(c.name));
           if (cl) clientId = cl.id;
         }
-        const caType = input.caseType==='general' ? 'general' : 'debt';
+        const caType = CASE_STAGES[input.caseType] ? input.caseType : 'debt';
         const caStages = CASE_STAGES[caType];
         const obj = {
           id:uid(), name:input.name, client:clientId, caseType:caType,
@@ -4720,7 +4747,7 @@ async function agentExecTool(name, input) {
         const cl = db.clients.find(x=>x.id===c.client)||{};
         const { filePath: fpPoa, filename: fnPoa } = await fillLegalTemplate('poa', {
           grantorName:cl.name||'', grantorId:cl.idNum||'',
-          matter:c.caseType!=='general'&&c.debtorName?`גבייה מ${c.debtorName} בסך ₪${(c.amount||0).toLocaleString()}${c.debtDesc?' – '+c.debtDesc:''}`:`ייצוג בעניין ${c.name}`
+          matter:isDebtCase(c)&&c.debtorName?`גבייה מ${c.debtorName} בסך ₪${(c.amount||0).toLocaleString()}${c.debtDesc?' – '+c.debtDesc:''}`:`ייצוג בעניין ${c.name}`
         }, c);
         notify('ייפוי כוח נפתח!');
         await Platform.openFile(fpPoa, fnPoa);
@@ -5273,7 +5300,7 @@ async function bootApp() {
     if (currentRole === 'secretary') {
       document.querySelectorAll('.nav-item').forEach(n => {
         const onclick = n.getAttribute('onclick');
-        if (onclick === "nav('finance',this)" || onclick === "nav('analytics',this)") n.style.display = 'none';
+        if (onclick === "nav('finance',this)" || onclick === "nav('analytics',this)" || onclick === "nav('billing',this)") n.style.display = 'none';
       });
     }
   } catch (e) { /* role lookup failing shouldn't block the rest of the app */ }

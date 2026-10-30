@@ -27,7 +27,7 @@
 /** קולקציות מערך שכל פריט בהן נושא id. */
 export const MERGEABLE_COLLECTIONS = [
   'tasks', 'leads', 'events', 'clients', 'cases',
-  'docs', 'payments', 'timeEntries', 'trustTransactions',
+  'docs', 'payments', 'timeEntries', 'trustTransactions', 'billingStatements',
 ];
 
 export const deepCopy = (v) => (v == null ? v : JSON.parse(JSON.stringify(v)));
@@ -153,6 +153,11 @@ function fixDuplicateClientNumbers(local, remote, baseline, renumbered) {
 function mergeCounters(l, r) {
   const out = isObj(l) ? { ...l } : {};
   const rr = isObj(r) ? r : {};
+  // Every numeric counter (client numbers, billing-statement numbers, ...) takes the
+  // higher side, so a number handed out in another session is never reused here.
+  for (const [k, v] of Object.entries(rr)) {
+    if (typeof v === 'number' || typeof out[k] === 'number') out[k] = Math.max(Number(out[k]) || 0, Number(v) || 0);
+  }
   out.nextClientNumber = Math.max(Number(out.nextClientNumber) || 1, Number(rr.nextClientNumber) || 1);
   const cc = { ...(isObj(out.caseCounters) ? out.caseCounters : {}) };
   for (const [k, v] of Object.entries(isObj(rr.caseCounters) ? rr.caseCounters : {})) {

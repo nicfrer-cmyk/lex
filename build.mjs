@@ -42,6 +42,8 @@ const html = appHtml.replace(
     'vendor/html2canvas.min.js',
     'legal-content.js',
     'app.js',
+    // practice.js (litigation/contracts/deadlines/billing) uses app.js's globals.
+    'practice.js',
     'auth.js',
     'template-manager.js',
     // ai-center.js must load AFTER app.js: it calls app.js's globals (db, saveDB,
@@ -61,6 +63,7 @@ fs.writeFileSync(path.join(outDir, 'index.html'), html, 'utf8');
 // (nav(), saveCase(), etc.) stay reachable from the HTML's onclick="..." attributes.
 fs.copyFileSync(path.join(src, 'legal-content.js'), path.join(outDir, 'legal-content.js'));
 fs.copyFileSync(path.join(src, 'app.js'), path.join(outDir, 'app.js'));
+fs.copyFileSync(path.join(src, 'practice.js'), path.join(outDir, 'practice.js'));
 fs.copyFileSync(path.join(src, 'auth.js'), path.join(outDir, 'auth.js'));
 fs.copyFileSync(path.join(src, 'template-manager.js'), path.join(outDir, 'template-manager.js'));
 fs.copyFileSync(path.join(src, 'ai-center.js'), path.join(outDir, 'ai-center.js'));
