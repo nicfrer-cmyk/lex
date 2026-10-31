@@ -45,9 +45,11 @@
 ```bash
 bash scripts/setup-cron.sh
 ```
-הסקריפט מייצר `CRON_SECRET`, שומר אותו ב-Supabase ומדפיס SQL להדבקה ב-SQL Editor.
-ה-SQL יוצר job של pg_cron שקורא ל-`ai-cron` כל 5 דקות עם המשימות
-`reap, routines, drain, learn`. `routines` הוא מה שמכניס את שגרות הצוות לתור.
+הסקריפט מייצר `CRON_SECRET`, שומר אותו ב-Supabase ורושם בעצמו (דרך ה-CLI,
+הפרויקט מקושר) את עבודות pg_cron: `ai-center-tick` שקורא ל-`ai-cron` כל 5 דקות
+עם המשימות `reap, routines, drain, learn` (`routines` הוא מה שמכניס את שגרות
+הצוות לתור), `automation-tick` למנוע הכללים, ו-`daily-reminders-check` לתזכורות
+Push ב-07:00. הרצה חוזרת בטוחה: שם קיים מתעדכן ולא משוכפל.
 
 בדיקה: אחרי 10 דקות, בלשונית "הצוות" הכותרת תציג "המתזמן פעיל".
 
