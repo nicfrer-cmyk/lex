@@ -21,7 +21,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 PROJECT_REF="syxutnwbpjsvzlwfpvyc"
-SB="npx --yes supabase@latest"
+SB="npx supabase"
 
 echo "מייצר CRON_SECRET..."
 SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")

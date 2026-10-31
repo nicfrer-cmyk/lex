@@ -17,8 +17,8 @@ $bytes = New-Object byte[] 32
 $Secret = ($bytes | ForEach-Object { $_.ToString('x2') }) -join ''
 
 Write-Host 'שולח ל-Supabase...'
-npx --yes supabase@latest secrets set "CRON_SECRET=$Secret" --project-ref $ProjectRef | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'הגדרת הסוד נכשלה. אולי צריך קודם: npx supabase login' }
+npx supabase secrets set "CRON_SECRET=$Secret" --project-ref $ProjectRef | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'הגדרת הסוד נכשלה.' }
 Write-Host '✓ הסוד הוגדר.'
 Write-Host ''
 
@@ -72,7 +72,7 @@ $SqlFile = Join-Path $env:TEMP ("lextrack-cron-" + [guid]::NewGuid().ToString('n
 Set-Content -Path $SqlFile -Value $Sql -Encoding utf8
 try {
   Write-Host 'רושם את עבודות התזמון...'
-  npx --yes supabase@latest db query --linked -f $SqlFile
+  npx supabase db query --linked -f $SqlFile
   if ($LASTEXITCODE -ne 0) { throw 'רישום העבודות נכשל.' }
 } finally {
   Remove-Item $SqlFile -Force -ErrorAction SilentlyContinue
