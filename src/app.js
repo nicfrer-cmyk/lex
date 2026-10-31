@@ -872,7 +872,7 @@ function renderCasesTable(cases){
       <td>
         <div style="display:flex;align-items:center;gap:6px">
           <b style="color:var(--navy)">${escapeHtml(c.name)}</b>
-          ${c.caseSubNumber?`<span style="font-size:10px;color:var(--accent2);background:var(--accent-dim);border-radius:4px;padding:1px 5px;font-weight:700;flex-shrink:0">${escapeHtml(c.caseSubNumber)}</span>`:''}
+          ${c.caseSubNumber?`<span style="font-size:10px;color:var(--accent-text);background:var(--accent-dim);border-radius:4px;padding:1px 5px;font-weight:700;flex-shrink:0">${escapeHtml(c.caseSubNumber)}</span>`:''}
         </div>
         <span style="font-size:11px;color:var(--text3)">${escapeHtml(c.number||'')} ${c.courtNumber?'| '+escapeHtml(c.courtNumber):''}</span>
       </td>
@@ -880,7 +880,7 @@ function renderCasesTable(cases){
         <div style="color:var(--text2);font-size:12px">${cl?escapeHtml(cl.name):'—'}</div>
         ${c.debtorName?`<div style="font-size:11px;color:var(--text3)">${isDebtCase(c)?'חייב':'צד שכנגד'}: ${escapeHtml(c.debtorName)}</div>`:''}
       </td>
-      <td style="color:var(--accent2);font-weight:600">${c.amount?'₪'+c.amount.toLocaleString():'—'}</td>
+      <td style="color:var(--accent-text);font-weight:600">${c.amount?'₪'+c.amount.toLocaleString():'—'}</td>
       <td style="color:var(--text2);font-size:12px">${escapeHtml(c.stage)}</td>
       <td style="color:var(--text3);font-size:12px">${c.opened||''}</td>
       <td style="font-size:12px;color:var(--warning)">${feeLabel(c)}</td>
@@ -906,7 +906,7 @@ function renderCasesBoard(cases){
       const days=daysSinceHE(c.opened);
       return `<div class="kanban-card" onclick="openCaseDetail('${c.id}')">
         <div class="kanban-card-name">
-          ${c.caseSubNumber?`<span style="font-size:10px;color:var(--accent2);font-weight:700;opacity:0.85;margin-left:5px">${escapeHtml(c.caseSubNumber)}</span>`:''}${escapeHtml(c.name)}
+          ${c.caseSubNumber?`<span style="font-size:10px;color:var(--accent-text);font-weight:700;opacity:0.85;margin-left:5px">${escapeHtml(c.caseSubNumber)}</span>`:''}${escapeHtml(c.name)}
         </div>
         ${c.debtorName?`<div class="kanban-card-sub">${escapeHtml(c.debtorName)}</div>`:''}
         <div class="kanban-card-amount">${c.amount?'₪'+c.amount.toLocaleString():'—'}</div>
@@ -1042,7 +1042,7 @@ function openCaseDetail(id) {
       <div>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
           <h2 style="font-size:20px;font-weight:700;color:var(--navy)">${escapeHtml(c.name)}</h2>
-          ${c.caseSubNumber?`<span style="font-size:13px;color:var(--accent2);background:var(--accent-dim);border:1px solid rgba(37,99,235,0.3);border-radius:6px;padding:2px 9px;font-weight:700">${escapeHtml(c.caseSubNumber)}</span>`:''}
+          ${c.caseSubNumber?`<span style="font-size:13px;color:var(--accent-text);background:var(--accent-dim);border:1px solid rgba(37,99,235,0.3);border-radius:6px;padding:2px 9px;font-weight:700">${escapeHtml(c.caseSubNumber)}</span>`:''}
         </div>
         <div style="font-size:12px;color:var(--text3);margin-top:4px">
           ${c.number?'#'+escapeHtml(c.number)+' · ':''}נפתח ${escapeHtml(c.opened||'')}
@@ -1061,7 +1061,7 @@ function openCaseDetail(id) {
 
     <!-- Stats row -->
     <div class="stats-grid" style="margin-bottom:16px">
-      <div class="stat"><div class="stat-label">${caseAmountLabel(c)}</div><div class="stat-value" style="color:var(--accent2);font-size:20px">${c.amount?'₪'+c.amount.toLocaleString():'—'}</div></div>
+      <div class="stat"><div class="stat-label">${caseAmountLabel(c)}</div><div class="stat-value" style="color:var(--accent-text);font-size:20px">${c.amount?'₪'+c.amount.toLocaleString():'—'}</div></div>
       <div class="stat"><div class="stat-label">${isDebtCase(c)?'גבוי בפועל':'התקבל בפועל'}</div><div class="stat-value" style="color:var(--success);font-size:20px">₪${totalCollected.toLocaleString()}</div></div>
       <div class="stat"><div class="stat-label">שכ"ט צפוי</div><div class="stat-value" style="color:var(--warning);font-size:18px">₪${expectedFee.toLocaleString()}</div></div>
       <div class="stat"><div class="stat-label">שלב</div><div style="font-size:14px;font-weight:600;color:var(--navy);margin-top:4px">${escapeHtml(c.stage)}</div>
@@ -1137,7 +1137,7 @@ function openCaseDetail(id) {
         <button class="btn btn-sm" style="margin-bottom:10px" onclick="addEventForCase('${id}')">+ דיון</button>
         ${caseEvents.length?caseEvents.sort((a,b)=>a.date>b.date?1:-1).map(e=>`<div class="task-item">
           <div style="width:40px;height:40px;border-radius:8px;background:var(--accent-dim);display:flex;flex-direction:column;align-items:center;justify-content:center;flex-shrink:0">
-            <div style="font-size:13px;font-weight:700;color:var(--accent2)">${(e.date||'').split('-')[2]||''}</div>
+            <div style="font-size:13px;font-weight:700;color:var(--accent-text)">${(e.date||'').split('-')[2]||''}</div>
             <div style="font-size:9px;color:var(--text3)">${monthHE((e.date||'').split('-')[1])}</div>
           </div>
           <div style="flex:1"><div style="font-weight:500;color:var(--navy)">${escapeHtml(e.title)}</div><div style="font-size:11px;color:var(--text3)">${escapeHtml(e.type||'')} ${e.location?'| '+escapeHtml(e.location):''} ${e.time?'| '+escapeHtml(e.time):''}</div>${e.notes?`<div style="font-size:11px;color:var(--text3)">${escapeHtml(e.notes)}</div>`:''}</div>
@@ -1202,7 +1202,7 @@ function openCaseDetail(id) {
       <!-- Time Entries -->
       <div id="ct-time" style="display:none">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-          <div style="font-size:13px;color:var(--accent2);font-weight:600">⏱ סה"כ: ${Math.floor(caseTimeSecs/3600)}:${String(Math.floor((caseTimeSecs%3600)/60)).padStart(2,'0')} שעות</div>
+          <div style="font-size:13px;color:var(--accent-text);font-weight:600">⏱ סה"כ: ${Math.floor(caseTimeSecs/3600)}:${String(Math.floor((caseTimeSecs%3600)/60)).padStart(2,'0')} שעות</div>
           <button class="btn btn-sm btn-primary" onclick="openManualTime('${id}')">+ הוסף ידנית</button>
         </div>
         ${caseTime.length?caseTime.map(t=>`<div class="fin-row">
@@ -2614,7 +2614,7 @@ function renderClients(filter='') {
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
       <div class="client-avatar" style="background:${safeColor(c.color)};color:${safeColor(c.textColor)};margin-bottom:0">${escapeHtml(c.initials)}</div>
       <div style="flex:1;min-width:0">
-        ${c.clientNumber?`<div style="font-size:10px;color:var(--accent2);font-weight:700;letter-spacing:0.04em">מספר לקוח: ${escapeHtml(c.clientNumber)}</div>`:''}
+        ${c.clientNumber?`<div style="font-size:10px;color:var(--accent-text);font-weight:700;letter-spacing:0.04em">מספר לקוח: ${escapeHtml(c.clientNumber)}</div>`:''}
         <div style="font-weight:600;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(c.name)}</div>
         <div style="font-size:11px;color:var(--text3)">${escapeHtml(c.type)}${c.idNum?' · '+escapeHtml(c.idNum):''}</div>
       </div>
@@ -2690,14 +2690,14 @@ function openClientDetail(id) {
       <div>
         <h2 style="font-size:20px;font-weight:700;color:var(--navy);margin-bottom:3px">${escapeHtml(cl.name)}</h2>
         <div style="font-size:12px;color:var(--text3)">
-          ${cl.clientNumber?`<span style="color:var(--accent2);font-weight:700">מספר לקוח: ${escapeHtml(cl.clientNumber)}</span> · `:''}${escapeHtml(cl.type)}${cl.idNum?' · ת.ז/ח.פ: '+escapeHtml(cl.idNum):''}
+          ${cl.clientNumber?`<span style="color:var(--accent-text);font-weight:700">מספר לקוח: ${escapeHtml(cl.clientNumber)}</span> · `:''}${escapeHtml(cl.type)}${cl.idNum?' · ת.ז/ח.פ: '+escapeHtml(cl.idNum):''}
         </div>
       </div>
     </div>
 
     <div class="stats-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:16px">
       <div class="stat"><div class="stat-label">תיקים פעילים</div><div class="stat-value">${activeCases.length}</div><div class="stat-sub">${clientCases.length} סה"כ</div></div>
-      <div class="stat"><div class="stat-label">חוב בטיפול</div><div class="stat-value" style="color:var(--accent2);font-size:20px">₪${totalDebt.toLocaleString()}</div></div>
+      <div class="stat"><div class="stat-label">חוב בטיפול</div><div class="stat-value" style="color:var(--accent-text);font-size:20px">₪${totalDebt.toLocaleString()}</div></div>
       <div class="stat"><div class="stat-label">גבוי סה"כ</div><div class="stat-value" style="color:var(--success);font-size:20px">₪${totalCollected.toLocaleString()}</div></div>
     </div>
 
@@ -2723,12 +2723,12 @@ function openClientDetail(id) {
         ${clientCases.map(c=>`<tr onclick="openCaseDetail('${c.id}')">
           <td>
             <div style="display:flex;align-items:center;gap:6px">
-              ${c.caseSubNumber?`<span style="font-size:10px;color:var(--accent2);font-weight:700;flex-shrink:0">${escapeHtml(c.caseSubNumber)}</span>`:''}
+              ${c.caseSubNumber?`<span style="font-size:10px;color:var(--accent-text);font-weight:700;flex-shrink:0">${escapeHtml(c.caseSubNumber)}</span>`:''}
               <b style="color:var(--navy)">${escapeHtml(c.name)}</b>
             </div>
             ${c.number?`<span style="font-size:11px;color:var(--text3)">#${escapeHtml(c.number)}</span>`:''}
           </td>
-          <td style="color:var(--accent2);font-weight:600">${c.amount?'₪'+c.amount.toLocaleString():'—'}</td>
+          <td style="color:var(--accent-text);font-weight:600">${c.amount?'₪'+c.amount.toLocaleString():'—'}</td>
           <td style="font-size:12px;color:var(--text2)">${escapeHtml(c.stage)}</td>
           <td><span class="badge badge-${safeToken(c.status)}">${escapeHtml(smap[c.status]||c.status)}</span></td>
         </tr>`).join('')}
@@ -2752,7 +2752,7 @@ function openClientDetail(id) {
           <div>
             <div style="font-weight:500;color:var(--navy)">₪${p.amount.toLocaleString()}</div>
             <div style="font-size:11px;color:var(--text3)">${p.type==='debt'?'גבייה':p.type==='retainer'?'מקדמה':'הוצאה'} | ${escapeHtml(p.method||'')}</div>
-            ${pc?`<div style="font-size:11px;color:var(--accent2)">${escapeHtml(pc.name)}</div>`:''}
+            ${pc?`<div style="font-size:11px;color:var(--accent-text)">${escapeHtml(pc.name)}</div>`:''}
           </div>
           <div style="text-align:left">
             <div style="font-size:12px;color:var(--text2)">${p.date||''}</div>
@@ -2768,13 +2768,13 @@ function openClientDetail(id) {
         const ec=db.cases.find(c=>c.id===e.caseId);
         return `<div class="task-item">
           <div style="width:38px;height:38px;border-radius:8px;background:var(--accent-dim);display:flex;flex-direction:column;align-items:center;justify-content:center;flex-shrink:0">
-            <div style="font-size:13px;font-weight:700;color:var(--accent2)">${(e.date||'').split('-')[2]||''}</div>
+            <div style="font-size:13px;font-weight:700;color:var(--accent-text)">${(e.date||'').split('-')[2]||''}</div>
             <div style="font-size:9px;color:var(--text3)">${monthHE((e.date||'').split('-')[1])}</div>
           </div>
           <div style="flex:1">
             <div style="font-weight:500;color:var(--navy)">${escapeHtml(e.title)}</div>
             <div style="font-size:11px;color:var(--text3)">${escapeHtml(e.type||'')} ${e.location?'| '+escapeHtml(e.location):''} ${e.time?'| '+escapeHtml(e.time):''}</div>
-            ${ec?`<div style="font-size:11px;color:var(--accent2);cursor:pointer" onclick="openCaseDetail('${ec.id}')">${escapeHtml(ec.name)}</div>`:''}
+            ${ec?`<div style="font-size:11px;color:var(--accent-text);cursor:pointer" onclick="openCaseDetail('${ec.id}')">${escapeHtml(ec.name)}</div>`:''}
           </div>
         </div>`;
       }).join(''):'<div class="empty" style="padding:16px">אין אירועים</div>'}
@@ -2877,13 +2877,13 @@ function eventRow(e) {
   const c=e.caseId?db.cases.find(x=>x.id===e.caseId):null;
   return `<div class="task-item">
     <div style="width:38px;height:38px;border-radius:8px;background:var(--accent-dim);display:flex;flex-direction:column;align-items:center;justify-content:center;flex-shrink:0">
-      <div style="font-size:13px;font-weight:700;color:var(--accent2)">${(e.date||'').split('-')[2]||''}</div>
+      <div style="font-size:13px;font-weight:700;color:var(--accent-text)">${(e.date||'').split('-')[2]||''}</div>
       <div style="font-size:9px;color:var(--text3)">${monthHE((e.date||'').split('-')[1])}</div>
     </div>
     <div style="flex:1">
       <div style="font-weight:500;color:var(--navy)">${escapeHtml(e.title)}</div>
       <div style="font-size:11px;color:var(--text3)">${escapeHtml(e.type||'')} ${e.location?'| '+escapeHtml(e.location):''} ${e.time?'| '+escapeHtml(e.time):''}</div>
-      ${c?`<div style="font-size:11px;color:var(--accent2);cursor:pointer;display:flex;align-items:center;gap:5px" onclick="openCaseDetail('${c.id}')">${escapeHtml(c.name)}${c.caseSubNumber?`<span style="font-size:10px;background:var(--accent-dim);border-radius:4px;padding:1px 5px;font-weight:700">${escapeHtml(c.caseSubNumber)}</span>`:''}</div>`:''}
+      ${c?`<div style="font-size:11px;color:var(--accent-text);cursor:pointer;display:flex;align-items:center;gap:5px" onclick="openCaseDetail('${c.id}')">${escapeHtml(c.name)}${c.caseSubNumber?`<span style="font-size:10px;background:var(--accent-dim);border-radius:4px;padding:1px 5px;font-weight:700">${escapeHtml(c.caseSubNumber)}</span>`:''}</div>`:''}
     </div>
     <button class="btn btn-sm" style="color:var(--danger);border:none;padding:2px 6px" onclick="delEvent('${e.id}')">✕</button>
   </div>`;
@@ -3364,7 +3364,7 @@ function renderAnalytics() {
     <div class="fin-row" style="cursor:pointer" onclick="nav('cases',document.querySelectorAll('.nav-item')[1])"><div>⚠️ תיקים תקועים (14-29 יום ללא עדכון)</div><b style="color:var(--warning)">${stuck.length}</b></div>
     <div class="fin-row" style="cursor:pointer" onclick="nav('cases',document.querySelectorAll('.nav-item')[1])"><div>🔴 תיקים מוזנחים (30+ יום ללא עדכון)</div><b style="color:var(--danger)">${neglected.length}</b></div>
     <div class="fin-row" style="cursor:pointer" onclick="nav('tasks',document.querySelectorAll('.nav-item')[3])"><div>⏰ משימות באיחור</div><b style="color:var(--danger)">${overdueTasks.length}</b></div>
-    <div class="fin-row" style="cursor:pointer" onclick="nav('calendar',document.querySelectorAll('.nav-item')[4])"><div>📅 דיונים בשבוע הקרוב</div><b style="color:var(--accent2)">${hearingsThisWeek.length}</b></div>
+    <div class="fin-row" style="cursor:pointer" onclick="nav('calendar',document.querySelectorAll('.nav-item')[4])"><div>📅 דיונים בשבוע הקרוב</div><b style="color:var(--accent-text)">${hearingsThisWeek.length}</b></div>
   `;
 
   // ── Office performance ──
@@ -3935,7 +3935,7 @@ function renderDashboard(){
     <div class="prio-dot prio-${t.priority||'normal'}"></div>
     <div style="flex:1">
       <div class="task-text" style="font-size:13px">${escapeHtml(t.text)}</div>
-      ${c?`<div style="font-size:11px;color:var(--accent2);cursor:pointer;display:flex;align-items:center;gap:5px" onclick="openCaseDetail('${c.id}')">${escapeHtml(c.name)}${c.caseSubNumber?`<span style="font-size:10px;background:var(--accent-dim);border-radius:4px;padding:1px 5px;font-weight:700">${escapeHtml(c.caseSubNumber)}</span>`:''}</div>`:''}
+      ${c?`<div style="font-size:11px;color:var(--accent-text);cursor:pointer;display:flex;align-items:center;gap:5px" onclick="openCaseDetail('${c.id}')">${escapeHtml(c.name)}${c.caseSubNumber?`<span style="font-size:10px;background:var(--accent-dim);border-radius:4px;padding:1px 5px;font-weight:700">${escapeHtml(c.caseSubNumber)}</span>`:''}</div>`:''}
     </div>
     <div class="task-meta ${t.due&&t.due<today?'urgent':''}">${t.due||''}</div>
   </div>`;
@@ -3946,7 +3946,7 @@ function renderDashboard(){
     <div style="flex:1">
       <div style="display:flex;align-items:center;gap:6px">
         <div style="font-weight:500;color:var(--navy);font-size:13px">${escapeHtml(c.name)}</div>
-        ${c.caseSubNumber?`<span style="font-size:10px;color:var(--accent2);background:var(--accent-dim);border-radius:4px;padding:1px 5px;font-weight:700;flex-shrink:0">${escapeHtml(c.caseSubNumber)}</span>`:''}
+        ${c.caseSubNumber?`<span style="font-size:10px;color:var(--accent-text);background:var(--accent-dim);border-radius:4px;padding:1px 5px;font-weight:700;flex-shrink:0">${escapeHtml(c.caseSubNumber)}</span>`:''}
       </div>
       <div style="font-size:11px;color:var(--text3)">${escapeHtml(c.debtorName||'')} ${c.amount?'| ₪'+c.amount.toLocaleString():''}</div>
     </div>

@@ -337,7 +337,7 @@ function renderBilling() {
   wrap.innerHTML = `
     <div class="stats-grid" style="margin-bottom:16px">
       <div class="stat"><div class="stat-label">שעות שטרם חויבו</div><div class="stat-value">${unbilledHours.toFixed(1)}</div></div>
-      <div class="stat"><div class="stat-label">שווי שטרם חויב</div><div class="stat-value" style="color:var(--accent2);font-size:20px">${prMoney(unbilledValue)}</div></div>
+      <div class="stat"><div class="stat-label">שווי שטרם חויב</div><div class="stat-value" style="color:var(--accent-text);font-size:20px">${prMoney(unbilledValue)}</div></div>
       <div class="stat"><div class="stat-label">דרישות פתוחות</div><div class="stat-value" style="color:var(--warning);font-size:20px">${prMoney(openTotal)}</div><div class="stat-sub">${open.length} דרישות</div></div>
     </div>
     <div class="card" style="padding:12px 16px;margin-bottom:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
@@ -515,13 +515,13 @@ function practiceDashboard() {
     </div>
     <div class="two-col" style="margin-bottom:0">
       <div>
-        <div style="font-size:12px;font-weight:700;color:var(--accent2);margin-bottom:6px">מועדים אחרונים (14 יום)</div>
+        <div style="font-size:12px;font-weight:700;color:var(--accent-text);margin-bottom:6px">מועדים אחרונים (14 יום)</div>
         ${a.deadlines.length ? a.deadlines.map(d => item(escapeHtml(d.title), escapeHtml([prDate(d.date), d.caseName].filter(Boolean).join(' · ')), when(d.days), openCase(d.caseId))).join('') : '<div class="empty" style="padding:8px">אין מועדים קרובים</div>'}
-        ${a.contracts.length ? `<div style="font-size:12px;font-weight:700;color:var(--accent2);margin:10px 0 6px">הסכמים שמסתיימים (60 יום)</div>
+        ${a.contracts.length ? `<div style="font-size:12px;font-weight:700;color:var(--accent-text);margin:10px 0 6px">הסכמים שמסתיימים (60 יום)</div>
           ${a.contracts.map(c => item(escapeHtml(c.name), escapeHtml('סיום תוקף ' + prDate(c.endDate)), when(c.days), openCase(c.id))).join('')}` : ''}
       </div>
       <div>
-        <div style="font-size:12px;font-weight:700;color:var(--accent2);margin-bottom:6px">דיונים ופגישות (7 ימים)</div>
+        <div style="font-size:12px;font-weight:700;color:var(--accent-text);margin-bottom:6px">דיונים ופגישות (7 ימים)</div>
         ${a.hearings.length ? a.hearings.map(h => item(escapeHtml(h.title), escapeHtml([h.type, h.caseName].filter(Boolean).join(' · ')), `${when(h.days)}${h.time ? ' ' + escapeHtml(h.time) : ''}`, '')).join('') : '<div class="empty" style="padding:8px">אין דיונים השבוע</div>'}
         ${a.overdueTasks ? `<div class="alert alert-danger" style="margin-top:10px;cursor:pointer" onclick="nav('tasks',document.querySelectorAll('.nav-item')[3])">⚠ ${a.overdueTasks} משימות שחלף מועדן</div>` : ''}
       </div>
