@@ -3170,7 +3170,7 @@ function renderFinance(){
         const oh=Math.max(2,Math.round((d.outstanding/maxVal)*BAR_H));
         return `<div style="flex:1;display:flex;align-items:flex-end;gap:2px;height:100%">
           <div class="has-tooltip" data-tip="גבוי: ₪${d.collected.toLocaleString()}" style="flex:1;height:${ch}px;background:var(--success);border-radius:3px 3px 0 0;opacity:0.85;position:relative;cursor:default"></div>
-          <div class="has-tooltip" data-tip="יתרת חוב: ₪${d.outstanding.toLocaleString()}" style="flex:1;height:${oh}px;background:rgba(220,38,38,0.45);border-radius:3px 3px 0 0;position:relative;cursor:default"></div>
+          <div class="has-tooltip" data-tip="יתרת חוב: ₪${d.outstanding.toLocaleString()}" style="flex:1;height:${oh}px;background:var(--danger-border);border-radius:3px 3px 0 0;position:relative;cursor:default"></div>
         </div>`;
       }).join('')}
     </div>
@@ -3179,7 +3179,7 @@ function renderFinance(){
     </div>
     <div style="display:flex;gap:16px;font-size:11px;color:var(--text3)">
       <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:2px;background:var(--success);display:inline-block"></span>גבוי</span>
-      <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:2px;background:rgba(220,38,38,0.45);display:inline-block"></span>יתרת חוב</span>
+      <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:2px;background:var(--danger-border);display:inline-block"></span>יתרת חוב</span>
     </div>`;
 
   // ── Cases financial list ──
